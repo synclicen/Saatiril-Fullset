@@ -305,7 +305,9 @@ export default function AdminDashboard() {
           url = `http://${hostname}:3000/?role=${role}&channel=${channel}&socketPort=${socketPort}`
         }
       } else {
-        url = `${window.location.origin}/?role=${role}&channel=${channel}`
+        // Web/sandbox mode: include socketPort so LAN clients can connect to the Socket.io server
+        const socketPort = new URLSearchParams(window.location.search).get('socketPort') || '3003'
+        url = `${window.location.origin}/?role=${role}&channel=${channel}&socketPort=${socketPort}`
       }
       try {
         if (navigator.clipboard) {

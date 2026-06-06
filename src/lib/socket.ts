@@ -159,7 +159,10 @@ function getSocketUrl(): string {
   }
 
   // Web/sandbox mode: use Caddy gateway with XTransformPort
-  return '/?XTransformPort=3003'
+  // The socket.io client needs the query param in its transport requests
+  // so Caddy can route them to port 3003. We pass it via the `query` option
+  // in connectSocket() and use the current origin as the base URL.
+  return window.location.origin
 }
 
 export function getSocket(): Socket | null {
@@ -240,8 +243,15 @@ export function connectSocket(): Socket {
     timeout: 15000,                    // 15s connection timeout
   }
 
-  console.log('[SAATIRIL] Connecting to Socket.io server...', socketUrl)
-  socket = io(socketUrl, socketOptions)
+  // For sandbox/web mode, add XTransformPort as a query parameter
+  // so Caddy gateway can route requests to the correct port.
+  const isSandboxMode = !isElectron && !new URLSearchParams(window.location.search).get('socketPort')
+  const finalOptions = isSandboxMode
+    ? { ...socketOptions, query: { ...socketOptions.query, XTransformPort: '3003' } }
+    : socketOptions
+
+  console.log('[SAATIRIL] Connecting to Socket.io server...', socketUrl, isSandboxMode ? '(sandbox mode with XTransformPort=3003)' : '')
+  socket = io(socketUrl, finalOptions)
 
   // ── Connection lifecycle ──────────────────────────────────────────────
   socket.on('connect', () => {

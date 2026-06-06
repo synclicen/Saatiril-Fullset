@@ -11,6 +11,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -24,6 +25,7 @@ import {
   Clock,
   Loader2,
   Monitor,
+  Search,
   User,
   Video,
   VideoOff,
@@ -187,6 +189,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const [sending, setSending] = useState(false)
   const [cameraDims, setCameraDims] = useState({ width: 0, height: 0 })
   const [showQueueOnMobile, setShowQueueOnMobile] = useState(false)
+  const [opSearchQuery, setOpSearchQuery] = useState('')
   const isCapturingRef = useRef(false)
 
   // ── AI auto-capture ──────────────────────────────────────────────────────
@@ -257,6 +260,17 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
     return currentProject.database.filter((s) => s.assignedChannel === myChannel)
   }, [currentProject, myChannel, photoshoot])
+
+  // ── Operator search results (photoshoot mode only, read-only) ───────────
+  const opSearchResults = useMemo<Student[]>(() => {
+    if (!photoshoot || !opSearchQuery.trim()) return []
+    const q = opSearchQuery.toLowerCase().trim()
+    return channelStudents.filter(
+      (s) =>
+        !isActiveStatus(s.status) && s.status !== 'done' &&
+        (s.nim.toLowerCase().includes(q) || s.nama.toLowerCase().includes(q))
+    ).slice(0, 5)
+  }, [photoshoot, opSearchQuery, channelStudents])
 
   const currentlyActive = useMemo<Student | null>(() => {
     if (photoshoot) {
@@ -779,6 +793,64 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     return <Badge className="text-[10px] px-1.5 py-0" style={{ backgroundColor: `${THEME.border}44`, color: THEME.muted, border: `1px solid ${THEME.border}` }}><Clock className="size-3 mr-0.5" />Menunggu</Badge>
   }
 
+  // ── Operator search (photoshoot mode, read-only) ────────────────────────
+  const renderOpSearch = (compact = false) => {
+    if (!photoshoot) return null
+    return (
+      <Card
+        className="shrink-0 border rounded-lg overflow-hidden"
+        style={{ backgroundColor: THEME.card, borderColor: THEME.border }}
+      >
+        <CardContent className={compact ? 'p-2 space-y-1.5' : 'p-2.5 space-y-2'}>
+          <p
+            className="text-[9px] font-semibold uppercase tracking-widest"
+            style={{ color: THEME.gold }}
+          >
+            Cari data peserta
+          </p>
+
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3.5" style={{ color: THEME.muted }} />
+            <Input
+              placeholder="NIM / Nama..."
+              value={opSearchQuery}
+              onChange={(e) => setOpSearchQuery(e.target.value)}
+              className={`pl-7 border-[#533485] bg-[#2a164a] text-white placeholder:text-[#533485] focus-visible:border-[#d4af37] focus-visible:ring-[#d4af37]/30 ${compact ? 'h-7 text-[11px]' : 'h-8 text-xs'}`}
+            />
+          </div>
+
+          {opSearchQuery.trim() && opSearchResults.length > 0 && (
+            <div
+              className={`overflow-y-auto rounded-md border ${compact ? 'max-h-24' : 'max-h-32'}`}
+              style={{ borderColor: THEME.border }}
+            >
+              {opSearchResults.map((student) => (
+                <div
+                  key={student.id}
+                  className={`flex items-center gap-1.5 px-2 text-left ${compact ? 'py-1' : 'py-1.5'}`}
+                  style={{ borderBottom: `1px solid ${THEME.border}44` }}
+                >
+                  <span className={`font-mono truncate shrink-0 ${compact ? 'text-[9px] w-12' : 'text-[10px] w-14'}`} style={{ color: THEME.muted }}>
+                    {student.nim}
+                  </span>
+                  <span className={`font-medium truncate flex-1 ${compact ? 'text-[10px]' : 'text-[11px]'}`} style={{ color: '#ffffff' }}>
+                    {student.nama}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {opSearchQuery.trim() && opSearchResults.length === 0 && (
+            <p className={`text-center ${compact ? 'text-[9px] py-1' : 'text-[10px] py-1.5'}`} style={{ color: THEME.muted }}>
+              Tidak ditemukan
+            </p>
+          )}
+        </CardContent>
+      </Card>
+    )
+  }
+
   // ── Shared camera view component ─────────────────────────────────────────
   const renderCameraView = () => (
     <div
@@ -1103,6 +1175,9 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             </button>
           </div>
 
+          {/* Operator search (photoshoot only) */}
+          {showQueueOnMobile && renderOpSearch(true)}
+
           {/* Queue list (expandable) */}
           {showQueueOnMobile && (
             <div
@@ -1247,6 +1322,9 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             </div>
           </CardContent>
         </Card>
+
+        {/* Operator search (photoshoot only) */}
+        {renderOpSearch(false)}
 
         {/* Queue List */}
         {renderQueueList(false)}

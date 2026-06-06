@@ -257,7 +257,10 @@ export function MainApp() {
       const role = myRoleRef.current
       const curProj = currentProjectRef.current
       if (role === 'admin' && curProj) {
-        emitLocal('SYNC_DB', { project: stripFrameForSync(curProj) })
+        // DO NOT strip frame for REQUEST_STATE responses — new clients need the full frame data.
+        // stripFrameForSync is only for subsequent SYNC_DB updates where clients already have the frame.
+        // See the NOTE in stripFrameForSync() documentation.
+        emitLocal('SYNC_DB', { project: curProj })
       }
     }
 
