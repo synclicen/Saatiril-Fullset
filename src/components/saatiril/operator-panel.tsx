@@ -37,6 +37,8 @@ import {
   Brain,
   Sparkles,
   Zap,
+  Timer,
+  Hand,
 } from 'lucide-react'
 import {
   useSaatirilStore,
@@ -54,6 +56,7 @@ import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
 import { useAIDetection, type AIMomentEvent } from '@/hooks/use-ai-detection'
+import { useFingerDetection } from '@/hooks/use-finger-detection'
 
 // ─── Theme tokens ───────────────────────────────────────────────────────────
 const THEME = {
@@ -64,6 +67,31 @@ const THEME = {
   gold: '#d4af37',
   muted: '#c4b5fd',
 } as const
+
+// ─── Shutter mode types ────────────────────────────────────────────────────
+type ShutterMode = 'manual' | 'timer-3' | 'timer-5' | 'timer-10' | 'finger' | 'ai'
+
+const SHUTTER_MODES: { id: ShutterMode; label: string; shortLabel: string; icon: React.ReactNode; modesAllowed?: CameraMode[] }[] = [
+  { id: 'manual', label: 'Manual', shortLabel: 'Manual', icon: <Camera className="size-3" /> },
+  { id: 'timer-3', label: 'Timer 3 detik', shortLabel: '3s', icon: <Timer className="size-3" /> },
+  { id: 'timer-5', label: 'Timer 5 detik', shortLabel: '5s', icon: <Timer className="size-3" /> },
+  { id: 'timer-10', label: 'Timer 10 detik', shortLabel: '10s', icon: <Timer className="size-3" /> },
+  { id: 'finger', label: '5 Jari', shortLabel: '5 Jari', icon: <Hand className="size-3" /> },
+  { id: 'ai', label: 'AI Pintar', shortLabel: 'AI', icon: <Brain className="size-3" />, modesAllowed: ['single', 'dual'] },
+]
+
+function getTimerDuration(mode: ShutterMode): number {
+  switch (mode) {
+    case 'timer-3': return 3
+    case 'timer-5': return 5
+    case 'timer-10': return 10
+    default: return 0
+  }
+}
+
+function isTimerMode(mode: ShutterMode): boolean {
+  return mode === 'timer-3' || mode === 'timer-5' || mode === 'timer-10'
+}
 
 // ─── Filter preset map ──────────────────────────────────────────────────────
 const PRESET_FILTERS: Record<string, string> = {
@@ -195,9 +223,17 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const [mcCallBuffer, setMcCallBuffer] = useState<Student[]>([])
   const isCapturingRef = useRef(false)
 
+  // ── Shutter mode state ───────────────────────────────────────────────────
+  const [shutterMode, setShutterMode] = useState<ShutterMode>('manual')
+  const [timerCountdown, setTimerCountdown] = useState<number>(0)
+  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const timerActiveRef = useRef(false)
+
   // ── AI auto-capture ──────────────────────────────────────────────────────
   const ai = useAIDetection()
-  const [aiAutoCapture, setAiAutoCapture] = useState(false)
+
+  // ── Finger detection ─────────────────────────────────────────────────────
+  const finger = useFingerDetection()
 
   // ── Refs ─────────────────────────────────────────────────────────────────
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -255,6 +291,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const photoshoot = isPhotoshootMode(mode)
   const dualPhotoshoot = isDualPhotoshootMode(mode)
 
+  // AI mode is only allowed in single/dual mode
+  const aiAllowed = mode === 'single' || mode === 'dual'
+
+  // Compute effective shutter mode — if AI is selected but not allowed, fallback to manual
+  const effectiveShutterMode: ShutterMode = (shutterMode === 'ai' && !aiAllowed) ? 'manual' : shutterMode
+
   const channelStudents = useMemo<Student[]>(() => {
     if (!currentProject) return []
     if (photoshoot) {
@@ -265,9 +307,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   }, [currentProject, myChannel, photoshoot])
 
   // ── Operator queue: derived from database + MC_CALL buffer ──────────────────
-  // Primary queue is derived from database (students with 'sent' status not yet
-  // photographed by this operator). MC_CALL buffer adds students that arrived
-  // before the database was updated via SYNC_DB.
   const opQueue = useMemo<Student[]>(() => {
     if (!photoshoot || !currentProject) return []
     const alreadyPhotographed = new Set(
@@ -283,14 +322,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       (s) => s.status === 'sent' && !alreadyPhotographed.has(s.id)
     )
     dbItems.forEach((s) => dbQueueIds.add(s.id))
-    // Add MC_CALL buffer items that aren't already in dbQueue and aren't done
     const bufferItems = mcCallBuffer.filter(
       (s) => !dbQueueIds.has(s.id) && !doneIds.has(s.id) && !alreadyPhotographed.has(s.id)
     )
     return [...dbItems, ...bufferItems]
   }, [photoshoot, currentProject, myChannel, mcCallBuffer])
 
-  // ── Operator search results (searches within the queue) ───────────
   const opSearchResults = useMemo<Student[]>(() => {
     if (!opSearchQuery.trim()) return opQueue
     const q = opSearchQuery.toLowerCase().trim()
@@ -301,7 +338,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
   const currentlyActive = useMemo<Student | null>(() => {
     if (photoshoot) {
-      // In photoshoot mode, use opCurrentTarget from store (selected from queue)
       return opCurrentTarget
     }
     const targetStatus: StudentStatus = `active_${myChannel}`
@@ -322,12 +358,9 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     if (sending) return 'sending'
     if (!hasActiveTarget) return 'standby'
     if (photoshoot) {
-      // Photoshoot: only 1 photo needed
       if (opCapturedPhotos.length === 0) return 'ready-1'
-      // After 1 photo in photoshoot mode, immediately go to sending
       return 'sending'
     }
-    // Standard mode: 2 photos
     if (opCapturedPhotos.length === 0) return 'ready-1'
     if (opCapturedPhotos.length === 1) return 'ready-2'
     return 'standby'
@@ -361,8 +394,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   }, [])
 
   // ── Camera: start stream ─────────────────────────────────────────────────
-  // Mobile: default to rear camera (facingMode: 'environment')
-  // Desktop: default to first available camera
   const startCamera = useCallback(
     async (deviceId?: string) => {
       if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
@@ -376,19 +407,16 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
       let constraints: MediaStreamConstraints
       if (deviceId) {
-        // Specific device selected
         constraints = {
           video: { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } },
           audio: false,
         }
       } else if (isMobile) {
-        // Mobile: prefer rear camera
         constraints = {
           video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
           audio: false,
         }
       } else {
-        // Desktop: any camera
         constraints = {
           video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
           audio: false,
@@ -403,7 +431,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         await enumerateVideoDevices()
       } catch (err) {
         console.error('[SAATIRIL OP] Camera access failed:', err)
-        // Fallback: if facingMode fails, try without it
         if (isMobile && !deviceId) {
           try {
             const fallbackConstraints: MediaStreamConstraints = {
@@ -485,7 +512,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     const handleMcCall = (data: McCallData) => {
       if (data.channel !== myChannelRef.current) return
       if (photoshoot) {
-        // Add to MC_CALL buffer (will be deduped with dbQueue in opQueue)
         setMcCallBuffer((prev) => {
           if (prev.some((s) => s.id === data.student.id)) return prev
           return [...prev, data.student]
@@ -515,7 +541,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         if (activeStudent) setOpCurrentTarget(activeStudent)
       }
 
-      // Clean up MC_CALL buffer: remove done students (they're now in database)
       const doneIds = new Set(
         data.project.database.filter((s: Student) => s.status === 'done').map((s: Student) => s.id)
       )
@@ -561,12 +586,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           photos: allPhotos,
           channel: myChannel,
         }
-        // In photoshoot mode: MC/Admin handles marking as done based on photoHistory
-        // Single photoshoot: MC marks as done immediately
-        // Dual photoshoot: MC marks as done when all channels complete
         saveProjectsToStorageNow()
-
-        // Clean up MC_CALL buffer for this student
         setMcCallBuffer((prev) => prev.filter((s) => s.id !== student.id))
 
         console.log('[SAATIRIL OP] Emitting PHOTOS_SAVED for student:', student.nama, 'channel:', myChannel)
@@ -705,7 +725,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   // ── Photo capture logic ──────────────────────────────────────────────────
   const handleCapture = useCallback(() => {
     if (!opCurrentTarget) return
-    // Photoshoot mode: only ready-1; Standard mode: ready-1 and ready-2
     if (photoshoot) {
       if (capturePhase !== 'ready-1') return
     } else {
@@ -768,24 +787,80 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
   }, [opCurrentTarget, capturePhase, aspectRatio, cssFilter, frameData, finalizeCapture, photoshoot])
 
-  // ── AI: stable refs for callback ─────────────────────────────────────────
-  const capturePhaseRef = useRef(capturePhase)
-  useEffect(() => { capturePhaseRef.current = capturePhase }, [capturePhase])
+  // ── Shutter: Timer logic ─────────────────────────────────────────────────
   const handleCaptureRef = useRef(handleCapture)
   useEffect(() => { handleCaptureRef.current = handleCapture }, [handleCapture])
 
-  // ── AI: Initialize when camera is ready ────────────────────────────────
+  const cancelTimer = useCallback(() => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current)
+      timerIntervalRef.current = null
+    }
+    timerActiveRef.current = false
+    setTimerCountdown(0)
+  }, [])
+
+  // Cancel timer interval when capture phase changes away from ready (external cleanup only)
   useEffect(() => {
-    if (cameraAvailable && hasActiveTarget && !ai.scriptsLoaded && ai.status === 'unloaded') {
+    if (capturePhase !== 'ready-1' && capturePhase !== 'ready-2') {
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current)
+        timerIntervalRef.current = null
+      }
+      timerActiveRef.current = false
+    }
+  }, [capturePhase])
+
+  // Derived: only show countdown when in ready phase
+  const effectiveTimerCountdown = (capturePhase === 'ready-1' || capturePhase === 'ready-2') ? timerCountdown : 0
+
+  const startTimer = useCallback(() => {
+    if (!isTimerMode(effectiveShutterMode)) return
+    if (capturePhase !== 'ready-1' && capturePhase !== 'ready-2') return
+    if (timerActiveRef.current) {
+      // Cancel if already running
+      cancelTimer()
+      return
+    }
+
+    const duration = getTimerDuration(effectiveShutterMode)
+    let remaining = duration
+    timerActiveRef.current = true
+    setTimerCountdown(remaining)
+
+    timerIntervalRef.current = setInterval(() => {
+      remaining -= 1
+      if (remaining <= 0) {
+        // Time's up — capture!
+        if (timerIntervalRef.current) {
+          clearInterval(timerIntervalRef.current)
+          timerIntervalRef.current = null
+        }
+        timerActiveRef.current = false
+        setTimerCountdown(0)
+        handleCaptureRef.current()
+      } else {
+        setTimerCountdown(remaining)
+      }
+    }, 1000)
+  }, [effectiveShutterMode, capturePhase, cancelTimer])
+
+  // ── Shutter: AI detection ────────────────────────────────────────────────
+  const capturePhaseRef = useRef(capturePhase)
+  useEffect(() => { capturePhaseRef.current = capturePhase }, [capturePhase])
+
+  // AI: Initialize when camera is ready and AI shutter mode is active
+  useEffect(() => {
+    if (effectiveShutterMode === 'ai' && cameraAvailable && hasActiveTarget && !ai.scriptsLoaded && ai.status === 'unloaded') {
       ai.initialize().then((ok) => {
-        if (ok) console.log('[SAATIRIL OP] AI initialized')
+        if (ok) console.log('[SAATIRIL OP] AI initialized for shutter mode')
       })
     }
-  }, [cameraAvailable, hasActiveTarget])
+  }, [effectiveShutterMode, cameraAvailable, hasActiveTarget])
 
-  // ── AI: Start/stop detection based on auto-capture toggle ────────────
+  // AI: Start/stop detection based on shutter mode
   useEffect(() => {
-    if (aiAutoCapture && ai.modelLoaded && cameraAvailable && videoRef.current && hasActiveTarget) {
+    if (effectiveShutterMode === 'ai' && ai.modelLoaded && cameraAvailable && videoRef.current && hasActiveTarget) {
       ai.startDetection(videoRef.current, (event: AIMomentEvent) => {
         console.log('[SAATIRIL OP] AI moment:', event.type, 'phase:', capturePhaseRef.current)
         const phase = capturePhaseRef.current
@@ -795,14 +870,67 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           handleCaptureRef.current()
         }
       })
-    } else if (!aiAutoCapture && ai.isRunning) {
+    } else if (effectiveShutterMode !== 'ai' && ai.isRunning) {
       ai.stopDetection()
     }
-  }, [aiAutoCapture, ai.modelLoaded, cameraAvailable, hasActiveTarget, capturePhase])
+  }, [effectiveShutterMode, ai.modelLoaded, cameraAvailable, hasActiveTarget, capturePhase])
+
+  // ── Shutter: Finger detection ────────────────────────────────────────────
+  // Initialize finger detection when finger shutter mode is active
+  useEffect(() => {
+    if (effectiveShutterMode === 'finger' && cameraAvailable && hasActiveTarget && finger.status === 'unloaded') {
+      finger.initialize().then((ok) => {
+        if (ok) console.log('[SAATIRIL OP] Finger detection initialized')
+      })
+    }
+  }, [effectiveShutterMode, cameraAvailable, hasActiveTarget])
+
+  // Start/stop finger detection
+  useEffect(() => {
+    if (effectiveShutterMode === 'finger' && (finger.status === 'model_ready' || finger.status === 'stopped') && cameraAvailable && videoRef.current && hasActiveTarget) {
+      finger.startDetection(videoRef.current, () => {
+        console.log('[SAATIRIL OP] 5 fingers detected — auto-capturing')
+        handleCaptureRef.current()
+      })
+    } else if (effectiveShutterMode !== 'finger' && finger.isRunning) {
+      finger.stopDetection()
+    }
+  }, [effectiveShutterMode, finger.status, cameraAvailable, hasActiveTarget])
+
+  // ── Cleanup on unmount ───────────────────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      cancelTimer()
+      if (ai.isRunning) ai.stopDetection()
+      if (finger.isRunning) finger.stopDetection()
+    }
+  }, [])
+
+  // ── Shutter mode: determine if capture button should trigger timer or direct capture
+  const handleCaptureButtonClick = useCallback(() => {
+    if (isTimerMode(effectiveShutterMode)) {
+      if (timerActiveRef.current) {
+        // Cancel running timer
+        cancelTimer()
+      } else {
+        // Start timer
+        startTimer()
+      }
+    } else {
+      // Manual mode — direct capture
+      handleCapture()
+    }
+  }, [effectiveShutterMode, startTimer, cancelTimer, handleCapture])
 
   // ── Progress badge text ──────────────────────────────────────────────────
   const progressText = useMemo(() => {
     if (!hasActiveTarget) return 'Menunggu Arahan MC...'
+    if (effectiveTimerCountdown > 0) return `Timer: ${effectiveTimerCountdown}s`
+    if (effectiveShutterMode === 'finger' && finger.isRunning) return `Jari: ${finger.fingerCount}/5`
+    if (effectiveShutterMode === 'ai' && ai.isRunning) {
+      if (ai.momentState === 'toga_possible' || ai.momentState === 'toga_sustained') return 'AI: Toga terdeteksi...'
+      if (ai.momentState === 'ijazah_possible' || ai.momentState === 'ijazah_sustained') return 'AI: Ijazah terdeteksi...'
+    }
     if (photoshoot) {
       if (capturePhase === 'ready-1') return 'Siap Foto'
       if (capturePhase === 'sending') return 'Mengirim...'
@@ -812,7 +940,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       if (capturePhase === 'sending') return 'Mengirim...'
     }
     return 'Menunggu Arahan MC...'
-  }, [hasActiveTarget, capturePhase, photoshoot])
+  }, [hasActiveTarget, capturePhase, photoshoot, effectiveTimerCountdown, effectiveShutterMode, finger.isRunning, finger.fingerCount, ai.isRunning, ai.momentState])
 
   // ── Render helpers ───────────────────────────────────────────────────────
   const getRowStyle = (student: Student): React.CSSProperties => {
@@ -832,6 +960,60 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     if (status === 'sent') return <Badge className="text-[10px] px-1.5 py-0" style={{ backgroundColor: '#d4af3733', color: THEME.gold, border: '1px solid #d4af3766' }}><Camera className="size-3 mr-0.5" />Dikirim</Badge>
     if (isActiveStatus(status)) return <Badge className="text-[10px] px-1.5 py-0 animate-pulse" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}66` }}><Loader2 className="size-3 mr-0.5 animate-spin" />{statusLabel(status)}</Badge>
     return <Badge className="text-[10px] px-1.5 py-0" style={{ backgroundColor: `${THEME.border}44`, color: THEME.muted, border: `1px solid ${THEME.border}` }}><Clock className="size-3 mr-0.5" />Menunggu</Badge>
+  }
+
+  // ── Shutter mode selector ────────────────────────────────────────────────
+  const renderShutterModeSelector = (compact = false) => {
+    const availableModes = SHUTTER_MODES.filter((m) => {
+      if (m.modesAllowed && !m.modesAllowed.includes(mode as CameraMode)) return false
+      return true
+    })
+
+    return (
+      <div className={`flex flex-col gap-1 ${compact ? '' : ''}`}>
+        <p className={`font-semibold uppercase tracking-widest ${compact ? 'text-[8px]' : 'text-[9px]'}`} style={{ color: THEME.muted }}>
+          Mode Shutter
+        </p>
+        <div className={`flex flex-wrap gap-1 ${compact ? '' : ''}`}>
+          {availableModes.map((m) => {
+            const isActive = effectiveShutterMode === m.id
+            const isLoading = (m.id === 'ai' && (ai.status === 'loading_scripts' || ai.status === 'loading_model')) ||
+              (m.id === 'finger' && (finger.status === 'loading_scripts' || finger.status === 'loading_model'))
+
+            return (
+              <button
+                key={m.id}
+                onClick={() => {
+                  if (!isLoading) {
+                    setShutterMode(m.id)
+                    cancelTimer()
+                  }
+                }}
+                className={`flex items-center gap-1 rounded-md font-semibold transition-all duration-200 cursor-pointer ${
+                  compact ? 'px-1.5 py-1 text-[9px]' : 'px-2 py-1.5 text-[10px]'
+                } ${isActive ? 'scale-105' : 'hover:bg-white/5'}`}
+                style={{
+                  backgroundColor: isActive ? `${THEME.gold}33` : THEME.panel,
+                  color: isActive ? THEME.gold : THEME.muted,
+                  border: `1px solid ${isActive ? THEME.gold : THEME.border}`,
+                  boxShadow: isActive ? `0 0 8px ${THEME.gold}22` : 'none',
+                  opacity: isLoading ? 0.6 : 1,
+                }}
+                title={m.label}
+              >
+                {isLoading ? <Loader2 className="size-3 animate-spin" /> : m.icon}
+                <span>{m.shortLabel}</span>
+                {m.id === 'finger' && finger.isRunning && finger.fingerCount > 0 && (
+                  <span className="text-[8px] font-mono" style={{ color: finger.fingerCount >= 5 ? '#4ade80' : THEME.gold }}>
+                    {finger.fingerCount}/5
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    )
   }
 
   // ── Operator queue with search (photoshoot mode) ────────────────────────
@@ -945,6 +1127,58 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         <div className="absolute left-0 right-0 top-[66.666%] h-px bg-white/[0.12]" />
       </div>
 
+      {/* Timer countdown overlay */}
+      {effectiveTimerCountdown > 0 && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: 15 }}>
+          <div className="flex items-center justify-center" style={{
+            width: isMobile ? '80px' : '120px',
+            height: isMobile ? '80px' : '120px',
+            borderRadius: '50%',
+            backgroundColor: `${THEME.bg}cc`,
+            border: `4px solid ${THEME.gold}`,
+            boxShadow: `0 0 40px ${THEME.gold}66, 0 0 80px ${THEME.gold}33`,
+          }}>
+            <span className="font-bold" style={{
+              color: THEME.gold,
+              fontSize: isMobile ? '36px' : '56px',
+              textShadow: `0 0 20px ${THEME.gold}88`,
+            }}>
+              {effectiveTimerCountdown}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Finger detection indicator */}
+      {effectiveShutterMode === 'finger' && finger.isRunning && (
+        <div className="absolute top-2 right-2 flex items-center gap-1.5 pointer-events-none" style={{ zIndex: 10 }}>
+          <div className="flex items-center gap-1 rounded-full px-2 py-1" style={{
+            backgroundColor: finger.fingerCount >= 5 ? '#22c55e88' : 'rgba(0,0,0,0.7)',
+            border: `1px solid ${finger.fingerCount >= 5 ? '#22c55e' : THEME.border}`,
+          }}>
+            <Hand className="size-3" style={{ color: finger.fingerCount >= 5 ? '#4ade80' : THEME.gold }} />
+            <span className="text-[10px] font-bold" style={{ color: finger.fingerCount >= 5 ? '#4ade80' : THEME.muted }}>
+              {finger.fingerCount}/5
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* AI detection indicator */}
+      {effectiveShutterMode === 'ai' && ai.isRunning && (
+        <div className="absolute top-2 right-2 flex items-center gap-1.5 pointer-events-none" style={{ zIndex: 10 }}>
+          <div className="flex items-center gap-1 rounded-full px-2 py-1" style={{
+            backgroundColor: ai.momentState !== 'idle' ? '#d4af3788' : 'rgba(0,0,0,0.7)',
+            border: `1px solid ${ai.momentState !== 'idle' ? THEME.gold : THEME.border}`,
+          }}>
+            <Sparkles className={`size-3 ${ai.momentState !== 'idle' ? 'animate-pulse' : ''}`} style={{ color: ai.momentState !== 'idle' ? THEME.gold : THEME.muted }} />
+            <span className="text-[10px] font-bold" style={{ color: ai.momentState !== 'idle' ? THEME.gold : THEME.muted }}>
+              AI {ai.posesDetected > 0 ? `(${ai.posesDetected})` : ''}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Flash overlay */}
       <div
         ref={flashRef}
@@ -1019,9 +1253,57 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       )
     }
 
-    if (capturePhase === 'ready-1') {
+    // Timer is counting down — show cancel button
+    if (effectiveTimerCountdown > 0) {
       return (
-        <Button onClick={handleCapture} className={btnClass} style={photoshoot
+        <Button onClick={handleCaptureButtonClick} className={btnClass} style={{
+          backgroundColor: '#ef4444',
+          color: '#ffffff',
+          border: '2px solid #ef4444',
+          boxShadow: '0 0 30px #ef444444, 0 0 60px #ef444422',
+        }}>
+          <X className="size-4 mr-2" />BATAL ({effectiveTimerCountdown}s)
+        </Button>
+      )
+    }
+
+    if (capturePhase === 'ready-1') {
+      const isAutoMode = effectiveShutterMode === 'finger' || effectiveShutterMode === 'ai'
+      const isTimer = isTimerMode(effectiveShutterMode)
+
+      if (isAutoMode) {
+        // Auto-capture modes: show status button
+        const isDetecting = (effectiveShutterMode === 'finger' && finger.isRunning) || (effectiveShutterMode === 'ai' && ai.isRunning)
+        return (
+          <Button disabled className={`${btnClass} cursor-default`} style={{
+            backgroundColor: isDetecting ? '#22c55e33' : THEME.panel,
+            color: isDetecting ? '#4ade80' : THEME.muted,
+            border: `2px solid ${isDetecting ? '#22c55e' : THEME.border}`,
+          }}>
+            {isDetecting ? <Loader2 className="size-4 mr-2 animate-spin" /> : <Aperture className="size-4 mr-2" />}
+            {effectiveShutterMode === 'finger' ? (isDetecting ? `Mendeteksi Jari (${finger.fingerCount}/5)` : 'Finger Detection Loading...') :
+              (isDetecting ? 'AI Mendeteksi Pose...' : 'AI Loading...')}
+          </Button>
+        )
+      }
+
+      if (isTimer) {
+        return (
+          <Button onClick={handleCaptureButtonClick} className={btnClass} style={{
+            backgroundColor: THEME.gold,
+            color: THEME.bg,
+            border: `2px solid ${THEME.gold}`,
+            boxShadow: `0 0 30px ${THEME.gold}44, 0 0 60px ${THEME.gold}22`,
+          }}>
+            <Timer className="size-4 mr-2" />
+            {photoshoot ? `FOTO (${getTimerDuration(effectiveShutterMode)}s)` : `FOTO 1 — TOGA (${getTimerDuration(effectiveShutterMode)}s)`}
+          </Button>
+        )
+      }
+
+      // Manual mode
+      return (
+        <Button onClick={handleCaptureButtonClick} className={btnClass} style={photoshoot
           ? { backgroundColor: '#4ade80', color: '#1a0b2e', border: '2px solid #4ade80', boxShadow: '0 0 30px #4ade8044, 0 0 60px #4ade8022' }
           : { backgroundColor: THEME.gold, color: THEME.bg, border: `2px solid ${THEME.gold}`, boxShadow: `0 0 30px ${THEME.gold}44, 0 0 60px ${THEME.gold}22` }
         }>
@@ -1031,8 +1313,39 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
 
     if (capturePhase === 'ready-2') {
+      const isAutoMode = effectiveShutterMode === 'finger' || effectiveShutterMode === 'ai'
+      const isTimer = isTimerMode(effectiveShutterMode)
+
+      if (isAutoMode) {
+        const isDetecting = (effectiveShutterMode === 'finger' && finger.isRunning) || (effectiveShutterMode === 'ai' && ai.isRunning)
+        return (
+          <Button disabled className={`${btnClass} cursor-default`} style={{
+            backgroundColor: isDetecting ? '#22c55e33' : THEME.panel,
+            color: isDetecting ? '#4ade80' : THEME.muted,
+            border: `2px solid ${isDetecting ? '#22c55e' : THEME.border}`,
+          }}>
+            {isDetecting ? <Loader2 className="size-4 mr-2 animate-spin" /> : <Aperture className="size-4 mr-2" />}
+            {effectiveShutterMode === 'finger' ? `Mendeteksi Jari (${finger.fingerCount}/5)` : 'AI Mendeteksi Ijazah...'}
+          </Button>
+        )
+      }
+
+      if (isTimer) {
+        return (
+          <Button onClick={handleCaptureButtonClick} className={btnClass} style={{
+            backgroundColor: THEME.gold,
+            color: THEME.bg,
+            border: `2px solid ${THEME.gold}`,
+            boxShadow: `0 0 30px ${THEME.gold}44, 0 0 60px ${THEME.gold}22`,
+          }}>
+            <Timer className="size-4 mr-2" />
+            FOTO 2 — IJAZAH ({getTimerDuration(effectiveShutterMode)}s)
+          </Button>
+        )
+      }
+
       return (
-        <Button onClick={handleCapture} className={btnClass} style={{ backgroundColor: '#22c55e', color: '#ffffff', border: '2px solid #22c55e', boxShadow: '0 0 30px #22c55e44, 0 0 60px #22c55e22' }}>
+        <Button onClick={handleCaptureButtonClick} className={btnClass} style={{ backgroundColor: '#22c55e', color: '#ffffff', border: '2px solid #22c55e', boxShadow: '0 0 30px #22c55e44, 0 0 60px #22c55e22' }}>
           <Camera className="size-4 mr-2" />FOTO 2 — IJAZAH
         </Button>
       )
@@ -1065,7 +1378,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         <span className="text-[10px]" style={{ color: THEME.muted }}>Ch.{myChannel}</span>
       </div>
 
-      {/* Column headers — hide on very compact view */}
       {!compact && (
         <div
           className="shrink-0 grid grid-cols-[24px_60px_1fr_60px] gap-0.5 px-2 py-1 text-[8px] font-semibold uppercase tracking-wider"
@@ -1087,7 +1399,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               const isNext = student.id === nextPending?.id && student.status === 'pending'
 
               if (compact) {
-                // Mobile compact: only show name + status
                 return (
                   <div
                     key={student.id}
@@ -1140,7 +1451,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     return (
       <div className="flex flex-col h-full touch-no-select" style={{ backgroundColor: THEME.bg }}>
 
-        {/* ── Camera Zone (takes most of the screen) ─────────────────────── */}
+        {/* ── Camera Zone ────────────────────────────────────────────────── */}
         <div
           ref={cameraZoneRef}
           className="flex-1 flex items-center justify-center min-h-0 p-1"
@@ -1159,7 +1470,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         >
           {/* Target info row */}
           <div className="flex items-center gap-2 px-3 py-2">
-            {/* Avatar */}
             <div
               className="shrink-0 flex items-center justify-center w-8 h-8 rounded-full border-2"
               style={{
@@ -1170,7 +1480,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               <User className="size-3.5" style={{ color: hasActiveTarget ? THEME.gold : THEME.border }} />
             </div>
 
-            {/* Name & NIM */}
             <div className="flex-1 min-w-0">
               {hasActiveTarget ? (
                 <div className="flex items-center gap-2">
@@ -1211,7 +1520,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               )}
             </div>
 
-            {/* Queue toggle button */}
             <button
               onClick={() => setShowQueueOnMobile(!showQueueOnMobile)}
               className="shrink-0 flex items-center justify-center w-9 h-9 rounded-lg border cursor-pointer active:scale-95 transition-transform"
@@ -1242,12 +1550,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             </div>
           )}
 
-          {/* Camera selector (compact) */}
-          {videoDevices.length > 1 && (
-            <div className="px-3 py-1">
+          {/* Camera selector (compact) + Shutter mode selector */}
+          <div className="px-3 py-1 flex items-center gap-2">
+            {videoDevices.length > 1 && (
               <Select value={selectedDeviceId} onValueChange={setSelectedDeviceId}>
                 <SelectTrigger
-                  className="flex-1 text-[10px] h-7"
+                  className="text-[10px] h-7 w-32"
                   style={{ backgroundColor: THEME.bg, borderColor: THEME.border, color: THEME.muted }}
                 >
                   <Video className="size-3 mr-1 shrink-0" style={{ color: THEME.gold }} />
@@ -1261,42 +1569,22 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
                   ))}
                 </SelectContent>
               </Select>
+            )}
+            <div className="flex-1 min-w-0">
+              {renderShutterModeSelector(true)}
             </div>
-          )}
+          </div>
 
           {/* Capture button */}
           <div className="px-3 pb-2 pt-1">
             {renderCaptureButton('large')}
-            {/* AI Auto-Capture toggle — mobile */}
-            {!readOnly && hasActiveTarget && (
-              <Button
-                onClick={() => setAiAutoCapture(!aiAutoCapture)}
-                className={`w-full h-10 mt-1.5 text-xs font-bold rounded-lg transition-all duration-200 ${
-                  aiAutoCapture ? 'animate-pulse' : ''
-                }`}
-                style={{
-                  backgroundColor: aiAutoCapture ? `${THEME.gold}33` : THEME.panel,
-                  color: aiAutoCapture ? THEME.gold : THEME.muted,
-                  border: `1.5px solid ${aiAutoCapture ? THEME.gold : THEME.border}`,
-                }}
-              >
-                {ai.status === 'loading' ? (
-                  <Loader2 className="size-3.5 mr-1.5 animate-spin" />
-                ) : aiAutoCapture ? (
-                  <Sparkles className="size-3.5 mr-1.5" />
-                ) : (
-                  <Brain className="size-3.5 mr-1.5" />
-                )}
-                {ai.status === 'loading' ? 'Memuat AI...' : aiAutoCapture ? 'AI Auto-Capture ON' : 'AI Auto-Capture OFF'}
-              </Button>
-            )}
           </div>
         </div>
       </div>
     )
   }
 
-  // ── DESKTOP LAYOUT (original with minor tweaks) ──────────────────────────
+  // ── DESKTOP LAYOUT ──────────────────────────────────────────────────────
   return (
     <div className="flex h-full overflow-hidden" style={{ backgroundColor: THEME.bg }}>
 
@@ -1377,6 +1665,15 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           </CardContent>
         </Card>
 
+        {/* Shutter Mode Selector */}
+        {!readOnly && (
+          <Card className="shrink-0 border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: THEME.border }}>
+            <CardContent className="p-2.5">
+              {renderShutterModeSelector(false)}
+            </CardContent>
+          </Card>
+        )}
+
         {/* Operator search (photoshoot only) */}
         {renderOpSearch(false)}
 
@@ -1384,31 +1681,8 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         {renderQueueList(false)}
 
         {/* Capture Button */}
-        <div className="shrink-0 space-y-1.5">
+        <div className="shrink-0">
           {renderCaptureButton('normal')}
-          {/* AI Auto-Capture toggle — desktop */}
-          {!readOnly && hasActiveTarget && (
-            <Button
-              onClick={() => setAiAutoCapture(!aiAutoCapture)}
-              className={`w-full h-9 text-xs font-bold rounded-lg transition-all duration-200 ${
-                aiAutoCapture ? 'animate-pulse' : ''
-              }`}
-              style={{
-                backgroundColor: aiAutoCapture ? `${THEME.gold}33` : THEME.panel,
-                color: aiAutoCapture ? THEME.gold : THEME.muted,
-                border: `1.5px solid ${aiAutoCapture ? THEME.gold : THEME.border}`,
-              }}
-            >
-              {ai.status === 'loading' ? (
-                <Loader2 className="size-3.5 mr-1.5 animate-spin" />
-              ) : aiAutoCapture ? (
-                <Sparkles className="size-3.5 mr-1.5" />
-              ) : (
-                <Brain className="size-3.5 mr-1.5" />
-              )}
-              {ai.status === 'loading' ? 'Memuat AI...' : aiAutoCapture ? 'AI Auto-Capture ON' : 'AI Auto-Capture OFF'}
-            </Button>
-          )}
         </div>
       </div>
     </div>
