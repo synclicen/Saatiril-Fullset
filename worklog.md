@@ -145,3 +145,25 @@ Stage Summary:
 - 3 files modified: mc-panel.tsx, operator-panel.tsx, use-saatiril-store.ts
 - Frame overlay now correctly: appears on operator camera preview, gets applied to captured photos
 - Root cause: '__FRAME_SAVED__' marker string was being used as actual image data
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix dual-photoshoot mode issues - MC stuck on sync screen, operator missing search, frame overlay not working
+
+Work Log:
+- Analyzed the entire photo mode codebase (mc-panel.tsx, operator-panel.tsx, main-app.tsx, socket.ts, admin-dashboard.tsx, store)
+- Identified root cause of frame overlay not appearing: handleRequestState in main-app.tsx used stripFrameForSync() which replaced frame data with '__FRAME_SAVED__' marker. First-time MC/Operator clients had no existing frame data to restore, so they never got the frame.
+- Fixed main-app.tsx: handleRequestState now sends full project data (including frame) instead of stripped version
+- Fixed socket.ts: sandbox/web mode socket.io connection now uses window.location.origin as base URL with XTransformPort=3003 as query parameter for Caddy gateway routing
+- Added search functionality to operator-panel.tsx: operators in photoshoot mode can now search students by NIM/name with compact search card and dropdown results (read-only)
+- Fixed admin-dashboard.tsx: non-Electron MC/Operator copy links now include socketPort parameter
+- Ran lint check - passed clean
+- Tested with Agent Browser: created dual-photoshoot project, verified MC panel search works, verified operator panel search works, verified channel switching works
+- Pushed and committed to GitHub
+
+Stage Summary:
+- Fixed frame overlay transmission on initial sync (main-app.tsx)
+- Fixed socket.io sandbox connection (socket.ts)
+- Added operator search for photoshoot mode (operator-panel.tsx)
+- Added socketPort to non-Electron links (admin-dashboard.tsx)
+- Commit: a9aaa7f pushed to https://github.com/synclicen/Saatiril-Fullset
