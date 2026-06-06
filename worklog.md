@@ -113,3 +113,35 @@ Stage Summary:
 - Setup exe: 97.69 MB (vs 310 MB before)
 - socket.io verified present in packaged app's node_modules
 - Build artifacts: https://github.com/synclicen/Saatiril-Fullset/actions/runs/27059549271
+
+---
+Task ID: 5
+Agent: Main Agent
+Task: Fix frame overlay not appearing on operator camera and saved photos
+
+Work Log:
+- User reported frame overlay from project setup not visible on operator camera and not auto-applied to saved photos
+- Analyzed all 7 source files: project-setup.tsx, operator-panel.tsx, admin-dashboard.tsx, mc-panel.tsx, use-saatiril-store.ts, socket.ts, main-app.tsx
+- Identified 3 critical bugs causing frame overlay failure
+
+Bug 1: MC panel SYNC_DB handler didn't call preserveFrameOnSync()
+- When operator sends SYNC_DB with frame stripped ('__FRAME_SAVED__'), MC panel lost the frame data
+- Fix: Added preserveFrameOnSync(proj.config, curProj.config) in mc-panel.tsx SYNC_DB handler
+
+Bug 2: Operator panel used '__FRAME_SAVED__' marker as img src
+- frameData = config?.frame ?? null — this returned the marker string instead of null
+- The marker was used as <img src> (broken image) and new Image().src (failed to load)
+- Fix: Normalized frameData to treat '__FRAME_SAVED__' as null
+
+Bug 3: Store's setCurrentProject and updateCurrentProject didn't restore frame from localStorage
+- When project had frame: '__FRAME_SAVED__' marker, the actual frame data in separate localStorage key was never restored
+- Fix: Added loadFrameFromStorage() calls when marker is detected in both methods
+
+- Verified all fixes with lint (passes)
+- Verified page loads correctly with Agent Browser
+- Committed and pushed to GitHub
+
+Stage Summary:
+- 3 files modified: mc-panel.tsx, operator-panel.tsx, use-saatiril-store.ts
+- Frame overlay now correctly: appears on operator camera preview, gets applied to captured photos
+- Root cause: '__FRAME_SAVED__' marker string was being used as actual image data
