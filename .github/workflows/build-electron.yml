@@ -70,6 +70,13 @@ jobs:
             Write-Host "Static export generated successfully ($fileCount files)"
             Write-Host "Top-level contents:"
             Get-ChildItem "out" | Format-Table Name, Length
+            Write-Host "Checking for index.html..."
+            if (Test-Path "out/index.html") {
+              Write-Host "index.html found - OK"
+            } else {
+              Write-Error "index.html NOT found in out/ directory!"
+              exit 1
+            }
           } else {
             Write-Error "Static export directory 'out' not found!"
             exit 1
@@ -88,10 +95,58 @@ jobs:
             exit 1
           }
 
+      - name: Verify extraResources directories exist
+        shell: pwsh
+        run: |
+          Write-Host "Checking extraResources directories..."
+          $dirs = @("out", "public")
+          foreach ($d in $dirs) {
+            if (Test-Path $d) {
+              $count = (Get-ChildItem $d -Recurse -File).Count
+              Write-Host "  $d : $count files - OK"
+            } else {
+              Write-Error "  $d : NOT FOUND!"
+              exit 1
+            }
+          }
+
       - name: Build Electron app (Windows - NSIS + Portable)
         run: npx electron-builder --win --x64 --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify packaged resources
+        shell: pwsh
+        run: |
+          Write-Host "=== Verifying packaged app resources ==="
+          $unpackedDir = "dist-electron\win-unpacked"
+          if (Test-Path $unpackedDir) {
+            Write-Host "Unpacked app found at: $unpackedDir"
+            $resourcesDir = Join-Path $unpackedDir "resources"
+            if (Test-Path $resourcesDir) {
+              Write-Host "Resources directory contents:"
+              Get-ChildItem $resourcesDir | Format-Table Name, Length
+              # Check if 'out' directory exists in resources
+              $outDir = Join-Path $resourcesDir "out"
+              if (Test-Path $outDir) {
+                $outFileCount = (Get-ChildItem $outDir -Recurse -File).Count
+                Write-Host "  out/ directory: $outFileCount files - OK"
+              } else {
+                Write-Warning "  out/ directory NOT found in resources!"
+              }
+              # Check if 'public' directory exists in resources
+              $publicDir = Join-Path $resourcesDir "public"
+              if (Test-Path $publicDir) {
+                Write-Host "  public/ directory: OK"
+              } else {
+                Write-Warning "  public/ directory NOT found in resources!"
+              }
+            } else {
+              Write-Warning "No resources directory found!"
+            }
+          } else {
+            Write-Warning "No unpacked directory found for verification"
+          }
 
       - name: List build artifacts
         shell: pwsh
