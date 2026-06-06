@@ -1,8 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Static export — for Electron production builds only. Disabled in dev mode.
-  // output: "export",
+  // Static export — required for Electron production builds.
+  // When building with `next build`, this generates a static `out/` directory
+  // that the Electron main process serves via its own HTTP server.
+  output: "export",
   
   // Disable image optimization (not available in static export)
   images: {
