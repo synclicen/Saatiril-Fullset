@@ -29,13 +29,8 @@
       "electron/main.js",
       "electron/preload.js",
       "out/**/*",
-      "public/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "public",
-        "to": "public"
-      }
+      "public/**/*",
+      "package.json"
     ],
     "win": {
       "icon": "public/icon.ico",
@@ -45,9 +40,15 @@
           "arch": [
             "x64"
           ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
         }
       ],
-      "artifactName": "SAATIRIL-Fullset-${version}-Setup.${ext}"
+      "artifactName": "SAATIRIL-Fullset-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -59,6 +60,9 @@
       "createStartMenuShortcut": true,
       "shortcutName": "SAATIRIL",
       "artifactName": "SAATIRIL-Fullset-${version}-Setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "SAATIRIL-Fullset-${version}-Portable.${ext}"
     },
     "linux": {
       "icon": "public/icon.png",
