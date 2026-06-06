@@ -5,7 +5,8 @@
  * It starts:
  * 1. Next.js static export server (HTTP on dynamic port)
  * 2. Socket.io relay server (on dynamic port)
- * 3. Electron BrowserWindow loading the Next.js app
+ * 3. Splash loading screen (immediate visual feedback)
+ * 4. Electron BrowserWindow loading the Next.js app
  *
  * IPC handlers exposed to the renderer:
  * - selectFolder: Open native folder picker dialog
@@ -38,9 +39,20 @@ let socketPort = DEFAULT_SOCKET_PORT
 //   resources/app/public/...
 // So __dirname points to resources/app/electron and
 // path.join(__dirname, '..', relativePath) resolves correctly.
-// In dev, same relative path works from project root.
+// With asar:true (fallback), extraResources are at process.resourcesPath
 function getResourcePath(relativePath: string): string {
-  return path.join(__dirname, '..', relativePath)
+  // Option 1: asar:false — files are directly in resources/app/
+  const appPath = path.join(__dirname, '..', relativePath)
+  if (fs.existsSync(appPath)) {
+    return appPath
+  }
+  // Option 2: extraResources — files are at resources/<name>
+  const extraPath = path.join(process.resourcesPath, relativePath)
+  if (fs.existsSync(extraPath)) {
+    return extraPath
+  }
+  // Fallback
+  return appPath
 }
 
 // ─── Static file server for Next.js export ─────────────────────────────────
@@ -80,33 +92,42 @@ function startStaticServer(outDir: string): Promise<void> {
       ]
 
       for (const filePath of tryPaths) {
-        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-          const ext = path.extname(filePath).toLowerCase()
-          const contentType = mimeTypes[ext] || 'application/octet-stream'
+        try {
+          if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+            const ext = path.extname(filePath).toLowerCase()
+            const contentType = mimeTypes[ext] || 'application/octet-stream'
 
-          // Set CORS headers for LAN access
-          res.setHeader('Access-Control-Allow-Origin', '*')
-          res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+            // Set CORS headers for LAN access
+            res.setHeader('Access-Control-Allow-Origin', '*')
+            res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
 
-          if (req.method === 'OPTIONS') {
-            res.writeHead(200)
-            res.end()
+            if (req.method === 'OPTIONS') {
+              res.writeHead(200)
+              res.end()
+              return
+            }
+
+            res.writeHead(200, { 'Content-Type': contentType })
+            fs.createReadStream(filePath).pipe(res)
             return
           }
-
-          res.writeHead(200, { 'Content-Type': contentType })
-          fs.createReadStream(filePath).pipe(res)
-          return
+        } catch {
+          // File might be inside asar and stat could fail — try next path
+          continue
         }
       }
 
       // Fallback to index.html for SPA routing
       const indexPath = path.join(outDir, 'index.html')
-      if (fs.existsSync(indexPath)) {
-        res.writeHead(200, { 'Content-Type': 'text/html' })
-        fs.createReadStream(indexPath).pipe(res)
-        return
+      try {
+        if (fs.existsSync(indexPath)) {
+          res.writeHead(200, { 'Content-Type': 'text/html' })
+          fs.createReadStream(indexPath).pipe(res)
+          return
+        }
+      } catch {
+        // ignore
       }
 
       res.writeHead(404, { 'Content-Type': 'text/plain' })
@@ -294,8 +315,104 @@ function registerIpcHandlers() {
   })
 }
 
+// ─── Splash/Loading Window ────────────────────────────────────────────────
+let splashWindow: BrowserWindow | null = null
+
+function createSplashWindow() {
+  splashWindow = new BrowserWindow({
+    width: 500,
+    height: 350,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    center: true,
+    backgroundColor: '#00000000',
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  })
+
+  // Load a simple splash screen HTML
+  splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(splashHTML)}`)
+
+  splashWindow.on('closed', () => {
+    splashWindow = null
+  })
+}
+
+const splashHTML = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 500px;
+      height: 350px;
+      background: linear-gradient(135deg, #1a0b2e 0%, #2d1b69 50%, #1a0b2e 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      color: white;
+      border-radius: 16px;
+      overflow: hidden;
+    }
+    .logo {
+      font-size: 42px;
+      font-weight: 800;
+      letter-spacing: 6px;
+      margin-bottom: 8px;
+      background: linear-gradient(90deg, #a78bfa, #7c3aed, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-size: 200% auto;
+      animation: shimmer 2s linear infinite;
+    }
+    .subtitle {
+      font-size: 13px;
+      color: rgba(255,255,255,0.6);
+      letter-spacing: 2px;
+      margin-bottom: 40px;
+    }
+    .loader {
+      width: 40px;
+      height: 40px;
+      border: 3px solid rgba(255,255,255,0.15);
+      border-top-color: #7c3aed;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    .status {
+      margin-top: 20px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.5);
+      letter-spacing: 1px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes shimmer { to { background-position: 200% center; } }
+  </style>
+</head>
+<body>
+  <div class="logo">SAATIRIL</div>
+  <div class="subtitle">MANAJEMEN ACARA FOTO</div>
+  <div class="loader"></div>
+  <div class="status">Mempersiapkan aplikasi...</div>
+</body>
+</html>
+`
+
 // ─── Create Electron Window ────────────────────────────────────────────────
 let mainWindow: BrowserWindow | null = null
+const MAX_LOAD_RETRIES = 5
+const LOAD_RETRY_DELAY = 1500 // ms
+let currentRetryCount = 0
 
 function createWindow() {
   const iconPath = getResourcePath('public/logo.svg')
@@ -329,10 +446,15 @@ function createWindow() {
     : `http://localhost:${httpPort}/?${socketPortParam}`
 
   console.log(`[SAATIRIL] Loading URL: ${loadUrl}`)
+  currentRetryCount = 0
   mainWindow.loadURL(loadUrl)
 
-  // Show window when ready
+  // Show window when ready — close splash first
   mainWindow.once('ready-to-show', () => {
+    // Close splash and show main window
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.close()
+    }
     mainWindow?.show()
     mainWindow?.focus()
   })
@@ -341,6 +463,26 @@ function createWindow() {
   if (isDev) {
     mainWindow.webContents.openDevTools()
   }
+
+  // Handle page load failure with retry logic
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDesc, validatedURL) => {
+    console.error(`[SAATIRIL] Page load failed: ${errorCode} - ${errorDesc} (URL: ${validatedURL})`)
+    // Only retry if it's a connection error (server not ready yet)
+    if (errorCode === -102 || errorCode === -101 || errorCode === -105) {
+      // ERR_CONNECTION_REFUSED, ERR_CONNECTION_RESET, ERR_NAME_NOT_RESOLVED
+      currentRetryCount++
+      if (currentRetryCount <= MAX_LOAD_RETRIES) {
+        console.log(`[SAATIRIL] Retrying page load in ${LOAD_RETRY_DELAY}ms (attempt ${currentRetryCount}/${MAX_LOAD_RETRIES})...`)
+        setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.loadURL(loadUrl)
+          }
+        }, LOAD_RETRY_DELAY)
+      } else {
+        console.error(`[SAATIRIL] Failed to load app after ${MAX_LOAD_RETRIES} retries. Giving up.`)
+      }
+    }
+  })
 
   // Open external links in system browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -357,6 +499,7 @@ function createWindow() {
 app.whenReady().then(async () => {
   console.log('[SAATIRIL] ═══════════════════════════════════════════════════════════')
   console.log('[SAATIRIL]  SAATIRIL Electron App Starting...')
+  console.log(`[SAATIRIL]  Version: ${app.getVersion()}`)
   console.log(`[SAATIRIL]  isDev: ${isDev}`)
   console.log(`[SAATIRIL]  isPackaged: ${app.isPackaged}`)
   console.log(`[SAATIRIL]  __dirname: ${__dirname}`)
@@ -365,6 +508,9 @@ app.whenReady().then(async () => {
 
   // Register IPC handlers
   registerIpcHandlers()
+
+  // Show splash screen immediately — gives visual feedback during slow startup
+  createSplashWindow()
 
   // Start servers (only in production; in dev they run separately)
   if (!isDev) {
@@ -376,6 +522,7 @@ app.whenReady().then(async () => {
       console.log(`[SAATIRIL] Static export found (${fileCount} top-level items)`)
       try {
         await startStaticServer(outDir)
+        console.log('[SAATIRIL] HTTP server is ready.')
       } catch (err: any) {
         console.error('[SAATIRIL] Failed to start HTTP server:', err.message)
       }
@@ -396,11 +543,13 @@ app.whenReady().then(async () => {
 
     try {
       await startSocketServer()
+      console.log('[SAATIRIL] Socket server is ready.')
     } catch (err: any) {
       console.error('[SAATIRIL] Failed to start Socket server:', err.message)
     }
   }
 
+  // Create main window (servers are now ready, page will load successfully)
   createWindow()
 
   app.on('activate', () => {
