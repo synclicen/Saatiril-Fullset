@@ -24,6 +24,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Enable static export for Electron
+        shell: pwsh
+        run: |
+          $configPath = "next.config.ts"
+          $content = Get-Content $configPath -Raw
+          # Uncomment the output: "export" line
+          $content = $content -replace '// output: "export"', 'output: "export"'
+          Set-Content $configPath $content
+          Write-Host "Enabled static export in next.config.ts"
+
       - name: Build Next.js static export
         run: npx next build
         env:
@@ -44,10 +54,12 @@ jobs:
           path: dist-electron/*.exe
           retention-days: 30
 
-      - name: Upload portable build (if exists)
+      - name: Upload build info
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: SAATIRIL-Windows-Portable
-          path: dist-electron/*.blockmap
+          name: SAATIRIL-Build-Info
+          path: |
+            dist-electron/*.blockmap
+            dist-electron/*.yml
           retention-days: 7

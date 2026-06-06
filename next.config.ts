@@ -1,10 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Static export — required for Electron production builds.
-  // When building with `next build`, this generates a static `out/` directory
+  // Static export — for Electron production builds only.
+  // In CI (GitHub Actions), this is enabled to generate `out/` directory
   // that the Electron main process serves via its own HTTP server.
-  output: "export",
+  // In dev mode, keep this commented out for hot-reload support.
+  // output: "export",
   
   // Disable image optimization (not available in static export)
   images: {
