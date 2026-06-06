@@ -56,3 +56,33 @@ Stage Summary:
 - Retake: MC must reset and resend data to operator for photo retake
 - Dual Photoshoot: MC sends to both cameras simultaneously, student marked done only when both operators finish
 - Emerald/green accent color for photoshoot modes vs gold for standard modes
+---
+Task ID: 3
+Agent: Main Agent
+Task: Fix portable app startup failure - add splash screen, retry logic, improved path resolution
+
+Work Log:
+- Analyzed root causes of portable app slow/failed startup
+- Identified 6 root causes: race condition, no retry, no splash screen, path resolution, asar issues, missing portable config
+- Reset local repo to remote HEAD (which already had asar:false and Promise-based servers)
+- Updated electron/main.ts with:
+  - Splash/loading screen (SAATIRIL branded, shows during startup)
+  - did-fail-load handler with retry logic (up to 5 retries, 1.5s delay)
+  - Improved getResourcePath with extraResources fallback
+  - try-catch for stat operations in static file server
+- Updated eslint.config.mjs to exclude compiled electron/*.js from linting
+- Compiled Electron TypeScript successfully
+- Verified all fixes with automated checks (13/13 passed)
+- Tested HTTP server startup sequence locally (passed)
+- Pushed to GitHub (commit 2530009)
+- GitHub Actions workflow Run #5 completed successfully (all 20 steps passed)
+- Build artifacts verified:
+  - SAATIRIL-Fullset-1.0.0-Setup.exe (310.29 MB)
+  - SAATIRIL-Fullset-1.0.0-Portable.exe (310.06 MB)
+- Verification step confirmed: out/ (47 files OK), public/ (4 files OK), electron/main.js OK
+
+Stage Summary:
+- All fixes applied and verified in CI build
+- Portable app now has: splash screen, retry logic, improved path resolution
+- Key fixes: race condition (await servers), did-fail-load retry, getResourcePath fallback
+- Build artifacts available at: https://github.com/synclicen/Saatiril-Fullset/actions/runs/27058380898
