@@ -71,6 +71,29 @@ jobs:
       - name: Compile Electron TypeScript
         run: npx tsc -p electron/tsconfig.json
 
+      - name: Prune devDependencies before packaging
+        run: npm prune --production
+        env:
+          PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING: 1
+
+      - name: Verify production node_modules
+        shell: pwsh
+        run: |
+          Write-Host "=== Production node_modules ==="
+          if (Test-Path "node_modules") {
+            $prodDeps = Get-ChildItem "node_modules" -Directory | Where-Object { $_.Name -notmatch '^\.|^@' -or ($_.Name -eq '@types') }
+            $topLevelCount = (Get-ChildItem "node_modules" -Directory).Count
+            $totalSize = (Get-ChildItem "node_modules" -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum / 1MB
+            Write-Host "Top-level packages: $topLevelCount"
+            Write-Host "Total size: $([math]::Round($totalSize, 2)) MB"
+            Write-Host ""
+            Write-Host "Top-level directories:"
+            Get-ChildItem "node_modules" -Directory | ForEach-Object { Write-Host "  $($_.Name)" }
+          } else {
+            Write-Error "node_modules NOT found after prune!"
+            exit 1
+          }
+
       - name: Verify source directories for packaging
         shell: pwsh
         run: |
@@ -101,6 +124,8 @@ jobs:
             $outDir = Join-Path $appDir "out"
             $publicDir = Join-Path $appDir "public"
             $electronDir = Join-Path $appDir "electron"
+            $nodeModulesDir = Join-Path $appDir "node_modules"
+
             if (Test-Path $outDir) {
               $count = (Get-ChildItem $outDir -Recurse -File).Count
               Write-Host "  out/ : $count files - OK"
@@ -126,6 +151,20 @@ jobs:
               Write-Error "  electron/ : NOT FOUND!"
               exit 1
             }
+            if (Test-Path $nodeModulesDir) {
+              $nmSize = (Get-ChildItem $nodeModulesDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum / 1MB
+              $nmCount = (Get-ChildItem $nodeModulesDir -Directory).Count
+              Write-Host "  node_modules/ : $nmCount top-level packages, $([math]::Round($nmSize, 2)) MB - OK"
+              # Verify socket.io is present
+              if (Test-Path (Join-Path $nodeModulesDir "socket.io")) {
+                Write-Host "  node_modules/socket.io : OK"
+              } else {
+                Write-Error "  node_modules/socket.io : NOT FOUND! App will crash on startup!"
+                exit 1
+              }
+            } else {
+              Write-Warning "  node_modules/ : NOT FOUND (may be OK if socket.io is bundled)"
+            }
             # Verify index.html exists for the static server
             if (Test-Path (Join-Path $outDir "index.html")) {
               Write-Host "  out/index.html : OK"
@@ -133,6 +172,10 @@ jobs:
               Write-Error "  out/index.html : NOT FOUND! Static server will fail!"
               exit 1
             }
+            # Report total app size
+            $appSize = (Get-ChildItem $appDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum / 1MB
+            Write-Host ""
+            Write-Host "  Total app/ size: $([math]::Round($appSize, 2)) MB"
           } else {
             # Fallback: check for app.asar (shouldn't happen with asar:false)
             Write-Warning "No app directory found - checking for asar..."
