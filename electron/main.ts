@@ -32,14 +32,15 @@ let httpPort = DEFAULT_HTTP_PORT
 let socketPort = DEFAULT_SOCKET_PORT
 
 // ─── Resource path resolution ──────────────────────────────────────────────
-// In packaged apps, extraResources are placed at process.resourcesPath
-// In dev, resources are relative to the project root
+// With asar:false, packaged app structure is:
+//   resources/app/electron/main.js
+//   resources/app/out/...
+//   resources/app/public/...
+// So __dirname points to resources/app/electron and
+// path.join(__dirname, '..', relativePath) resolves correctly.
+// In dev, same relative path works from project root.
 function getResourcePath(relativePath: string): string {
-  if (isDev) {
-    return path.join(__dirname, '..', relativePath)
-  }
-  // Packaged app: extraResources are at resources/<name>
-  return path.join(process.resourcesPath, relativePath)
+  return path.join(__dirname, '..', relativePath)
 }
 
 // ─── Static file server for Next.js export ─────────────────────────────────
@@ -380,11 +381,15 @@ app.whenReady().then(async () => {
       }
     } else {
       console.error('[SAATIRIL] ❌ No static export found at', outDir)
-      console.error('[SAATIRIL] Available resources:')
+      console.error('[SAATIRIL] Checking parent directory:')
       try {
-        const resourcesDir = process.resourcesPath
-        if (fs.existsSync(resourcesDir)) {
-          fs.readdirSync(resourcesDir).forEach(f => console.error(`  - ${f}`))
+        const parentDir = path.dirname(outDir)
+        if (fs.existsSync(parentDir)) {
+          fs.readdirSync(parentDir).forEach(f => {
+            const fullPath = path.join(parentDir, f)
+            const isDir = fs.statSync(fullPath).isDirectory()
+            console.error(`  - ${f}${isDir ? '/' : ''}`)
+          })
         }
       } catch (_) { /* ignore */ }
     }

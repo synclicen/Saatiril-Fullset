@@ -25,22 +25,13 @@
     "directories": {
       "output": "dist-electron"
     },
+    "asar": false,
     "files": [
       "electron/main.js",
       "electron/preload.js",
+      "out/**/*",
+      "public/**/*",
       "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "out",
-        "to": "out",
-        "filter": ["**/*"]
-      },
-      {
-        "from": "public",
-        "to": "public",
-        "filter": ["**/*"]
-      }
     ],
     "win": {
       "icon": "public/icon.ico",

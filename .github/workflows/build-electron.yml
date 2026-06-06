@@ -38,12 +38,9 @@ jobs:
         run: |
           $configPath = "next.config.ts"
           $content = Get-Content $configPath -Raw
-          # Uncomment the output: "export" line
           $content = $content -replace '// output: "export",', 'output: "export",'
           Set-Content $configPath $content -NoNewline
           Write-Host "Enabled static export in next.config.ts"
-          Write-Host "Content preview:"
-          Get-Content $configPath | Select-Object -First 10
 
       - name: Remove API route (incompatible with static export)
         shell: pwsh
@@ -51,9 +48,7 @@ jobs:
           $apiDir = "src/app/api"
           if (Test-Path $apiDir) {
             Remove-Item -Recurse -Force $apiDir
-            Write-Host "Removed $apiDir (API routes not supported in static export)"
-          } else {
-            Write-Host "No API directory found, skipping"
+            Write-Host "Removed $apiDir"
           }
 
       - name: Build Next.js (static export)
@@ -65,47 +60,26 @@ jobs:
       - name: Verify static export output
         shell: pwsh
         run: |
-          if (Test-Path "out") {
+          if (Test-Path "out/index.html") {
             $fileCount = (Get-ChildItem "out" -Recurse -File).Count
-            Write-Host "Static export generated successfully ($fileCount files)"
-            Write-Host "Top-level contents:"
-            Get-ChildItem "out" | Format-Table Name, Length
-            Write-Host "Checking for index.html..."
-            if (Test-Path "out/index.html") {
-              Write-Host "index.html found - OK"
-            } else {
-              Write-Error "index.html NOT found in out/ directory!"
-              exit 1
-            }
+            Write-Host "Static export OK ($fileCount files)"
           } else {
-            Write-Error "Static export directory 'out' not found!"
+            Write-Error "out/index.html NOT found!"
             exit 1
           }
 
       - name: Compile Electron TypeScript
         run: npx tsc -p electron/tsconfig.json
 
-      - name: Verify Electron compilation
+      - name: Verify source directories for packaging
         shell: pwsh
         run: |
-          if ((Test-Path "electron/main.js") -and (Test-Path "electron/preload.js")) {
-            Write-Host "Electron TypeScript compiled successfully"
-          } else {
-            Write-Error "Electron compilation output not found!"
-            exit 1
-          }
-
-      - name: Verify extraResources directories exist
-        shell: pwsh
-        run: |
-          Write-Host "Checking extraResources directories..."
-          $dirs = @("out", "public")
-          foreach ($d in $dirs) {
+          foreach ($d in @("out", "public")) {
             if (Test-Path $d) {
               $count = (Get-ChildItem $d -Recurse -File).Count
-              Write-Host "  $d : $count files - OK"
+              Write-Host "$d : $count files - OK"
             } else {
-              Write-Error "  $d : NOT FOUND!"
+              Write-Error "$d : NOT FOUND!"
               exit 1
             }
           }
@@ -115,37 +89,61 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify packaged resources
+      - name: Verify packaged app structure
         shell: pwsh
         run: |
-          Write-Host "=== Verifying packaged app resources ==="
-          $unpackedDir = "dist-electron\win-unpacked"
-          if (Test-Path $unpackedDir) {
-            Write-Host "Unpacked app found at: $unpackedDir"
-            $resourcesDir = Join-Path $unpackedDir "resources"
-            if (Test-Path $resourcesDir) {
-              Write-Host "Resources directory contents:"
-              Get-ChildItem $resourcesDir | Format-Table Name, Length
-              # Check if 'out' directory exists in resources
-              $outDir = Join-Path $resourcesDir "out"
-              if (Test-Path $outDir) {
-                $outFileCount = (Get-ChildItem $outDir -Recurse -File).Count
-                Write-Host "  out/ directory: $outFileCount files - OK"
+          Write-Host "=== Verifying packaged app (asar:false) ==="
+          $appDir = "dist-electron\win-unpacked\resources\app"
+          if (Test-Path $appDir) {
+            Write-Host "App directory found (asar:false confirmed): $appDir"
+            Get-ChildItem $appDir | Format-Table Name, Length
+            # Verify critical directories exist inside app/
+            $outDir = Join-Path $appDir "out"
+            $publicDir = Join-Path $appDir "public"
+            $electronDir = Join-Path $appDir "electron"
+            if (Test-Path $outDir) {
+              $count = (Get-ChildItem $outDir -Recurse -File).Count
+              Write-Host "  out/ : $count files - OK"
+            } else {
+              Write-Error "  out/ : NOT FOUND! App will fail to start!"
+              exit 1
+            }
+            if (Test-Path $publicDir) {
+              Write-Host "  public/ : OK"
+            } else {
+              Write-Error "  public/ : NOT FOUND!"
+              exit 1
+            }
+            if (Test-Path $electronDir) {
+              Write-Host "  electron/ : OK"
+              if (Test-Path (Join-Path $electronDir "main.js")) {
+                Write-Host "  electron/main.js : OK"
               } else {
-                Write-Warning "  out/ directory NOT found in resources!"
-              }
-              # Check if 'public' directory exists in resources
-              $publicDir = Join-Path $resourcesDir "public"
-              if (Test-Path $publicDir) {
-                Write-Host "  public/ directory: OK"
-              } else {
-                Write-Warning "  public/ directory NOT found in resources!"
+                Write-Error "  electron/main.js : NOT FOUND!"
+                exit 1
               }
             } else {
-              Write-Warning "No resources directory found!"
+              Write-Error "  electron/ : NOT FOUND!"
+              exit 1
+            }
+            # Verify index.html exists for the static server
+            if (Test-Path (Join-Path $outDir "index.html")) {
+              Write-Host "  out/index.html : OK"
+            } else {
+              Write-Error "  out/index.html : NOT FOUND! Static server will fail!"
+              exit 1
             }
           } else {
-            Write-Warning "No unpacked directory found for verification"
+            # Fallback: check for app.asar (shouldn't happen with asar:false)
+            Write-Warning "No app directory found - checking for asar..."
+            $asarPath = "dist-electron\win-unpacked\resources\app.asar"
+            if (Test-Path $asarPath) {
+              Write-Error "app.asar found! asar:false is NOT working correctly!"
+              exit 1
+            } else {
+              Write-Error "No app directory or app.asar found!"
+              exit 1
+            }
           }
 
       - name: List build artifacts
@@ -157,8 +155,6 @@ jobs:
               $sizeMB = [math]::Round($_.Length / 1MB, 2)
               Write-Host "  $($_.Name) - $sizeMB MB"
             }
-          } else {
-            Write-Error "No dist-electron directory found!"
           }
 
       - name: Upload NSIS Installer
