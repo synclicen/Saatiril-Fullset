@@ -41,9 +41,12 @@ import {
   type Student,
   type StudentStatus,
   type PhotoHistoryItem,
+  type CameraMode,
   mergeDatabases,
   stripFrameForSync,
   preserveFrameOnSync,
+  isPhotoshootMode,
+  isDualPhotoshootMode,
 } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -91,6 +94,12 @@ function sanitizeNama(nama: string): string {
 
 function buildFilename(nim: string, nama: string, suffix: number, type: string): string {
   return `${nim}_${sanitizeNama(nama)}_${suffix}_${type}.jpg`
+}
+
+function buildPhotoshootFilename(nim: string, nama: string, channel: number): string {
+  return channel > 1
+    ? `${nim}_${sanitizeNama(nama)}_Ch${channel}.jpg`
+    : `${nim}_${sanitizeNama(nama)}.jpg`
 }
 
 function isActiveStatus(status: StudentStatus): boolean {
@@ -143,7 +152,7 @@ interface SyncDbData {
     id: string
     name: string
     config: {
-      mode: 'single' | 'dual'
+      mode: CameraMode
       ratio: string
       preset: string
       targetFolder: string
@@ -236,15 +245,29 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   }, [frameData])
 
   // ── Derived data ─────────────────────────────────────────────────────────
+  const mode = currentProject?.config.mode ?? 'single'
+  const photoshoot = isPhotoshootMode(mode)
+  const dualPhotoshoot = isDualPhotoshootMode(mode)
+
   const channelStudents = useMemo<Student[]>(() => {
     if (!currentProject) return []
+    if (photoshoot) {
+      // In photoshoot modes, show all students
+      return currentProject.database
+    }
     return currentProject.database.filter((s) => s.assignedChannel === myChannel)
-  }, [currentProject, myChannel])
+  }, [currentProject, myChannel, photoshoot])
 
   const currentlyActive = useMemo<Student | null>(() => {
+    if (photoshoot) {
+      // In photoshoot mode, check if any student has active status for our channel
+      // For dual-photoshoot, check active_<myChannel>
+      const targetStatus: StudentStatus = `active_${myChannel}`
+      return channelStudents.find((s) => s.status === targetStatus) ?? null
+    }
     const targetStatus: StudentStatus = `active_${myChannel}`
     return channelStudents.find((s) => s.status === targetStatus) ?? null
-  }, [channelStudents, myChannel])
+  }, [channelStudents, myChannel, photoshoot])
 
   const nextPending = useMemo<Student | null>(() => {
     return channelStudents.find((s) => s.status === 'pending') ?? null
@@ -259,10 +282,17 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const capturePhase = useMemo<CapturePhase>(() => {
     if (sending) return 'sending'
     if (!hasActiveTarget) return 'standby'
+    if (photoshoot) {
+      // Photoshoot: only 1 photo needed
+      if (opCapturedPhotos.length === 0) return 'ready-1'
+      // After 1 photo in photoshoot mode, immediately go to sending
+      return 'sending'
+    }
+    // Standard mode: 2 photos
     if (opCapturedPhotos.length === 0) return 'ready-1'
     if (opCapturedPhotos.length === 1) return 'ready-2'
     return 'standby'
-  }, [sending, hasActiveTarget, opCapturedPhotos.length])
+  }, [sending, hasActiveTarget, opCapturedPhotos.length, photoshoot])
 
   // ── Auto-scroll refs ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -401,15 +431,18 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   // ── State recovery ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!currentProject) return
-    const activeStudent = currentProject.database.find(
-      (s) => s.assignedChannel === myChannel && isActiveStatus(s.status),
-    )
+    const activeStudent = currentProject.database.find((s) => {
+      if (photoshoot) {
+        return s.status === `active_${myChannel}`
+      }
+      return s.assignedChannel === myChannel && isActiveStatus(s.status)
+    })
     if (activeStudent) {
       setOpCurrentTarget(activeStudent)
     } else if (opCurrentTarget && !isActiveStatus(opCurrentTarget.status)) {
       setOpCurrentTarget(null)
     }
-  }, [currentProject, myChannel, setOpCurrentTarget])
+  }, [currentProject, myChannel, setOpCurrentTarget, photoshoot])
 
   // ── Socket: MC_CALL ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -430,9 +463,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       const mergedConfig = preserveFrameOnSync(data.project.config, proj.config)
       updateCurrentProject({ ...proj, database: mergedDb, photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : proj.photoHistory, config: mergedConfig })
       const ch = myChannelRef.current
-      const activeStudent = data.project.database.find(
-        (s: Student) => s.assignedChannel === ch && isActiveStatus(s.status),
-      )
+      const activeStudent = data.project.database.find((s: Student) => {
+        if (isPhotoshootMode(data.project.config.mode)) {
+          return s.status === `active_${ch}`
+        }
+        return s.assignedChannel === ch && isActiveStatus(s.status)
+      })
       if (activeStudent) setOpCurrentTarget(activeStudent)
     }
     onLocal('SYNC_DB', handleSyncDb)
@@ -451,9 +487,86 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       const currentPhotos = useSaatirilStore.getState().opCapturedPhotos
       const currentTarget = useSaatirilStore.getState().opCurrentTarget
       const photoCount = currentPhotos.length
+      const currentMode = useSaatirilStore.getState().currentProject?.config.mode ?? 'single'
+      const isPhotoshoot = isPhotoshootMode(currentMode)
 
-      console.log('[SAATIRIL OP] finalizeCapture: photoCount =', photoCount)
+      console.log('[SAATIRIL OP] finalizeCapture: photoCount =', photoCount, 'mode =', currentMode)
 
+      // Photoshoot mode: save after 1 photo
+      if (isPhotoshoot && photoCount >= 1) {
+        if (!currentTarget) {
+          console.warn('[SAATIRIL OP] finalizeCapture: opCurrentTarget is null — aborting')
+          setSending(false)
+          isCapturingRef.current = false
+          resetOpState()
+          return
+        }
+        setSending(true)
+        const student = currentTarget
+        const allPhotos = [...currentPhotos]
+        const historyItem: PhotoHistoryItem = {
+          student: { ...student },
+          photos: allPhotos,
+          channel: myChannel,
+        }
+        // Don't mark as done here in dual-photoshoot — let MC handle that
+        if (!isDualPhotoshootMode(currentMode)) {
+          updateStudentStatus(student.id, 'done')
+        }
+        saveProjectsToStorageNow()
+
+        console.log('[SAATIRIL OP] Emitting PHOTOS_SAVED for student:', student.nama, 'channel:', myChannel)
+
+        emitLocal('PHOTOS_SAVED', {
+          student: { ...student, status: isDualPhotoshootMode(currentMode) ? student.status : 'done' },
+          photos: allPhotos,
+          channel: myChannel,
+        })
+        emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Selesai — Menunggu target...' })
+
+        const projConfig = useSaatirilStore.getState().currentProject?.config
+        if (projConfig) {
+          const api = window.saatirilAPI
+          if (api?.savePhoto) {
+            const targetFolder = projConfig.targetFolder
+            const filename = buildPhotoshootFilename(student.nim, student.nama, myChannel)
+
+            api.savePhoto({ base64Data: allPhotos[0], filename, targetFolder }).then((path: string | null) => {
+              if (path) {
+                console.log(`[SAATIRIL OP] Photo saved to disk: → ${path}`)
+              } else {
+                console.warn('[SAATIRIL OP] Photo failed to save to disk')
+              }
+            }).catch((err: Error) => {
+              console.error('[SAATIRIL OP] Error saving photo to disk:', err)
+            })
+          }
+        }
+        setTimeout(() => {
+          const store = useSaatirilStore.getState()
+          if (store.currentProject) {
+            const existingIdx = store.currentProject.photoHistory.findIndex(
+              (h) => h.student.id === student.id && h.channel === myChannel
+            )
+            let newHistory: PhotoHistoryItem[]
+            if (existingIdx !== -1) {
+              newHistory = [...store.currentProject.photoHistory]
+              newHistory[existingIdx] = historyItem
+            } else {
+              newHistory = [...store.currentProject.photoHistory, historyItem]
+            }
+            const updatedProject = { ...store.currentProject, photoHistory: newHistory }
+            store.updateCurrentProject(updatedProject)
+            emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
+          }
+          setSending(false)
+          isCapturingRef.current = false
+          setTimeout(() => { resetOpState() }, 300)
+        }, 100)
+        return
+      }
+
+      // Standard mode (single/dual): 2 photos
       if (photoCount === 1) {
         isCapturingRef.current = false
         emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Pose 1 OK — Siap Foto 2' })
@@ -538,7 +651,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   // ── Photo capture logic ──────────────────────────────────────────────────
   const handleCapture = useCallback(() => {
     if (!opCurrentTarget) return
-    if (capturePhase !== 'ready-1' && capturePhase !== 'ready-2') return
+    // Photoshoot mode: only ready-1; Standard mode: ready-1 and ready-2
+    if (photoshoot) {
+      if (capturePhase !== 'ready-1') return
+    } else {
+      if (capturePhase !== 'ready-1' && capturePhase !== 'ready-2') return
+    }
     if (isCapturingRef.current) return
     isCapturingRef.current = true
 
@@ -594,7 +712,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     } else {
       finalizeCapture(canvas)
     }
-  }, [opCurrentTarget, capturePhase, aspectRatio, cssFilter, frameData, finalizeCapture])
+  }, [opCurrentTarget, capturePhase, aspectRatio, cssFilter, frameData, finalizeCapture, photoshoot])
 
   // ── AI: stable refs for callback ─────────────────────────────────────────
   const capturePhaseRef = useRef(capturePhase)
@@ -631,16 +749,23 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   // ── Progress badge text ──────────────────────────────────────────────────
   const progressText = useMemo(() => {
     if (!hasActiveTarget) return 'Menunggu Arahan MC...'
-    if (capturePhase === 'ready-1') return 'Siap Foto 1'
-    if (capturePhase === 'ready-2') return 'Pose 1 OK - Siap Foto 2'
-    if (capturePhase === 'sending') return 'Mengirim...'
+    if (photoshoot) {
+      if (capturePhase === 'ready-1') return 'Siap Foto'
+      if (capturePhase === 'sending') return 'Mengirim...'
+    } else {
+      if (capturePhase === 'ready-1') return 'Siap Foto 1'
+      if (capturePhase === 'ready-2') return 'Pose 1 OK - Siap Foto 2'
+      if (capturePhase === 'sending') return 'Mengirim...'
+    }
     return 'Menunggu Arahan MC...'
-  }, [hasActiveTarget, capturePhase])
+  }, [hasActiveTarget, capturePhase, photoshoot])
 
   // ── Render helpers ───────────────────────────────────────────────────────
   const getRowStyle = (student: Student): React.CSSProperties => {
-    const isActive = student.status === `active_${myChannel}`
-    const isNext = student.id === nextPending?.id && student.status === 'pending'
+    const isActive = photoshoot
+      ? student.status === `active_${myChannel}`
+      : student.status === `active_${myChannel}`
+    const isNext = !photoshoot && student.id === nextPending?.id && student.status === 'pending'
     const isDone = student.status === 'done'
     if (isActive) return { backgroundColor: `${THEME.gold}22`, borderLeft: `4px solid ${THEME.gold}`, boxShadow: `0 0 12px ${THEME.gold}44` }
     if (isNext) return { backgroundColor: THEME.panel, borderLeft: `4px solid ${THEME.gold}` }
@@ -770,8 +895,11 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
     if (capturePhase === 'ready-1') {
       return (
-        <Button onClick={handleCapture} className={btnClass} style={{ backgroundColor: THEME.gold, color: THEME.bg, border: `2px solid ${THEME.gold}`, boxShadow: `0 0 30px ${THEME.gold}44, 0 0 60px ${THEME.gold}22` }}>
-          <Camera className="size-4 mr-2" />FOTO 1 — TOGA
+        <Button onClick={handleCapture} className={btnClass} style={photoshoot
+          ? { backgroundColor: '#4ade80', color: '#1a0b2e', border: '2px solid #4ade80', boxShadow: '0 0 30px #4ade8044, 0 0 60px #4ade8022' }
+          : { backgroundColor: THEME.gold, color: THEME.bg, border: `2px solid ${THEME.gold}`, boxShadow: `0 0 30px ${THEME.gold}44, 0 0 60px ${THEME.gold}22` }
+        }>
+          <Camera className="size-4 mr-2" />{photoshoot ? 'FOTO' : 'FOTO 1 — TOGA'}
         </Button>
       )
     }

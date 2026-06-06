@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useSaatirilStore, type AppTab, type Role, type Project, mergeDatabases, stripFrameForSync } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type AppTab, type Role, type Project, type CameraMode, mergeDatabases, stripFrameForSync, isDualMode, isPhotoshootMode } from '@/store/use-saatiril-store'
 import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth } from '@/lib/socket'
 
 import AdminDashboard from '@/components/saatiril/admin-dashboard'
@@ -53,14 +53,14 @@ const TABS: TabConfig[] = [
 ]
 
 // ─── Mode badge text helper ───────────────────────────────────────────────────
-function getModeBadgeText(role: Role, channel: number): string {
+function getModeBadgeText(role: Role, channel: number, mode: CameraMode): string {
   switch (role) {
     case 'admin':
       return 'Admin Control Center'
     case 'mc':
-      return `Layar MC - Jalur ${channel}`
+      return isPhotoshootMode(mode) ? `Layar MC` : `Layar MC - Jalur ${channel}`
     case 'operator':
-      return `Kamera - Jalur ${channel}`
+      return isPhotoshootMode(mode) ? `Kamera ${channel}` : `Kamera - Jalur ${channel}`
   }
 }
 
@@ -91,7 +91,7 @@ export function MainApp() {
   useEffect(() => { currentProjectRef.current = currentProject }, [currentProject])
 
   // ── Derived values ─────────────────────────────────────────────────────────
-  const isDualMode = currentProject?.config.mode === 'dual'
+  const isDualModeVal = isDualMode(currentProject?.config.mode ?? 'single')
   // Non-admin is synced when they have a project (from server or localStorage)
   const isSynced = myRole === 'admin' || currentProject !== null
   const effectiveTab: AppTab = useMemo(() => {
@@ -408,7 +408,7 @@ export function MainApp() {
               {myRole === 'admin' && <LayoutDashboard className="size-3" />}
               {myRole === 'mc' && <Megaphone className="size-3" />}
               {myRole === 'operator' && <Camera className="size-3" />}
-              <span className="hidden md:inline">{getModeBadgeText(myRole, myChannel)}</span>
+              <span className="hidden md:inline">{getModeBadgeText(myRole, myChannel, currentProject?.config.mode ?? 'single')}</span>
               <span className="md:hidden">{myRole === 'admin' ? 'Admin' : myRole === 'mc' ? `MC-${myChannel}` : `Op-${myChannel}`}</span>
             </Badge>
 
@@ -498,7 +498,7 @@ export function MainApp() {
               })}
 
               {/* Channel selector (admin, dual mode, on MC or Operator tab) */}
-              {isDualMode && (effectiveTab === 'mc' || effectiveTab === 'operator') && (
+              {isDualModeVal && (effectiveTab === 'mc' || effectiveTab === 'operator') && (
                 <div className="ml-auto flex items-center gap-2">
                   <span className="text-[10px] font-medium uppercase tracking-wider" style={{ color: THEME.muted }}>
                     Jalur Simulasi

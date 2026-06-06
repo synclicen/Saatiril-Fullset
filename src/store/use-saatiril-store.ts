@@ -12,12 +12,37 @@ export interface Student {
   assignedChannel: number
 }
 
+export type CameraMode = 'single' | 'dual' | 'single-photoshoot' | 'dual-photoshoot'
+
 export interface ProjectConfig {
-  mode: 'single' | 'dual'
+  mode: CameraMode
   ratio: string
   preset: string
   targetFolder: string
   frame: string | null
+}
+
+// ─── Photoshoot mode helpers ──────────────────────────────────────────────────
+export function isPhotoshootMode(mode: CameraMode): boolean {
+  return mode === 'single-photoshoot' || mode === 'dual-photoshoot'
+}
+
+export function isDualPhotoshootMode(mode: CameraMode): boolean {
+  return mode === 'dual-photoshoot'
+}
+
+export function isDualMode(mode: CameraMode): boolean {
+  return mode === 'dual' || mode === 'dual-photoshoot'
+}
+
+/** How many photos per student per operator for a given mode */
+export function photosPerSession(mode: CameraMode): number {
+  return isPhotoshootMode(mode) ? 1 : 2
+}
+
+/** How many channels (cameras) are needed for a given mode */
+export function channelCount(mode: CameraMode): number {
+  return isDualMode(mode) ? 2 : 1
 }
 
 export interface PhotoHistoryItem {

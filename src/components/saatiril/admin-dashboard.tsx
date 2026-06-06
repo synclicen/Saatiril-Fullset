@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
-import { useSaatirilStore, type Student, type PhotoHistoryItem, mergeDatabases, preserveFrameOnSync } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type Student, type PhotoHistoryItem, type CameraMode, mergeDatabases, preserveFrameOnSync, isPhotoshootMode, isDualPhotoshootMode } from '@/store/use-saatiril-store'
 import { onLocal, offLocal, getConnectionHealth, onLatencyUpdate, type ConnectionHealth } from '@/lib/socket'
 import { useToast } from '@/hooks/use-toast'
 
@@ -41,6 +41,12 @@ function sanitizeNama(nama: string): string {
 
 function buildFilename(nim: string, nama: string, suffix: number, type: string): string {
   return `${nim}_${sanitizeNama(nama)}_${suffix}_${type}.jpg`
+}
+
+function buildPhotoshootFilename(nim: string, nama: string, channel: number): string {
+  return channel > 1
+    ? `${nim}_${sanitizeNama(nama)}_Ch${channel}.jpg`
+    : `${nim}_${sanitizeNama(nama)}.jpg`
 }
 
 // ── Socket event data shapes ─────────────────────────────────────
@@ -65,7 +71,7 @@ interface SyncDbData {
     id: string
     name: string
     config: {
-      mode: 'single' | 'dual'
+      mode: CameraMode
       ratio: string
       preset: string
       targetFolder: string
@@ -135,22 +141,39 @@ export default function AdminDashboard() {
       // doesn't have filesystem access, so Admin must do it.
       const api = window.saatirilAPI
       const targetFolder = proj.config?.targetFolder
-      if (api?.savePhoto && targetFolder && data.photos?.length >= 2) {
-        const togaFilename = buildFilename(data.student.nim, data.student.nama, 1, 'Toga')
-        const ijazahFilename = buildFilename(data.student.nim, data.student.nama, 2, 'Ijazah')
+      const photoshootMode = isPhotoshootMode(proj.config.mode)
 
-        Promise.all([
-          api.savePhoto({ base64Data: data.photos[0], filename: togaFilename, targetFolder }),
-          api.savePhoto({ base64Data: data.photos[1], filename: ijazahFilename, targetFolder }),
-        ]).then(([path1, path2]) => {
-          if (path1 && path2) {
-            console.log(`[SAATIRIL ADMIN] Photos saved to disk:\n  → ${path1}\n  → ${path2}`)
-          } else {
-            console.warn('[SAATIRIL ADMIN] Some photos failed to save to disk')
-          }
-        }).catch((err) => {
-          console.error('[SAATIRIL ADMIN] Error saving photos to disk:', err)
-        })
+      if (api?.savePhoto && targetFolder && data.photos?.length >= (photoshootMode ? 1 : 2)) {
+        if (photoshootMode) {
+          // Photoshoot mode: 1 photo with data-based naming
+          const filename = buildPhotoshootFilename(data.student.nim, data.student.nama, data.channel)
+          api.savePhoto({ base64Data: data.photos[0], filename, targetFolder }).then((path: string | null) => {
+            if (path) {
+              console.log(`[SAATIRIL ADMIN] Photo saved to disk: → ${path}`)
+            } else {
+              console.warn('[SAATIRIL ADMIN] Photo failed to save to disk')
+            }
+          }).catch((err: Error) => {
+            console.error('[SAATIRIL ADMIN] Error saving photo to disk:', err)
+          })
+        } else {
+          // Standard mode: 2 photos (Toga + Ijazah)
+          const togaFilename = buildFilename(data.student.nim, data.student.nama, 1, 'Toga')
+          const ijazahFilename = buildFilename(data.student.nim, data.student.nama, 2, 'Ijazah')
+
+          Promise.all([
+            api.savePhoto({ base64Data: data.photos[0], filename: togaFilename, targetFolder }),
+            api.savePhoto({ base64Data: data.photos[1], filename: ijazahFilename, targetFolder }),
+          ]).then(([path1, path2]) => {
+            if (path1 && path2) {
+              console.log(`[SAATIRIL ADMIN] Photos saved to disk:\n  → ${path1}\n  → ${path2}`)
+            } else {
+              console.warn('[SAATIRIL ADMIN] Some photos failed to save to disk')
+            }
+          }).catch((err) => {
+            console.error('[SAATIRIL ADMIN] Error saving photos to disk:', err)
+          })
+        }
       } else if (!api?.savePhoto) {
         console.warn('[SAATIRIL ADMIN] savePhoto API not available — not running in Electron?')
       } else if (!targetFolder) {
@@ -346,6 +369,8 @@ export default function AdminDashboard() {
     const target2 = liveTargets[2]
     const status1 = cameraStatus[1] ?? 'Menunggu target...'
     const status2 = cameraStatus[2] ?? 'Menunggu target...'
+    const photoshoot = isPhotoshootMode(mode)
+    const dualPhotoshoot = isDualPhotoshootMode(mode)
 
     return (
       <Card className={`${PANEL} ${BORDER} shadow-lg`}>
@@ -370,7 +395,63 @@ export default function AdminDashboard() {
                 <span className="text-xs text-[#c4b5fd]">{status1}</span>
               </div>
             </div>
+          ) : photoshoot && !dualPhotoshoot ? (
+            /* Single Photoshoot */
+            <div className="rounded-lg bg-[#1a0b2e]/60 px-4 py-3">
+              <div className="mb-1 text-xs uppercase tracking-wider text-[#c4b5fd]/70">
+                Target Photoshoot
+              </div>
+              <div className="text-base font-semibold" style={{ color: '#4ade80' }}>
+                {target1 ? target1.nama : '—'}
+              </div>
+              <Separator className="my-2 bg-[#533485]/50" />
+              <div className="flex items-center gap-2">
+                <Camera className="size-3.5 text-[#c4b5fd]/70" />
+                <span className="text-xs text-[#c4b5fd]">{status1}</span>
+              </div>
+            </div>
+          ) : dualPhotoshoot ? (
+            /* Dual Photoshoot */
+            <div className="flex flex-col gap-3">
+              <div className="rounded-lg bg-[#1a0b2e]/60 px-4 py-3">
+                <div className="mb-1 flex items-center gap-2">
+                  <Badge
+                    className="border-emerald-400/40 text-[10px]"
+                    style={{ backgroundColor: 'rgba(74,222,128,0.15)', color: '#4ade80' }}
+                  >
+                    Camera 1
+                  </Badge>
+                </div>
+                <div className="text-sm font-semibold" style={{ color: '#4ade80' }}>
+                  {target1 ? target1.nama : '—'}
+                </div>
+                <Separator className="my-2 bg-[#533485]/50" />
+                <div className="flex items-center gap-2">
+                  <Camera className="size-3.5 text-[#c4b5fd]/70" />
+                  <span className="text-xs text-[#c4b5fd]">{status1}</span>
+                </div>
+              </div>
+              <div className="rounded-lg bg-[#1a0b2e]/60 px-4 py-3">
+                <div className="mb-1 flex items-center gap-2">
+                  <Badge
+                    className="border-cyan-400/40 text-[10px]"
+                    style={{ backgroundColor: 'rgba(6,182,212,0.15)', color: CYAN }}
+                  >
+                    Camera 2
+                  </Badge>
+                </div>
+                <div className="text-sm font-semibold" style={{ color: CYAN }}>
+                  {target2 ? target2.nama : '—'}
+                </div>
+                <Separator className="my-2 bg-[#533485]/50" />
+                <div className="flex items-center gap-2">
+                  <Camera className="size-3.5 text-[#c4b5fd]/70" />
+                  <span className="text-xs text-[#c4b5fd]">{status2}</span>
+                </div>
+              </div>
+            </div>
           ) : (
+            /* Standard Dual Mode */
             <div className="flex flex-col gap-3">
               {/* Camera KIRI — Jalur 1 */}
               <div className="rounded-lg bg-[#1a0b2e]/60 px-4 py-3">
@@ -450,7 +531,7 @@ export default function AdminDashboard() {
             <p className="mt-1.5 opacity-70">MC tidak perlu Chrome Flag (tidak butuh kamera).</p>
           </div>
         )}
-        {mode === 'single' ? (
+        {mode === 'single' || mode === 'single-photoshoot' ? (
           <div className="flex flex-col gap-2">
             <Button
               variant="outline"
@@ -468,6 +549,53 @@ export default function AdminDashboard() {
               <Copy className="size-3.5" />
               Copy Link Operator
             </Button>
+          </div>
+        ) : mode === 'dual-photoshoot' ? (
+          /* Dual Photoshoot: 1 MC + 2 Operators */
+          <div className="flex flex-col gap-4">
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: '#4ade80' }}>
+                MC (1 orang)
+              </div>
+              <Button
+                variant="outline"
+                className="w-full justify-start gap-2 border-emerald-400/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#4ade80]"
+                onClick={() => copyLink('mc', 1)}
+              >
+                <Copy className="size-3.5" />
+                MC
+              </Button>
+            </div>
+
+            <Separator className="bg-[#533485]/40" />
+
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: GOLD }}>
+                Operator Kamera 1
+              </div>
+              <Button
+                variant="outline"
+                className="w-full justify-start gap-2 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
+                onClick={() => copyLink('operator', 1)}
+              >
+                <Copy className="size-3.5" />
+                Operator 1
+              </Button>
+            </div>
+
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: CYAN }}>
+                Operator Kamera 2
+              </div>
+              <Button
+                variant="outline"
+                className="w-full justify-start gap-2 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
+                onClick={() => copyLink('operator', 2)}
+              >
+                <Copy className="size-3.5" />
+                Operator 2
+              </Button>
+            </div>
           </div>
         ) : (
           <div className="flex flex-col gap-4">
@@ -604,11 +732,62 @@ export default function AdminDashboard() {
   // ── Render: Photo History Item ───────────────────────────────────
   const renderPhotoItem = (item: PhotoHistoryItem, index: number) => {
     const { student, channel, photos } = item
+    const photoshoot = isPhotoshootMode(mode)
+
+    const channelLabel = mode === 'dual' ? (channel === 1 ? 'Kiri' : 'Kanan')
+      : mode === 'dual-photoshoot' ? (channel === 1 ? 'Cam 1' : 'Cam 2')
+      : 'Ch.1'
+    const channelColor = mode === 'dual' ? (channel === 1 ? GOLD : CYAN)
+      : mode === 'dual-photoshoot' ? (channel === 1 ? '#4ade80' : CYAN)
+      : GOLD
+
+    // Photoshoot: 1 photo with data-based name
+    if (photoshoot) {
+      const filename = buildPhotoshootFilename(student.nim, student.nama, channel)
+      return (
+        <div
+          key={`${student.id}-${channel}-${index}`}
+          className="rounded-lg border border-[#533485]/50 bg-[#1a0b2e]/50 p-3"
+        >
+          <div className="mb-2 flex items-center gap-2">
+            <CheckCircle2 className="size-3.5 text-emerald-400 shrink-0" />
+            <span className="truncate text-sm font-medium text-[#c4b5fd]">
+              {student.nama}
+            </span>
+          </div>
+          <div className="mb-2">
+            <Badge
+              className="text-[10px]"
+              style={{
+                backgroundColor: channel === 1 && mode === 'dual-photoshoot' ? 'rgba(74,222,128,0.15)' : channel === 1 ? 'rgba(212,175,55,0.15)' : 'rgba(6,182,212,0.15)',
+                color: channelColor,
+                borderColor: channel === 1 && mode === 'dual-photoshoot' ? 'rgba(74,222,128,0.3)' : channel === 1 ? 'rgba(212,175,55,0.3)' : 'rgba(6,182,212,0.3)',
+              }}
+            >
+              {channelLabel}
+            </Badge>
+          </div>
+          <div className="flex gap-2">
+            <div className="flex flex-1 flex-col gap-1">
+              <div className="flex h-20 items-center justify-center overflow-hidden rounded-md bg-[#2a164a]/80 border border-[#533485]/30">
+                {photos[0] ? (
+                  <img src={photos[0]} alt="Foto" className="h-full w-full object-cover" />
+                ) : (
+                  <ImageIcon className="size-5 text-[#533485]" />
+                )}
+              </div>
+              <span className="truncate text-[10px] text-[#c4b5fd]/60" title={filename}>
+                {filename}
+              </span>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    // Standard mode: 2 photos (Toga + Ijazah)
     const togaFilename = buildFilename(student.nim, student.nama, 1, 'Toga')
     const ijazahFilename = buildFilename(student.nim, student.nama, 2, 'Ijazah')
-
-    const channelLabel = mode === 'dual' ? (channel === 1 ? 'Kiri' : 'Kanan') : 'Ch.1'
-    const channelColor = mode === 'dual' ? (channel === 1 ? GOLD : CYAN) : GOLD
 
     return (
       <div

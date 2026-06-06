@@ -26,7 +26,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import { useSaatirilStore, type Project } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type Project, type CameraMode, isPhotoshootMode, isDualMode } from '@/store/use-saatiril-store'
 import { useToast } from '@/hooks/use-toast'
 
 export function ProjectHub() {
@@ -173,9 +173,11 @@ export function ProjectHub() {
                         <div className="mt-1 flex items-center gap-2">
                           <Badge
                             variant="outline"
-                            className="border-[#533485] bg-[#2a164a]/60 text-[#c4b5fd]/80 text-[10px] sm:text-xs"
+                            className={`border-[#533485] bg-[#2a164a]/60 text-[10px] sm:text-xs ${isPhotoshootMode(project.config.mode) ? 'text-emerald-400/80' : 'text-[#c4b5fd]/80'}`}
                           >
-                            {project.config.mode === 'dual' ? 'Dual Channel' : 'Single Channel'}
+                            {isPhotoshootMode(project.config.mode)
+                              ? (isDualMode(project.config.mode) ? 'Photoshoot 2 Cam' : 'Photoshoot')
+                              : (isDualMode(project.config.mode) ? 'Dual Channel' : 'Single Channel')}
                           </Badge>
                           <Badge
                             variant="outline"

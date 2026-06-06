@@ -32,7 +32,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 
-import { useSaatirilStore, type Student, stripFrameForSync } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type CameraMode, type Student, stripFrameForSync, isPhotoshootMode, isDualMode } from '@/store/use-saatiril-store'
 import { emitLocal } from '@/lib/socket'
 import { useToast } from '@/hooks/use-toast'
 
@@ -54,7 +54,7 @@ export default function ProjectSetup() {
 
   // ── Form state ─────────────────────────────────────────────────────────────
   const [projectName, setProjectName] = useState('')
-  const [cameraMode, setCameraMode] = useState<'single' | 'dual'>('single')
+  const [cameraMode, setCameraMode] = useState<CameraMode>('single')
   const [ratio, setRatio] = useState('4:3')
   const [preset, setPreset] = useState('original')
   const [targetFolder, setTargetFolder] = useState('C:\\SAATIRIL_System_Out')
@@ -253,7 +253,7 @@ export default function ProjectSetup() {
 
   // ── Form validation ────────────────────────────────────────────────────────
   const isNameValid = projectName.trim().length > 0
-  const isSingleDataReady = cameraMode === 'single' && excelData[0] !== null && excelData[0]!.students.length > 0
+  const isSingleDataReady = (cameraMode === 'single' || cameraMode === 'single-photoshoot' || cameraMode === 'dual-photoshoot') && excelData[0] !== null && excelData[0]!.students.length > 0
   const isDualDataReady =
     cameraMode === 'dual' &&
     excelData[0] !== null &&
@@ -269,11 +269,12 @@ export default function ProjectSetup() {
 
     const allStudents: Student[] = []
 
-    if (cameraMode === 'single') {
-      allStudents.push(...(excelData[0]?.students ?? []))
-    } else {
+    if (cameraMode === 'dual') {
       allStudents.push(...(excelData[0]?.students ?? []))
       allStudents.push(...(excelData[1]?.students ?? []))
+    } else {
+      // single, single-photoshoot, dual-photoshoot: only 1 data upload
+      allStudents.push(...(excelData[0]?.students ?? []))
     }
 
     // Re-generate unique IDs to avoid collision from parallel parsing
@@ -509,9 +510,9 @@ export default function ProjectSetup() {
                   <Select
                     value={cameraMode}
                     onValueChange={(val) => {
-                      setCameraMode(val as 'single' | 'dual')
-                      // Reset kanan data when switching to single
-                      if (val === 'single') {
+                      setCameraMode(val as CameraMode)
+                      // Reset kanan data when switching away from dual
+                      if (val !== 'dual') {
                         setExcelData((prev) => [prev[0], null])
                       }
                     }}
@@ -526,6 +527,12 @@ export default function ProjectSetup() {
                       <SelectItem value="dual" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
                         Dual Mode — 2 MC & 2 Kamera Bersamaan
                       </SelectItem>
+                      <SelectItem value="single-photoshoot" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+                        Single Photoshoot — 1 MC & 1 Kamera (Urutan Bebas)
+                      </SelectItem>
+                      <SelectItem value="dual-photoshoot" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+                        Dual Photoshoot — 1 MC & 2 Kamera Bersamaan (Urutan Bebas)
+                      </SelectItem>
                     </SelectContent>
                   </Select>
 
@@ -534,9 +541,9 @@ export default function ProjectSetup() {
                       variant="outline"
                       className="border-[#d4af37]/40 text-[#d4af37]"
                     >
-                      Single Channel
+                      Single Channel — Wisuda
                     </Badge>
-                  ) : (
+                  ) : cameraMode === 'dual' ? (
                     <div className="flex gap-2">
                       <Badge
                         variant="outline"
@@ -549,6 +556,28 @@ export default function ProjectSetup() {
                         className="border-cyan-400/40 text-cyan-400"
                       >
                         JALUR KANAN
+                      </Badge>
+                    </div>
+                  ) : cameraMode === 'single-photoshoot' ? (
+                    <Badge
+                      variant="outline"
+                      className="border-emerald-400/40 text-emerald-400"
+                    >
+                      Photoshoot — 1 Foto/Peserta
+                    </Badge>
+                  ) : (
+                    <div className="flex gap-2">
+                      <Badge
+                        variant="outline"
+                        className="border-emerald-400/40 text-emerald-400"
+                      >
+                        Photoshoot — 1 Foto/Peserta
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="border-cyan-400/40 text-cyan-400"
+                      >
+                        2 Kamera
                       </Badge>
                     </div>
                   )}
@@ -564,14 +593,7 @@ export default function ProjectSetup() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {cameraMode === 'single' ? (
-                    renderUploadZone(
-                      0,
-                      'Data Peserta',
-                      '#d4af37',
-                      'border-[#d4af37]/50',
-                    )
-                  ) : (
+                  {cameraMode === 'dual' ? (
                     <div className="grid gap-4 sm:grid-cols-2">
                       {renderUploadZone(
                         0,
@@ -586,11 +608,23 @@ export default function ProjectSetup() {
                         'border-cyan-400/50',
                       )}
                     </div>
+                  ) : (
+                    renderUploadZone(
+                      0,
+                      isPhotoshootMode(cameraMode) ? 'Data Peserta Photoshoot' : 'Data Peserta',
+                      isPhotoshootMode(cameraMode) ? '#4ade80' : '#d4af37',
+                      isPhotoshootMode(cameraMode) ? 'border-emerald-400/50' : 'border-[#d4af37]/50',
+                    )
                   )}
 
                   <p className="text-xs text-[#533485]">
                     Kolom harus mengandung kata "nim"/"nis"/"id" untuk NIM
                     dan "nama"/"name" untuk Nama.
+                    {isPhotoshootMode(cameraMode) && (
+                      <span className="block mt-1 text-emerald-400/70">
+                        Mode Photoshoot: hanya 1 foto per peserta, urutan bebas.
+                      </span>
+                    )}
                   </p>
                 </CardContent>
               </Card>
@@ -811,12 +845,12 @@ export default function ProjectSetup() {
                 <span>Upload data peserta (Excel) untuk melanjutkan</span>
               )}
               {canStart && (
-                <span className="text-[#d4af37]">
+                <span className={isPhotoshootMode(cameraMode) ? 'text-emerald-400' : 'text-[#d4af37]'}>
                   Siap memulai —{' '}
-                  {cameraMode === 'single'
-                    ? excelData[0]?.students.length
-                    : (excelData[0]?.students.length ?? 0) +
-                      (excelData[1]?.students.length ?? 0)}{' '}
+                  {cameraMode === 'dual'
+                    ? (excelData[0]?.students.length ?? 0) +
+                      (excelData[1]?.students.length ?? 0)
+                    : excelData[0]?.students.length}{' '}
                   peserta akan dimuat
                 </span>
               )}
