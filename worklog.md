@@ -76,3 +76,39 @@ Stage Summary:
 - Finger detection uses MediaPipe Hands with sustained detection logic
 - Full shutter mode selector UI in both mobile and desktop layouts
 - All existing functionality preserved
+---
+Task ID: 3
+Agent: main
+Task: Remove 5-finger detection from Shutter Modes, make it auto-trigger for timer modes only with progress bar
+
+Work Log:
+- Removed 'finger' from ShutterMode type: now 'manual' | 'timer-3' | 'timer-5' | 'timer-10' | 'ai'
+- Removed finger entry from SHUTTER_MODES array (no longer a standalone shutter mode)
+- Added `sustainProgress` (0-1) to useFingerDetection hook return value for progress bar
+- Added `fingerGestureActive` derived value: true when timer mode is selected AND camera ready AND has active target AND timer not already running
+- Finger detection now auto-initializes when any timer mode is selected (not just finger mode)
+- Finger detection callback now calls `startTimer()` instead of `handleCapture()` — triggers timer countdown instead of direct capture
+- Added `fingerTriggeredTimer` state to show "Timer dimulai! Turunkan tangan" overlay when finger gesture successfully started the timer
+- Updated shutter mode selector: removed finger button, added hint text below timer modes showing gesture status
+- Updated camera view overlays:
+  - Removed old finger detection indicator (top-right corner)
+  - Added new bottom-center finger gesture overlay with:
+    - Instruction text: "Tunjukkan 5 jari (X/5)" or "Tahan jari..." when 5 detected
+    - Progress bar that fills as fingers are held sustained
+    - Green color when 5 fingers detected, gold while building
+  - Timer countdown overlay now shows "Timer dimulai! Turunkan tangan" pill when finger-triggered
+- Updated capture button rendering:
+  - Removed all `effectiveShutterMode === 'finger'` logic from button states
+  - `isAutoMode` now only checks for AI mode
+  - `isDetecting` simplified to only check AI detection
+- Updated progressText to show finger count only during active gesture in timer mode
+- All lint checks pass
+- App verified loading correctly in browser
+
+Stage Summary:
+- 5-finger detection removed from Shutter Mode selector (was a standalone mode, now auto-feature)
+- When Timer mode (3s/5s/10s) is selected, finger gesture detection activates automatically
+- Flow: hold 5 fingers → progress bar fills → timer countdown starts → "Timer dimulai! Turunkan tangan" → photo captured after countdown
+- User can still manually press the button to start timer (finger gesture is alternative trigger)
+- Progress bar with instruction text shows on camera view bottom
+- Shutter modes now: Manual, Timer 3s, Timer 5s, Timer 10s, AI (single/dual only)

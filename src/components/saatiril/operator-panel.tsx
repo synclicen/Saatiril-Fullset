@@ -69,14 +69,13 @@ const THEME = {
 } as const
 
 // ─── Shutter mode types ────────────────────────────────────────────────────
-type ShutterMode = 'manual' | 'timer-3' | 'timer-5' | 'timer-10' | 'finger' | 'ai'
+type ShutterMode = 'manual' | 'timer-3' | 'timer-5' | 'timer-10' | 'ai'
 
 const SHUTTER_MODES: { id: ShutterMode; label: string; shortLabel: string; icon: React.ReactNode; modesAllowed?: CameraMode[] }[] = [
   { id: 'manual', label: 'Manual', shortLabel: 'Manual', icon: <Camera className="size-3" /> },
   { id: 'timer-3', label: 'Timer 3 detik', shortLabel: '3s', icon: <Timer className="size-3" /> },
   { id: 'timer-5', label: 'Timer 5 detik', shortLabel: '5s', icon: <Timer className="size-3" /> },
   { id: 'timer-10', label: 'Timer 10 detik', shortLabel: '10s', icon: <Timer className="size-3" /> },
-  { id: 'finger', label: '5 Jari', shortLabel: '5 Jari', icon: <Hand className="size-3" /> },
   { id: 'ai', label: 'AI Pintar', shortLabel: 'AI', icon: <Brain className="size-3" />, modesAllowed: ['single', 'dual'] },
 ]
 
@@ -235,6 +234,9 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   // ── Finger detection ─────────────────────────────────────────────────────
   const finger = useFingerDetection()
 
+  // ── Finger gesture triggered timer feedback ───────────────────────────────
+  const [fingerTriggeredTimer, setFingerTriggeredTimer] = useState(false)
+
   // ── Refs ─────────────────────────────────────────────────────────────────
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -296,6 +298,9 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
   // Compute effective shutter mode — if AI is selected but not allowed, fallback to manual
   const effectiveShutterMode: ShutterMode = (shutterMode === 'ai' && !aiAllowed) ? 'manual' : shutterMode
+
+  // Finger gesture auto-trigger is available when a timer mode is selected
+  const fingerGestureActive = isTimerMode(effectiveShutterMode) && cameraAvailable && hasActiveTarget && !timerActiveRef.current
 
   const channelStudents = useMemo<Student[]>(() => {
     if (!currentProject) return []
@@ -798,6 +803,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
     timerActiveRef.current = false
     setTimerCountdown(0)
+    setFingerTriggeredTimer(false)
   }, [])
 
   // Cancel timer interval when capture phase changes away from ready (external cleanup only)
@@ -838,6 +844,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         }
         timerActiveRef.current = false
         setTimerCountdown(0)
+        setFingerTriggeredTimer(false)
         handleCaptureRef.current()
       } else {
         setTimerCountdown(remaining)
@@ -875,27 +882,28 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
   }, [effectiveShutterMode, ai.modelLoaded, cameraAvailable, hasActiveTarget, capturePhase])
 
-  // ── Shutter: Finger detection ────────────────────────────────────────────
-  // Initialize finger detection when finger shutter mode is active
+  // ── Shutter: Finger gesture auto-trigger for Timer modes ────────────────
+  // Initialize finger detection when timer mode is active (finger gesture as alternative trigger)
   useEffect(() => {
-    if (effectiveShutterMode === 'finger' && cameraAvailable && hasActiveTarget && finger.status === 'unloaded') {
+    if (fingerGestureActive && finger.status === 'unloaded') {
       finger.initialize().then((ok) => {
-        if (ok) console.log('[SAATIRIL OP] Finger detection initialized')
+        if (ok) console.log('[SAATIRIL OP] Finger detection initialized for timer gesture')
       })
     }
-  }, [effectiveShutterMode, cameraAvailable, hasActiveTarget])
+  }, [fingerGestureActive, finger.status])
 
-  // Start/stop finger detection
+  // Start/stop finger detection based on timer mode
   useEffect(() => {
-    if (effectiveShutterMode === 'finger' && (finger.status === 'model_ready' || finger.status === 'stopped') && cameraAvailable && videoRef.current && hasActiveTarget) {
+    if (fingerGestureActive && (finger.status === 'model_ready' || finger.status === 'stopped') && videoRef.current) {
       finger.startDetection(videoRef.current, () => {
-        console.log('[SAATIRIL OP] 5 fingers detected — auto-capturing')
-        handleCaptureRef.current()
+        console.log('[SAATIRIL OP] 5 fingers sustained — starting timer')
+        setFingerTriggeredTimer(true)
+        startTimer()
       })
-    } else if (effectiveShutterMode !== 'finger' && finger.isRunning) {
+    } else if (!fingerGestureActive && finger.isRunning) {
       finger.stopDetection()
     }
-  }, [effectiveShutterMode, finger.status, cameraAvailable, hasActiveTarget])
+  }, [fingerGestureActive, finger.status, cameraAvailable, hasActiveTarget])
 
   // ── Cleanup on unmount ───────────────────────────────────────────────────
   useEffect(() => {
@@ -926,7 +934,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const progressText = useMemo(() => {
     if (!hasActiveTarget) return 'Menunggu Arahan MC...'
     if (effectiveTimerCountdown > 0) return `Timer: ${effectiveTimerCountdown}s`
-    if (effectiveShutterMode === 'finger' && finger.isRunning) return `Jari: ${finger.fingerCount}/5`
+    if (fingerGestureActive && finger.isRunning && finger.fingerCount >= 5 && finger.sustainProgress > 0) return `Jari: ${finger.fingerCount}/5`
     if (effectiveShutterMode === 'ai' && ai.isRunning) {
       if (ai.momentState === 'toga_possible' || ai.momentState === 'toga_sustained') return 'AI: Toga terdeteksi...'
       if (ai.momentState === 'ijazah_possible' || ai.momentState === 'ijazah_sustained') return 'AI: Ijazah terdeteksi...'
@@ -940,7 +948,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       if (capturePhase === 'sending') return 'Mengirim...'
     }
     return 'Menunggu Arahan MC...'
-  }, [hasActiveTarget, capturePhase, photoshoot, effectiveTimerCountdown, effectiveShutterMode, finger.isRunning, finger.fingerCount, ai.isRunning, ai.momentState])
+  }, [hasActiveTarget, capturePhase, photoshoot, effectiveTimerCountdown, effectiveShutterMode, fingerGestureActive, finger.isRunning, finger.fingerCount, finger.sustainProgress, ai.isRunning, ai.momentState])
 
   // ── Render helpers ───────────────────────────────────────────────────────
   const getRowStyle = (student: Student): React.CSSProperties => {
@@ -977,8 +985,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         <div className={`flex flex-wrap gap-1 ${compact ? '' : ''}`}>
           {availableModes.map((m) => {
             const isActive = effectiveShutterMode === m.id
-            const isLoading = (m.id === 'ai' && (ai.status === 'loading_scripts' || ai.status === 'loading_model')) ||
-              (m.id === 'finger' && (finger.status === 'loading_scripts' || finger.status === 'loading_model'))
+            const isLoading = (m.id === 'ai' && (ai.status === 'loading_scripts' || ai.status === 'loading_model'))
 
             return (
               <button
@@ -1003,15 +1010,19 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               >
                 {isLoading ? <Loader2 className="size-3 animate-spin" /> : m.icon}
                 <span>{m.shortLabel}</span>
-                {m.id === 'finger' && finger.isRunning && finger.fingerCount > 0 && (
-                  <span className="text-[8px] font-mono" style={{ color: finger.fingerCount >= 5 ? '#4ade80' : THEME.gold }}>
-                    {finger.fingerCount}/5
-                  </span>
-                )}
               </button>
             )
           })}
         </div>
+        {/* Finger gesture hint for timer modes */}
+        {isTimerMode(effectiveShutterMode) && (
+          <div className="flex items-center gap-1 mt-0.5">
+            <Hand className="size-2.5" style={{ color: finger.isRunning ? THEME.gold : THEME.muted }} />
+            <span className="text-[8px]" style={{ color: finger.isRunning ? THEME.gold : THEME.muted }}>
+              {finger.isRunning ? 'Gesture aktif — tahan 5 jari' : 'Memuat gesture...'}
+            </span>
+          </div>
+        )}
       </div>
     )
   }
@@ -1130,37 +1141,64 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       {/* Timer countdown overlay */}
       {effectiveTimerCountdown > 0 && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: 15 }}>
-          <div className="flex items-center justify-center" style={{
-            width: isMobile ? '80px' : '120px',
-            height: isMobile ? '80px' : '120px',
-            borderRadius: '50%',
-            backgroundColor: `${THEME.bg}cc`,
-            border: `4px solid ${THEME.gold}`,
-            boxShadow: `0 0 40px ${THEME.gold}66, 0 0 80px ${THEME.gold}33`,
-          }}>
-            <span className="font-bold" style={{
-              color: THEME.gold,
-              fontSize: isMobile ? '36px' : '56px',
-              textShadow: `0 0 20px ${THEME.gold}88`,
+          <div className="flex flex-col items-center gap-2">
+            <div className="flex items-center justify-center" style={{
+              width: isMobile ? '80px' : '120px',
+              height: isMobile ? '80px' : '120px',
+              borderRadius: '50%',
+              backgroundColor: `${THEME.bg}cc`,
+              border: `4px solid ${THEME.gold}`,
+              boxShadow: `0 0 40px ${THEME.gold}66, 0 0 80px ${THEME.gold}33`,
             }}>
-              {effectiveTimerCountdown}
-            </span>
+              <span className="font-bold" style={{
+                color: THEME.gold,
+                fontSize: isMobile ? '36px' : '56px',
+                textShadow: `0 0 20px ${THEME.gold}88`,
+              }}>
+                {effectiveTimerCountdown}
+              </span>
+            </div>
+            {fingerTriggeredTimer && (
+              <div className="flex items-center gap-1.5 rounded-full px-3 py-1 animate-pulse" style={{
+                backgroundColor: '#22c55e88',
+                border: '1px solid #4ade80',
+              }}>
+                <Hand className="size-3.5" style={{ color: '#4ade80' }} />
+                <span className="text-[11px] font-bold" style={{ color: '#ffffff' }}>
+                  Timer dimulai! Turunkan tangan
+                </span>
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* Finger detection indicator */}
-      {effectiveShutterMode === 'finger' && finger.isRunning && (
-        <div className="absolute top-2 right-2 flex items-center gap-1.5 pointer-events-none" style={{ zIndex: 10 }}>
-          <div className="flex items-center gap-1 rounded-full px-2 py-1" style={{
+      {/* Finger gesture indicator for Timer modes */}
+      {fingerGestureActive && finger.isRunning && (
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 pointer-events-none" style={{ zIndex: 10 }}>
+          {/* Instruction text */}
+          <div className="flex items-center gap-1.5 rounded-full px-3 py-1" style={{
             backgroundColor: finger.fingerCount >= 5 ? '#22c55e88' : 'rgba(0,0,0,0.7)',
             border: `1px solid ${finger.fingerCount >= 5 ? '#22c55e' : THEME.border}`,
           }}>
-            <Hand className="size-3" style={{ color: finger.fingerCount >= 5 ? '#4ade80' : THEME.gold }} />
-            <span className="text-[10px] font-bold" style={{ color: finger.fingerCount >= 5 ? '#4ade80' : THEME.muted }}>
-              {finger.fingerCount}/5
+            <Hand className="size-3.5" style={{ color: finger.fingerCount >= 5 ? '#4ade80' : THEME.gold }} />
+            <span className="text-[11px] font-semibold" style={{ color: finger.fingerCount >= 5 ? '#4ade80' : THEME.muted }}>
+              {finger.fingerCount >= 5 ? 'Tahan jari...' : `Tunjukkan 5 jari (${finger.fingerCount}/5)`}
             </span>
           </div>
+          {/* Progress bar */}
+          {finger.fingerCount >= 5 && finger.sustainProgress > 0 && (
+            <div className="w-32 h-2 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(0,0,0,0.6)', border: '1px solid #22c55e44' }}>
+              <div
+                className="h-full rounded-full transition-all duration-75"
+                style={{
+                  width: `${finger.sustainProgress * 100}%`,
+                  backgroundColor: finger.sustainProgress >= 1 ? '#4ade80' : THEME.gold,
+                  boxShadow: finger.sustainProgress >= 1 ? '0 0 8px #4ade8066' : `0 0 8px ${THEME.gold}66`,
+                }}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -1268,12 +1306,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
 
     if (capturePhase === 'ready-1') {
-      const isAutoMode = effectiveShutterMode === 'finger' || effectiveShutterMode === 'ai'
+      const isAutoMode = effectiveShutterMode === 'ai'
       const isTimer = isTimerMode(effectiveShutterMode)
 
       if (isAutoMode) {
         // Auto-capture modes: show status button
-        const isDetecting = (effectiveShutterMode === 'finger' && finger.isRunning) || (effectiveShutterMode === 'ai' && ai.isRunning)
+        const isDetecting = effectiveShutterMode === 'ai' && ai.isRunning
         return (
           <Button disabled className={`${btnClass} cursor-default`} style={{
             backgroundColor: isDetecting ? '#22c55e33' : THEME.panel,
@@ -1281,8 +1319,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             border: `2px solid ${isDetecting ? '#22c55e' : THEME.border}`,
           }}>
             {isDetecting ? <Loader2 className="size-4 mr-2 animate-spin" /> : <Aperture className="size-4 mr-2" />}
-            {effectiveShutterMode === 'finger' ? (isDetecting ? `Mendeteksi Jari (${finger.fingerCount}/5)` : 'Finger Detection Loading...') :
-              (isDetecting ? 'AI Mendeteksi Pose...' : 'AI Loading...')}
+            {effectiveShutterMode === 'ai' ? (isDetecting ? 'AI Mendeteksi Pose...' : 'AI Loading...') : ''}
           </Button>
         )
       }
@@ -1313,11 +1350,11 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
 
     if (capturePhase === 'ready-2') {
-      const isAutoMode = effectiveShutterMode === 'finger' || effectiveShutterMode === 'ai'
+      const isAutoMode = effectiveShutterMode === 'ai'
       const isTimer = isTimerMode(effectiveShutterMode)
 
       if (isAutoMode) {
-        const isDetecting = (effectiveShutterMode === 'finger' && finger.isRunning) || (effectiveShutterMode === 'ai' && ai.isRunning)
+        const isDetecting = effectiveShutterMode === 'ai' && ai.isRunning
         return (
           <Button disabled className={`${btnClass} cursor-default`} style={{
             backgroundColor: isDetecting ? '#22c55e33' : THEME.panel,
@@ -1325,7 +1362,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             border: `2px solid ${isDetecting ? '#22c55e' : THEME.border}`,
           }}>
             {isDetecting ? <Loader2 className="size-4 mr-2 animate-spin" /> : <Aperture className="size-4 mr-2" />}
-            {effectiveShutterMode === 'finger' ? `Mendeteksi Jari (${finger.fingerCount}/5)` : 'AI Mendeteksi Ijazah...'}
+            {effectiveShutterMode === 'ai' ? 'AI Mendeteksi Ijazah...' : ''}
           </Button>
         )
       }
