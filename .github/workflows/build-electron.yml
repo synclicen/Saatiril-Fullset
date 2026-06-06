@@ -71,29 +71,6 @@ jobs:
       - name: Compile Electron TypeScript
         run: npx tsc -p electron/tsconfig.json
 
-      - name: Prune devDependencies before packaging
-        run: npm prune --production
-        env:
-          PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING: 1
-
-      - name: Verify production node_modules
-        shell: pwsh
-        run: |
-          Write-Host "=== Production node_modules ==="
-          if (Test-Path "node_modules") {
-            $prodDeps = Get-ChildItem "node_modules" -Directory | Where-Object { $_.Name -notmatch '^\.|^@' -or ($_.Name -eq '@types') }
-            $topLevelCount = (Get-ChildItem "node_modules" -Directory).Count
-            $totalSize = (Get-ChildItem "node_modules" -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum / 1MB
-            Write-Host "Top-level packages: $topLevelCount"
-            Write-Host "Total size: $([math]::Round($totalSize, 2)) MB"
-            Write-Host ""
-            Write-Host "Top-level directories:"
-            Get-ChildItem "node_modules" -Directory | ForEach-Object { Write-Host "  $($_.Name)" }
-          } else {
-            Write-Error "node_modules NOT found after prune!"
-            exit 1
-          }
-
       - name: Verify source directories for packaging
         shell: pwsh
         run: |
