@@ -86,3 +86,30 @@ Stage Summary:
 - Portable app now has: splash screen, retry logic, improved path resolution
 - Key fixes: race condition (await servers), did-fail-load retry, getResourcePath fallback
 - Build artifacts available at: https://github.com/synclicen/Saatiril-Fullset/actions/runs/27058380898
+
+---
+Task ID: 4
+Agent: Main Agent
+Task: Fix package.json merge conflict and reduce portable app size from 310MB to ~97MB
+
+Work Log:
+- User reported merge conflict in package.json (<<<<<<< HEAD markers)
+- Pushed clean package.json to remote to fix the conflict
+- Investigated root cause of portable app extremely slow startup
+- Found that ALL dependencies were in `dependencies` instead of `devDependencies`
+- Electron main process only needs `socket.io` at runtime, not @tensorflow/tfjs, sharp, next, react, etc.
+- electron-builder includes ALL production dependencies in the packaged app
+- Moved 81 packages from `dependencies` to `devDependencies`, keeping only `socket.io`
+- Initially added `npm prune --production` step, but it removed electron from node_modules causing build failure
+- Removed the npm prune step — electron-builder handles dependency pruning automatically
+- Added node_modules verification in CI workflow to confirm only socket.io deps are included
+- CI Run #8 succeeded with all steps passing
+
+Stage Summary:
+- Package size reduced from ~310MB to ~97MB (69% reduction)
+- node_modules in packaged app: 20 packages, 1.94 MB (vs ~200MB before)
+- Total app/ resources: 3.6 MB (vs ~200MB before)
+- Portable exe: 97.46 MB (vs 310 MB before)
+- Setup exe: 97.69 MB (vs 310 MB before)
+- socket.io verified present in packaged app's node_modules
+- Build artifacts: https://github.com/synclicen/Saatiril-Fullset/actions/runs/27059549271
