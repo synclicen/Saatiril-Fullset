@@ -15,6 +15,7 @@ export interface FingerDetectionResult {
   fingerCount: number
   confidence: number
   handsDetected: number
+  sustainProgress: number // 0-1, progress toward sustain duration when 5 fingers held
 }
 
 interface UseFingerDetectionReturn {
@@ -22,6 +23,7 @@ interface UseFingerDetectionReturn {
   fingerCount: number
   handsDetected: number
   isRunning: boolean
+  sustainProgress: number // 0-1, progress toward sustain duration when 5 fingers held
   error: string | null
   initialize: () => Promise<boolean>
   startDetection: (
@@ -116,6 +118,7 @@ export function useFingerDetection(): UseFingerDetectionReturn {
   const [fingerCount, setFingerCount] = useState(0)
   const [handsDetected, setHandsDetected] = useState(0)
   const [isRunning, setIsRunning] = useState(false)
+  const [sustainProgress, setSustainProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
   const handsRef = useRef<any>(null)
@@ -141,6 +144,7 @@ export function useFingerDetection(): UseFingerDetectionReturn {
     if (numHands === 0) {
       setFingerCount(0)
       sustainStartRef.current = 0
+      setSustainProgress(0)
       return
     }
 
@@ -159,18 +163,26 @@ export function useFingerDetection(): UseFingerDetectionReturn {
       if (sustainStartRef.current === 0) {
         // Start counting sustain duration
         sustainStartRef.current = now
-      } else if (now - sustainStartRef.current >= SUSTAIN_DURATION) {
-        // Sustained for long enough — trigger capture
-        if (now - lastTriggerRef.current >= TRIGGER_COOLDOWN) {
-          lastTriggerRef.current = now
-          sustainStartRef.current = 0
-          console.log('[SAATIRIL Finger] 5 fingers detected — triggering capture')
-          onFiveFingersRef.current?.()
+        setSustainProgress(0)
+      } else {
+        // Calculate progress
+        const progress = Math.min(1, (now - sustainStartRef.current) / SUSTAIN_DURATION)
+        setSustainProgress(progress)
+        if (now - sustainStartRef.current >= SUSTAIN_DURATION) {
+          // Sustained for long enough — trigger
+          if (now - lastTriggerRef.current >= TRIGGER_COOLDOWN) {
+            lastTriggerRef.current = now
+            sustainStartRef.current = 0
+            setSustainProgress(0)
+            console.log('[SAATIRIL Finger] 5 fingers sustained — triggering')
+            onFiveFingersRef.current?.()
+          }
         }
       }
     } else {
       // Not 5 fingers — reset sustain timer
       sustainStartRef.current = 0
+      setSustainProgress(0)
     }
   }, [])
 
@@ -270,6 +282,7 @@ export function useFingerDetection(): UseFingerDetectionReturn {
     setIsRunning(false)
     setFingerCount(0)
     setHandsDetected(0)
+    setSustainProgress(0)
     setStatus('model_ready')
     sustainStartRef.current = 0
   }, [])
@@ -298,6 +311,7 @@ export function useFingerDetection(): UseFingerDetectionReturn {
     fingerCount,
     handsDetected,
     isRunning,
+    sustainProgress,
     error,
     initialize,
     startDetection,
