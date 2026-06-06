@@ -208,7 +208,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const config = currentProject?.config
   const aspectRatio = config?.ratio ? parseRatio(config.ratio) : 4 / 3
   const cssFilter = config?.preset ? PRESET_FILTERS[config.preset] ?? 'none' : 'none'
-  const frameData = config?.frame ?? null
+  const frameData = (config?.frame && config.frame !== '__FRAME_SAVED__') ? config.frame : null
 
   // ── Resize Observer: calculate camera dimensions ─────────────────────────
   useEffect(() => {

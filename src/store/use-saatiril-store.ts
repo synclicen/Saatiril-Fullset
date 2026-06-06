@@ -267,11 +267,25 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
   setCurrentProject: (project) => {
     // Ensure frame data is in separate storage when setting current project
     if (project) {
+      // If frame is the marker, try to restore from separate storage
+      if (project.config.frame === '__FRAME_SAVED__') {
+        const savedFrame = loadFrameFromStorage(project.id)
+        if (savedFrame) {
+          project = { ...project, config: { ...project.config, frame: savedFrame } }
+        }
+      }
       saveFrameToStorage(project.id, project.config.frame)
     }
     set({ currentProject: project })
   },
   updateCurrentProject: (project) => set((s) => {
+    // If frame is marker, restore from separate storage
+    if (project.config.frame === '__FRAME_SAVED__') {
+      const savedFrame = loadFrameFromStorage(project.id)
+      if (savedFrame) {
+        project = { ...project, config: { ...project.config, frame: savedFrame } }
+      }
+    }
     // Auto-trim photo history to prevent memory bloat
     const trimmedProject = {
       ...project,

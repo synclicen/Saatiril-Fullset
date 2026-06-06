@@ -153,10 +153,12 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
       const curProj = currentProjectRef.current
       if (curProj && proj.id === curProj.id) {
         const mergedDb = mergeDatabases(curProj.database, proj.database)
+        const mergedConfig = preserveFrameOnSync(proj.config, curProj.config)
         updateCurrentProject({
           ...curProj,
           database: mergedDb,
           photoHistory: proj.photoHistory?.length ? proj.photoHistory : curProj.photoHistory,
+          config: mergedConfig,
         })
       }
     }
