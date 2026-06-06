@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useSaatirilStore, type AppTab, type Role, type Project, type CameraMode, mergeDatabases, stripFrameForSync, isDualMode, isPhotoshootMode } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type AppTab, type Role, type Project, type CameraMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync, isDualMode, isPhotoshootMode } from '@/store/use-saatiril-store'
 import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth } from '@/lib/socket'
 
 import AdminDashboard from '@/components/saatiril/admin-dashboard'
@@ -232,10 +232,12 @@ export function MainApp() {
         // For MC/Operator: merge incoming database with local (prevents data regression)
         if (curProj && data.project.id === curProj.id) {
           const mergedDb = mergeDatabases(curProj.database, data.project.database)
+          const mergedConfig = preserveFrameOnSync(data.project.config, curProj.config)
           updateCurrentProject({
             ...curProj,
             database: mergedDb,
             photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : curProj.photoHistory,
+            config: mergedConfig,
           })
         } else {
           updateCurrentProject(data.project)
@@ -244,10 +246,12 @@ export function MainApp() {
         // For admin: merge database with incoming (prevents channel data overwrite in dual mode)
         if (curProj && data.project.id === curProj.id) {
           const mergedDb = mergeDatabases(curProj.database, data.project.database)
+          const mergedConfig = preserveFrameOnSync(data.project.config, curProj.config)
           updateCurrentProject({
             ...curProj,
             database: mergedDb,
             photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : curProj.photoHistory,
+            config: mergedConfig,
           })
         }
       }

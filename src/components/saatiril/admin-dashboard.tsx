@@ -201,9 +201,27 @@ export default function AdminDashboard() {
         newHistory = [...proj.photoHistory, historyItem]
       }
 
-      // Also update the student status in database to 'done'
+      // Check if all required channels have completed for this student
+      let allChannelsDone = true
+      if (isDualPhotoshootMode(proj.config.mode)) {
+        const ch1Done = newHistory.some((h) => h.student.id === data.student.id && h.channel === 1)
+        const ch2Done = newHistory.some((h) => h.student.id === data.student.id && h.channel === 2)
+        allChannelsDone = ch1Done && ch2Done
+      } else if (photoshootMode) {
+        // Single photoshoot: one channel is enough
+        allChannelsDone = true
+      } else {
+        // Non-photoshoot modes: mark done immediately
+        allChannelsDone = true
+      }
+
+      // Update student status: 'done' if all channels complete, keep current status otherwise
       const updatedDatabase = proj.database.map((s) =>
-        s.id === data.student.id ? { ...s, status: 'done' as const } : s
+        s.id === data.student.id && allChannelsDone
+          ? { ...s, status: 'done' as const }
+          : s.id === data.student.id && !allChannelsDone
+            ? { ...s, status: s.status } // keep current status (e.g., 'sent')
+            : s
       )
 
       updateCurrentProject({

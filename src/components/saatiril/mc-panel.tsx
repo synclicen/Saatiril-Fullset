@@ -21,6 +21,7 @@ const THEME = {
   gold: '#d4af37',
   muted: '#c4b5fd',
   emerald: '#4ade80',
+  cyan: '#06b6d4',
 } as const
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -36,6 +37,7 @@ function getActiveChannel(status: StudentStatus): number | null {
 
 function statusLabel(status: StudentStatus): string {
   if (status === 'pending') return 'Menunggu'
+  if (status === 'sent') return 'Dikirim'
   if (status === 'done') return 'Selesai'
   const ch = getActiveChannel(status)
   return ch != null ? `Foto Ch.${ch}` : 'Aktif'
@@ -80,11 +82,10 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
   const saveProjectsToStorageNow = useSaatirilStore((s) => s.saveProjectsToStorageNow)
 
   const [opProgressText, setOpProgressText] = useState<string>('')
+  const [opProgressChannel, setOpProgressChannel] = useState<number>(0)
   // ── Photoshoot mode: search state ─────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null)
-  // Track which channels have completed for dual-photoshoot
-  const [completedChannels, setCompletedChannels] = useState<Set<number>>(new Set())
 
   const myChannelRef = useRef(myChannel)
   const currentProjectRef = useRef(currentProject)
@@ -105,11 +106,9 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     return currentProject.database.filter((s) => s.assignedChannel === myChannel)
   }, [currentProject, myChannel, photoshoot])
 
+  // Non-photoshoot: currently active student for our channel
   const currentlyActive = useMemo<Student | null>(() => {
-    if (photoshoot) {
-      // In photoshoot mode, find any student with active status
-      return channelStudents.find((s) => isActiveStatus(s.status)) ?? null
-    }
+    if (photoshoot) return null // Not used in photoshoot mode
     const targetStatus: StudentStatus = `active_${myChannel}`
     return channelStudents.find((s) => s.status === targetStatus) ?? null
   }, [channelStudents, myChannel, photoshoot])
@@ -122,7 +121,25 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     return channelStudents.filter((s) => s.status === 'pending').length
   }, [channelStudents])
 
-  const isPhotographing = currentlyActive !== null
+  const isPhotographing = !photoshoot && currentlyActive !== null
+
+  // ── Photoshoot: students sent to operators ──────────────────────────────
+  const sentStudents = useMemo<Student[]>(() => {
+    if (!photoshoot) return []
+    return channelStudents.filter((s) => s.status === 'sent')
+  }, [photoshoot, channelStudents])
+
+  // ── Photoshoot: check per-channel completion from photoHistory ──────────
+  const getStudentChannelCompletion = useCallback((studentId: string): Record<number, boolean> => {
+    const proj = currentProjectRef.current
+    if (!proj) return {}
+    const result: Record<number, boolean> = {}
+    const chCount = channelCount(proj.config.mode)
+    for (let ch = 1; ch <= chCount; ch++) {
+      result[ch] = proj.photoHistory.some((h) => h.student.id === studentId && h.channel === ch)
+    }
+    return result
+  }, [])
 
   // ── Photoshoot: filtered search results ───────────────────────────────────
   const searchResults = useMemo<Student[]>(() => {
@@ -130,7 +147,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     const q = searchQuery.toLowerCase().trim()
     return channelStudents.filter(
       (s) =>
-        s.status !== 'active_1' && s.status !== 'active_2' &&
+        (s.status === 'pending' || s.status === 'sent') &&
         (s.nim.toLowerCase().includes(q) || s.nama.toLowerCase().includes(q))
     )
   }, [photoshoot, searchQuery, channelStudents])
@@ -170,99 +187,77 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
   // ── Socket: PHOTOS_SAVED
   useEffect(() => {
     const handlePhotosSaved = (data: PhotosSavedData) => {
-      console.log('[SAATIRIL MC] PHOTOS_SAVED received:', data.student?.nama, 'channel:', data.channel, 'myChannel:', myChannelRef.current)
+      console.log('[SAATIRIL MC] PHOTOS_SAVED received:', data.student?.nama, 'channel:', data.channel)
 
       if (!photoshoot && data.channel !== myChannelRef.current) {
         console.log('[SAATIRIL MC] PHOTOS_SAVED ignored: channel mismatch')
         return
       }
 
-      if (photoshoot && dualPhotoshoot) {
-        // In dual-photoshoot, track which channels have completed
-        setCompletedChannels((prev) => {
-          const next = new Set(prev)
-          next.add(data.channel)
-          return next
-        })
-      }
-
-      // For single-photoshoot or non-photoshoot modes, mark as done immediately
-      // For dual-photoshoot, only mark as done when all channels complete
-      const shouldMarkDone = !dualPhotoshoot || completedChannels.size >= (channelCount(mode) - 1)
-      // Note: completedChannels hasn't updated yet in this render, so we check if
-      // this event completes the set. Actually we need to check after adding.
-      if (!dualPhotoshoot) {
+      // For non-photoshoot: mark done immediately
+      if (!photoshoot) {
         updateStudentStatus(data.student.id, 'done')
-      } else {
-        // Check if both channels are now done
-        const newCompleted = new Set(completedChannels)
-        newCompleted.add(data.channel)
-        if (newCompleted.size >= channelCount(mode)) {
-          updateStudentStatus(data.student.id, 'done')
-          setCompletedChannels(new Set())
-        }
-      }
-
-      saveProjectsToStorageNow()
-      if (!dualPhotoshoot) {
         setOpProgressText('')
-        setSelectedStudent(null)
+        saveProjectsToStorageNow()
+        return
       }
 
+      // For photoshoot: add to photoHistory and check per-channel completion
       const curProj = currentProjectRef.current
-      if (curProj) {
-        const historyItem: PhotoHistoryItem = {
-          student: data.student,
-          photos: data.photos,
-          channel: data.channel,
-        }
-        const existing = curProj.photoHistory.findIndex(
-          (h) => h.student.id === data.student.id && h.channel === data.channel,
-        )
-        let newHistory: PhotoHistoryItem[]
-        if (existing !== -1) {
-          newHistory = [...curProj.photoHistory]
-          newHistory[existing] = historyItem
-        } else {
-          newHistory = [...curProj.photoHistory, historyItem]
-        }
+      if (!curProj) return
 
-        const shouldDone = !dualPhotoshoot || (() => {
-          const newCompleted = new Set(completedChannels)
-          newCompleted.add(data.channel)
-          return newCompleted.size >= channelCount(mode)
-        })()
-
-        const updatedProject = {
-          ...curProj,
-          database: curProj.database.map((s) =>
-            s.id === data.student.id && shouldDone ? { ...s, status: 'done' as StudentStatus } : s
-          ),
-          photoHistory: newHistory,
-        }
-        updateCurrentProject(updatedProject)
-
-        // Reset selected student when done
-        if (shouldDone) {
-          setSelectedStudent(null)
-          setCompletedChannels(new Set())
-          setOpProgressText('')
-        }
-
-        console.log('[SAATIRIL MC] Project updated.')
+      const historyItem: PhotoHistoryItem = {
+        student: data.student,
+        photos: data.photos,
+        channel: data.channel,
       }
+
+      const existing = curProj.photoHistory.findIndex(
+        (h) => h.student.id === data.student.id && h.channel === data.channel,
+      )
+      let newHistory: PhotoHistoryItem[]
+      if (existing !== -1) {
+        newHistory = [...curProj.photoHistory]
+        newHistory[existing] = historyItem
+      } else {
+        newHistory = [...curProj.photoHistory, historyItem]
+      }
+
+      // Check if all required channels have completed
+      const chCount = channelCount(curProj.config.mode)
+      let allChannelsDone = true
+      for (let ch = 1; ch <= chCount; ch++) {
+        const chDone = newHistory.some((h) => h.student.id === data.student.id && h.channel === ch)
+        if (!chDone) {
+          allChannelsDone = false
+          break
+        }
+      }
+
+      const updatedProject = {
+        ...curProj,
+        database: curProj.database.map((s) =>
+          s.id === data.student.id && allChannelsDone ? { ...s, status: 'done' as StudentStatus } : s
+        ),
+        photoHistory: newHistory,
+      }
+      updateCurrentProject(updatedProject)
+      saveProjectsToStorageNow()
+
+      console.log('[SAATIRIL MC] PHOTOS_SAVED: allChannelsDone =', allChannelsDone, 'for', data.student.nama)
     }
 
     onLocal('PHOTOS_SAVED', handlePhotosSaved)
     return () => { offLocal('PHOTOS_SAVED', handlePhotosSaved) }
-  }, [updateStudentStatus, updateCurrentProject, saveProjectsToStorageNow, photoshoot, dualPhotoshoot, mode, completedChannels])
+  }, [updateStudentStatus, updateCurrentProject, saveProjectsToStorageNow, photoshoot])
 
   // ── Socket: OP_PROGRESS
   useEffect(() => {
     const handleOpProgress = (data: OpProgressData) => {
       if (!photoshoot && data.channel !== myChannelRef.current) return
-      console.log('[SAATIRIL MC] OP_PROGRESS:', data.status)
+      console.log('[SAATIRIL MC] OP_PROGRESS:', data.status, 'channel:', data.channel)
       setOpProgressText(data.status)
+      setOpProgressChannel(data.channel)
     }
 
     onLocal('OP_PROGRESS', handleOpProgress)
@@ -318,41 +313,38 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
   const handleSendToOperator = useCallback(() => {
     if (!selectedStudent || !currentProject) return
 
-    setCompletedChannels(new Set())
-
     if (dualPhotoshoot) {
       // Send to BOTH channels
-      const newStatus1: StudentStatus = `active_1`
-      const newStatus2: StudentStatus = `active_2`
+      const newStatus: StudentStatus = 'sent'
 
       const latestProject = useSaatirilStore.getState().currentProject
       if (!latestProject) return
 
-      // Update student status to active_1 in database
+      // Update student status to 'sent' in database
       const updatedProject = {
         ...latestProject,
         database: latestProject.database.map((s) =>
-          s.id === selectedStudent.id ? { ...s, status: newStatus1 } : s
+          s.id === selectedStudent.id ? { ...s, status: newStatus } : s
         ),
       }
 
-      updateStudentStatus(selectedStudent.id, newStatus1)
+      updateStudentStatus(selectedStudent.id, newStatus)
       updateCurrentProject(updatedProject)
       saveProjectsToStorageNow()
 
       // Send MC_CALL to both channels
       emitLocal('MC_CALL', {
-        student: { ...selectedStudent, status: newStatus1, assignedChannel: 1 },
+        student: { ...selectedStudent, status: newStatus, assignedChannel: 1 },
         channel: 1,
       })
       emitLocal('MC_CALL', {
-        student: { ...selectedStudent, status: newStatus2, assignedChannel: 2 },
+        student: { ...selectedStudent, status: newStatus, assignedChannel: 2 },
         channel: 2,
       })
       emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
     } else {
       // Single photoshoot: send to channel 1
-      const newStatus: StudentStatus = `active_1`
+      const newStatus: StudentStatus = 'sent'
 
       const latestProject = useSaatirilStore.getState().currentProject
       if (!latestProject) return
@@ -375,37 +367,34 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
       emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
     }
 
-    setOpProgressText('')
     setSearchQuery('')
+    setSelectedStudent(null)
   }, [selectedStudent, currentProject, dualPhotoshoot, updateStudentStatus, updateCurrentProject, saveProjectsToStorageNow])
 
   // ── Photoshoot: reset (for retake)
-  const handleResetForRetake = useCallback(() => {
-    if (!currentlyActive || !currentProject) return
+  const handleResetForRetake = useCallback((student: Student) => {
+    if (!currentProject) return
 
-    // Reset student status back to pending so MC can re-send
     const latestProject = useSaatirilStore.getState().currentProject
     if (!latestProject) return
 
     const updatedProject = {
       ...latestProject,
       database: latestProject.database.map((s) =>
-        s.id === currentlyActive.id ? { ...s, status: 'pending' as StudentStatus } : s
+        s.id === student.id ? { ...s, status: 'pending' as StudentStatus } : s
       ),
     }
 
-    updateStudentStatus(currentlyActive.id, 'pending')
+    updateStudentStatus(student.id, 'pending')
     updateCurrentProject(updatedProject)
     saveProjectsToStorageNow()
 
     emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
 
     // Pre-select the student for easy re-send
-    setSelectedStudent({ ...currentlyActive, status: 'pending' })
-    setOpProgressText('')
-    setCompletedChannels(new Set())
-    setSearchQuery(currentlyActive.nama)
-  }, [currentlyActive, currentProject, updateStudentStatus, updateCurrentProject, saveProjectsToStorageNow])
+    setSelectedStudent({ ...student, status: 'pending' })
+    setSearchQuery(student.nama)
+  }, [currentProject, updateStudentStatus, updateCurrentProject, saveProjectsToStorageNow])
 
   // ── Render helpers
   const renderCallButton = () => {
@@ -427,6 +416,27 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
       )
     }
 
+    if (photoshoot) {
+      // Photoshoot mode: always allow sending — NO BLOCKING
+      return (
+        <Button
+          disabled={!selectedStudent || selectedStudent.status === 'done'}
+          onClick={handleSendToOperator}
+          className={`w-full font-bold cursor-pointer transition-all duration-200 active:scale-[0.98] ${isMobile ? 'h-14 text-base' : 'h-14 text-lg hover:scale-[1.02]'}`}
+          style={{
+            backgroundColor: selectedStudent && selectedStudent.status !== 'done' ? THEME.emerald : THEME.panel,
+            color: selectedStudent && selectedStudent.status !== 'done' ? THEME.bg : THEME.muted,
+            border: `2px solid ${selectedStudent && selectedStudent.status !== 'done' ? THEME.emerald : THEME.border}`,
+            boxShadow: selectedStudent && selectedStudent.status !== 'done' ? `0 0 20px ${THEME.emerald}44` : 'none',
+          }}
+        >
+          <Send className="size-5" />
+          {dualPhotoshoot ? 'KIRIM KE 2 KAMERA' : 'KIRIM KE OPERATOR'}
+        </Button>
+      )
+    }
+
+    // Non-photoshoot: existing blocking flow
     if (isPhotographing) {
       return (
         <div className="space-y-2">
@@ -442,42 +452,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
             <Loader2 className="size-5 animate-spin" />
             {opProgressText || 'TUNGGU KAMERA...'}
           </Button>
-          {/* Retake button for photoshoot modes */}
-          {photoshoot && (
-            <Button
-              onClick={handleResetForRetake}
-              className="w-full font-bold cursor-pointer"
-              style={{
-                backgroundColor: `${THEME.border}`,
-                color: THEME.muted,
-                border: `2px solid ${THEME.muted}`,
-              }}
-            >
-              <RotateCcw className="size-4 mr-2" />
-              ULANGI FOTO — Reset & Kirim Ulang
-            </Button>
-          )}
         </div>
-      )
-    }
-
-    if (photoshoot) {
-      // Photoshoot mode: send selected student
-      return (
-        <Button
-          disabled={!selectedStudent}
-          onClick={handleSendToOperator}
-          className={`w-full font-bold cursor-pointer transition-all duration-200 active:scale-[0.98] ${isMobile ? 'h-14 text-base' : 'h-14 text-lg hover:scale-[1.02]'}`}
-          style={{
-            backgroundColor: selectedStudent ? THEME.emerald : THEME.panel,
-            color: selectedStudent ? THEME.bg : THEME.muted,
-            border: `2px solid ${selectedStudent ? THEME.emerald : THEME.border}`,
-            boxShadow: selectedStudent ? `0 0 20px ${THEME.emerald}44` : 'none',
-          }}
-        >
-          <Send className="size-5" />
-          {dualPhotoshoot ? 'KIRIM KE 2 KAMERA' : 'KIRIM KE OPERATOR'}
-        </Button>
       )
     }
 
@@ -520,6 +495,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     const isActive = isActiveStatus(student.status)
     const isNext = !photoshoot && student.id === nextPending?.id && student.status === 'pending'
     const isDone = student.status === 'done'
+    const isSent = student.status === 'sent'
     const isSelected = photoshoot && selectedStudent?.id === student.id
 
     if (isActive) {
@@ -535,6 +511,13 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
         backgroundColor: `${THEME.emerald}22`,
         borderLeft: `4px solid ${THEME.emerald}`,
         boxShadow: `0 0 12px ${THEME.emerald}44`,
+      }
+    }
+
+    if (isSent) {
+      return {
+        backgroundColor: `${THEME.cyan}11`,
+        borderLeft: `4px solid ${THEME.cyan}`,
       }
     }
 
@@ -568,6 +551,18 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
         >
           <CheckCircle2 className="size-3 mr-0.5" />
           Selesai
+        </Badge>
+      )
+    }
+
+    if (status === 'sent') {
+      return (
+        <Badge
+          className="text-[10px] px-1.5 py-0"
+          style={{ backgroundColor: `${THEME.cyan}33`, color: THEME.cyan, border: `1px solid ${THEME.cyan}66` }}
+        >
+          <Camera className="size-3 mr-0.5" />
+          Dikirim
         </Badge>
       )
     }
@@ -634,36 +629,8 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
           />
         </div>
 
-        {/* Currently active info */}
-        {currentlyActive && (
-          <div className="rounded-lg p-2.5" style={{ backgroundColor: `${THEME.gold}15`, border: `1px solid ${THEME.gold}33` }}>
-            <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: THEME.gold }}>
-              Sedang Difoto
-            </p>
-            <p className="text-sm font-bold truncate" style={{ color: '#ffffff' }}>
-              {currentlyActive.nama}
-            </p>
-            <p className="text-xs font-mono" style={{ color: THEME.muted }}>
-              {currentlyActive.nim}
-            </p>
-            {opProgressText && (
-              <div className="flex items-center gap-1.5 mt-1">
-                <Camera className="size-3" style={{ color: THEME.gold }} />
-                <span className="text-[10px] font-medium" style={{ color: THEME.gold }}>
-                  {opProgressText}
-                </span>
-              </div>
-            )}
-            {dualPhotoshoot && completedChannels.size > 0 && (
-              <p className="text-[10px] mt-1" style={{ color: THEME.emerald }}>
-                Kamera selesai: {Array.from(completedChannels).map(ch => `Ch.${ch}`).join(', ')}
-              </p>
-            )}
-          </div>
-        )}
-
         {/* Search results */}
-        {searchQuery.trim() && !currentlyActive && (
+        {searchQuery.trim() && (
           <div className="max-h-32 overflow-y-auto rounded-lg border" style={{ borderColor: THEME.border }}>
             {searchResults.length === 0 ? (
               <p className="p-2 text-xs text-center" style={{ color: THEME.muted }}>
@@ -694,7 +661,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
         )}
 
         {/* Selected student preview */}
-        {selectedStudent && !currentlyActive && (
+        {selectedStudent && (
           <div className="rounded-lg p-2.5" style={{ backgroundColor: `${THEME.emerald}15`, border: `1px solid ${THEME.emerald}33` }}>
             <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: THEME.emerald }}>
               Peserta Dipilih
@@ -712,6 +679,94 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
       </CardContent>
     </Card>
   )
+
+  // ── Photoshoot: sent students panel (per-channel progress)
+  const renderSentStudents = () => {
+    if (!photoshoot || sentStudents.length === 0) return null
+
+    return (
+      <Card
+        className="shrink-0 border rounded-xl"
+        style={{ backgroundColor: THEME.card, borderColor: THEME.cyan }}
+      >
+        <CardContent className="p-3 space-y-2">
+          <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: THEME.cyan }}>
+            <Camera className="size-3 inline mr-1" />
+            Dikirim ke Operator ({sentStudents.length})
+          </p>
+          <div className="max-h-48 overflow-y-auto space-y-1.5">
+            {sentStudents.map((student) => {
+              const completion = getStudentChannelCompletion(student.id)
+              return (
+                <div
+                  key={student.id}
+                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
+                  style={{ backgroundColor: `${THEME.cyan}0a`, border: `1px solid ${THEME.cyan}22` }}
+                >
+                  <span className="text-xs font-medium truncate flex-1" style={{ color: '#ffffff' }}>
+                    {student.nama}
+                  </span>
+                  {dualPhotoshoot ? (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Badge
+                        className="text-[9px] px-1 py-0"
+                        style={{
+                          backgroundColor: completion[1] ? '#22c55e33' : `${THEME.gold}22`,
+                          color: completion[1] ? '#4ade80' : THEME.gold,
+                          border: `1px solid ${completion[1] ? '#22c55e55' : `${THEME.gold}44`}`,
+                        }}
+                      >
+                        Ch.1 {completion[1] ? '✓' : '...'}
+                      </Badge>
+                      <Badge
+                        className="text-[9px] px-1 py-0"
+                        style={{
+                          backgroundColor: completion[2] ? '#22c55e33' : `${THEME.cyan}22`,
+                          color: completion[2] ? '#4ade80' : THEME.cyan,
+                          border: `1px solid ${completion[2] ? '#22c55e55' : `${THEME.cyan}44`}`,
+                        }}
+                      >
+                        Ch.2 {completion[2] ? '✓' : '...'}
+                      </Badge>
+                    </div>
+                  ) : (
+                    <Badge
+                      className="text-[9px] px-1 py-0"
+                      style={{
+                        backgroundColor: completion[1] ? '#22c55e33' : `${THEME.gold}22`,
+                        color: completion[1] ? '#4ade80' : THEME.gold,
+                        border: `1px solid ${completion[1] ? '#22c55e55' : `${THEME.gold}44`}`,
+                      }}
+                    >
+                      {completion[1] ? '✓ Selesai' : 'Memotret...'}
+                    </Badge>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-6 shrink-0 cursor-pointer"
+                    style={{ color: THEME.gold }}
+                    onClick={() => handleResetForRetake(student)}
+                    title="Reset & Kirim Ulang"
+                  >
+                    <RotateCcw className="size-3" />
+                  </Button>
+                </div>
+              )
+            })}
+          </div>
+          {opProgressText && (
+            <div className="flex items-center gap-1.5 mt-1">
+              <Loader2 className="size-3 animate-spin" style={{ color: THEME.cyan }} />
+              <span className="text-[10px]" style={{ color: THEME.cyan }}>
+                Ch.{opProgressChannel}: {opProgressText}
+              </span>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    )
+  }
 
   // ── Main render
   if (!currentProject) {
@@ -787,6 +842,9 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
           </Card>
         )}
 
+        {/* Sent Students (photoshoot) */}
+        {photoshoot && renderSentStudents()}
+
         {/* Queue List */}
         <Card
           className="flex-1 min-h-0 border rounded-xl overflow-hidden flex flex-col"
@@ -822,7 +880,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
                       className="flex items-center gap-2 px-3 py-2 transition-colors duration-200 cursor-pointer"
                       style={getRowStyle(student)}
                       onClick={() => {
-                        if (photoshoot && !isActive && student.status !== 'done') {
+                        if (photoshoot && student.status !== 'done') {
                           setSelectedStudent(student)
                           setSearchQuery(student.nama)
                         }
@@ -837,7 +895,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
                       <span
                         className={`text-xs font-medium truncate flex-1 ${student.status === 'done' ? 'line-through' : ''}`}
                         style={{
-                          color: isActive ? THEME.gold : selectedStudent?.id === student.id ? THEME.emerald : student.status === 'done' ? THEME.muted : '#ffffff',
+                          color: isActive ? THEME.gold : selectedStudent?.id === student.id ? THEME.emerald : student.status === 'sent' ? THEME.cyan : student.status === 'done' ? THEME.muted : '#ffffff',
                         }}
                       >
                         {student.nama}
@@ -919,6 +977,9 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
         </Card>
       )}
 
+      {/* Sent Students (photoshoot) */}
+      {photoshoot && renderSentStudents()}
+
       {/* Bottom: Queue List */}
       <Card
         className="flex-1 min-h-0 border rounded-xl overflow-hidden flex flex-col"
@@ -973,7 +1034,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
                     className="grid grid-cols-[36px_90px_1fr_80px] gap-2 items-center px-4 py-2 transition-colors duration-200 cursor-pointer"
                     style={getRowStyle(student)}
                     onClick={() => {
-                      if (photoshoot && !isActive && student.status !== 'done') {
+                      if (photoshoot && student.status !== 'done') {
                         setSelectedStudent(student)
                         setSearchQuery(student.nama)
                       }
@@ -983,7 +1044,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
                     <span className="text-xs font-mono truncate" style={{ color: THEME.muted }}>{student.nim}</span>
                     <span
                       className={`text-sm font-medium truncate ${student.status === 'done' ? 'line-through' : ''}`}
-                      style={{ color: isActive ? THEME.gold : selectedStudent?.id === student.id ? THEME.emerald : student.status === 'done' ? THEME.muted : '#ffffff' }}
+                      style={{ color: isActive ? THEME.gold : selectedStudent?.id === student.id ? THEME.emerald : student.status === 'sent' ? THEME.cyan : student.status === 'done' ? THEME.muted : '#ffffff' }}
                     >
                       {student.nama}
                     </span>

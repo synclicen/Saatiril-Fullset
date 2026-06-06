@@ -116,6 +116,7 @@ function getActiveChannel(status: StudentStatus): number | null {
 
 function statusLabel(status: StudentStatus): string {
   if (status === 'pending') return 'Menunggu'
+  if (status === 'sent') return 'Dikirim'
   if (status === 'done') return 'Selesai'
   const ch = getActiveChannel(status)
   return ch != null ? `Foto Ch.${ch}` : 'Aktif'
@@ -190,6 +191,8 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const [cameraDims, setCameraDims] = useState({ width: 0, height: 0 })
   const [showQueueOnMobile, setShowQueueOnMobile] = useState(false)
   const [opSearchQuery, setOpSearchQuery] = useState('')
+  // Buffer for MC_CALL events that arrive before the database updates via SYNC_DB
+  const [mcCallBuffer, setMcCallBuffer] = useState<Student[]>([])
   const isCapturingRef = useRef(false)
 
   // ── AI auto-capture ──────────────────────────────────────────────────────
@@ -261,27 +264,49 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     return currentProject.database.filter((s) => s.assignedChannel === myChannel)
   }, [currentProject, myChannel, photoshoot])
 
-  // ── Operator search results (photoshoot mode only, read-only) ───────────
+  // ── Operator queue: derived from database + MC_CALL buffer ──────────────────
+  // Primary queue is derived from database (students with 'sent' status not yet
+  // photographed by this operator). MC_CALL buffer adds students that arrived
+  // before the database was updated via SYNC_DB.
+  const opQueue = useMemo<Student[]>(() => {
+    if (!photoshoot || !currentProject) return []
+    const alreadyPhotographed = new Set(
+      currentProject.photoHistory
+        .filter((h) => h.channel === myChannel)
+        .map((h) => h.student.id)
+    )
+    const doneIds = new Set(
+      currentProject.database.filter((s) => s.status === 'done').map((s) => s.id)
+    )
+    const dbQueueIds = new Set<string>()
+    const dbItems = currentProject.database.filter(
+      (s) => s.status === 'sent' && !alreadyPhotographed.has(s.id)
+    )
+    dbItems.forEach((s) => dbQueueIds.add(s.id))
+    // Add MC_CALL buffer items that aren't already in dbQueue and aren't done
+    const bufferItems = mcCallBuffer.filter(
+      (s) => !dbQueueIds.has(s.id) && !doneIds.has(s.id) && !alreadyPhotographed.has(s.id)
+    )
+    return [...dbItems, ...bufferItems]
+  }, [photoshoot, currentProject, myChannel, mcCallBuffer])
+
+  // ── Operator search results (searches within the queue) ───────────
   const opSearchResults = useMemo<Student[]>(() => {
-    if (!photoshoot || !opSearchQuery.trim()) return []
+    if (!opSearchQuery.trim()) return opQueue
     const q = opSearchQuery.toLowerCase().trim()
-    return channelStudents.filter(
-      (s) =>
-        !isActiveStatus(s.status) && s.status !== 'done' &&
-        (s.nim.toLowerCase().includes(q) || s.nama.toLowerCase().includes(q))
-    ).slice(0, 5)
-  }, [photoshoot, opSearchQuery, channelStudents])
+    return opQueue.filter(
+      (s) => s.nim.toLowerCase().includes(q) || s.nama.toLowerCase().includes(q)
+    )
+  }, [opSearchQuery, opQueue])
 
   const currentlyActive = useMemo<Student | null>(() => {
     if (photoshoot) {
-      // In photoshoot mode, check if any student has active status for our channel
-      // For dual-photoshoot, check active_<myChannel>
-      const targetStatus: StudentStatus = `active_${myChannel}`
-      return channelStudents.find((s) => s.status === targetStatus) ?? null
+      // In photoshoot mode, use opCurrentTarget from store (selected from queue)
+      return opCurrentTarget
     }
     const targetStatus: StudentStatus = `active_${myChannel}`
     return channelStudents.find((s) => s.status === targetStatus) ?? null
-  }, [channelStudents, myChannel, photoshoot])
+  }, [channelStudents, myChannel, photoshoot, opCurrentTarget])
 
   const nextPending = useMemo<Student | null>(() => {
     return channelStudents.find((s) => s.status === 'pending') ?? null
@@ -442,13 +467,10 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   useEffect(() => { myChannelRef.current = myChannel }, [myChannel])
   useEffect(() => { currentProjectRef.current = currentProject }, [currentProject])
 
-  // ── State recovery ───────────────────────────────────────────────────────
+  // ── State recovery (non-photoshoot only) ────────────────────────────────
   useEffect(() => {
-    if (!currentProject) return
+    if (!currentProject || photoshoot) return
     const activeStudent = currentProject.database.find((s) => {
-      if (photoshoot) {
-        return s.status === `active_${myChannel}`
-      }
       return s.assignedChannel === myChannel && isActiveStatus(s.status)
     })
     if (activeStudent) {
@@ -462,11 +484,19 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   useEffect(() => {
     const handleMcCall = (data: McCallData) => {
       if (data.channel !== myChannelRef.current) return
-      setOpCurrentTarget(data.student)
+      if (photoshoot) {
+        // Add to MC_CALL buffer (will be deduped with dbQueue in opQueue)
+        setMcCallBuffer((prev) => {
+          if (prev.some((s) => s.id === data.student.id)) return prev
+          return [...prev, data.student]
+        })
+      } else {
+        setOpCurrentTarget(data.student)
+      }
     }
     onLocal('MC_CALL', handleMcCall)
     return () => { offLocal('MC_CALL', handleMcCall) }
-  }, [setOpCurrentTarget])
+  }, [setOpCurrentTarget, photoshoot])
 
   // ── Socket: SYNC_DB ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -476,14 +506,22 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       const mergedDb = mergeDatabases(proj.database, data.project.database)
       const mergedConfig = preserveFrameOnSync(data.project.config, proj.config)
       updateCurrentProject({ ...proj, database: mergedDb, photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : proj.photoHistory, config: mergedConfig })
-      const ch = myChannelRef.current
-      const activeStudent = data.project.database.find((s: Student) => {
-        if (isPhotoshootMode(data.project.config.mode)) {
-          return s.status === `active_${ch}`
-        }
-        return s.assignedChannel === ch && isActiveStatus(s.status)
-      })
-      if (activeStudent) setOpCurrentTarget(activeStudent)
+
+      if (!isPhotoshootMode(data.project.config.mode)) {
+        const ch = myChannelRef.current
+        const activeStudent = data.project.database.find((s: Student) => {
+          return s.assignedChannel === ch && isActiveStatus(s.status)
+        })
+        if (activeStudent) setOpCurrentTarget(activeStudent)
+      }
+
+      // Clean up MC_CALL buffer: remove done students (they're now in database)
+      const doneIds = new Set(
+        data.project.database.filter((s: Student) => s.status === 'done').map((s: Student) => s.id)
+      )
+      if (doneIds.size > 0) {
+        setMcCallBuffer((prev) => prev.filter((s) => !doneIds.has(s.id)))
+      }
     }
     onLocal('SYNC_DB', handleSyncDb)
     return () => { offLocal('SYNC_DB', handleSyncDb) }
@@ -523,16 +561,18 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           photos: allPhotos,
           channel: myChannel,
         }
-        // Don't mark as done here in dual-photoshoot — let MC handle that
-        if (!isDualPhotoshootMode(currentMode)) {
-          updateStudentStatus(student.id, 'done')
-        }
+        // In photoshoot mode: MC/Admin handles marking as done based on photoHistory
+        // Single photoshoot: MC marks as done immediately
+        // Dual photoshoot: MC marks as done when all channels complete
         saveProjectsToStorageNow()
+
+        // Clean up MC_CALL buffer for this student
+        setMcCallBuffer((prev) => prev.filter((s) => s.id !== student.id))
 
         console.log('[SAATIRIL OP] Emitting PHOTOS_SAVED for student:', student.nama, 'channel:', myChannel)
 
         emitLocal('PHOTOS_SAVED', {
-          student: { ...student, status: isDualPhotoshootMode(currentMode) ? student.status : 'done' },
+          student: { ...student, status: student.status },
           photos: allPhotos,
           channel: myChannel,
         })
@@ -776,12 +816,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
   // ── Render helpers ───────────────────────────────────────────────────────
   const getRowStyle = (student: Student): React.CSSProperties => {
-    const isActive = photoshoot
-      ? student.status === `active_${myChannel}`
-      : student.status === `active_${myChannel}`
+    const isActive = student.status === `active_${myChannel}`
+    const isSent = student.status === 'sent'
     const isNext = !photoshoot && student.id === nextPending?.id && student.status === 'pending'
     const isDone = student.status === 'done'
     if (isActive) return { backgroundColor: `${THEME.gold}22`, borderLeft: `4px solid ${THEME.gold}`, boxShadow: `0 0 12px ${THEME.gold}44` }
+    if (isSent) return { backgroundColor: `${THEME.gold}0a`, borderLeft: `4px solid ${THEME.gold}88` }
     if (isNext) return { backgroundColor: THEME.panel, borderLeft: `4px solid ${THEME.gold}` }
     if (isDone) return { backgroundColor: '#22c55e0d', opacity: 0.55, borderLeft: `4px solid #22c55e66` }
     return { backgroundColor: THEME.panel, borderLeft: `4px solid ${THEME.border}` }
@@ -789,62 +829,76 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
   const renderStatusBadge = (status: StudentStatus) => {
     if (status === 'done') return <Badge className="text-[10px] px-1.5 py-0" style={{ backgroundColor: '#22c55e33', color: '#4ade80', border: '1px solid #22c55e55' }}><CheckCircle2 className="size-3 mr-0.5" />Selesai</Badge>
+    if (status === 'sent') return <Badge className="text-[10px] px-1.5 py-0" style={{ backgroundColor: '#d4af3733', color: THEME.gold, border: '1px solid #d4af3766' }}><Camera className="size-3 mr-0.5" />Dikirim</Badge>
     if (isActiveStatus(status)) return <Badge className="text-[10px] px-1.5 py-0 animate-pulse" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}66` }}><Loader2 className="size-3 mr-0.5 animate-spin" />{statusLabel(status)}</Badge>
     return <Badge className="text-[10px] px-1.5 py-0" style={{ backgroundColor: `${THEME.border}44`, color: THEME.muted, border: `1px solid ${THEME.border}` }}><Clock className="size-3 mr-0.5" />Menunggu</Badge>
   }
 
-  // ── Operator search (photoshoot mode, read-only) ────────────────────────
+  // ── Operator queue with search (photoshoot mode) ────────────────────────
   const renderOpSearch = (compact = false) => {
     if (!photoshoot) return null
     return (
       <Card
         className="shrink-0 border rounded-lg overflow-hidden"
-        style={{ backgroundColor: THEME.card, borderColor: THEME.border }}
+        style={{ backgroundColor: THEME.card, borderColor: THEME.gold }}
       >
         <CardContent className={compact ? 'p-2 space-y-1.5' : 'p-2.5 space-y-2'}>
-          <p
-            className="text-[9px] font-semibold uppercase tracking-widest"
-            style={{ color: THEME.gold }}
-          >
-            Cari data peserta
-          </p>
+          <div className="flex items-center justify-between">
+            <p
+              className="text-[9px] font-semibold uppercase tracking-widest"
+              style={{ color: THEME.gold }}
+            >
+              <List className="size-3 inline mr-1" />
+              Antre dari MC ({opQueue.length})
+            </p>
+          </div>
 
           <div className="relative">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3.5" style={{ color: THEME.muted }} />
             <Input
-              placeholder="NIM / Nama..."
+              placeholder="Cari NIM / Nama di antrean..."
               value={opSearchQuery}
               onChange={(e) => setOpSearchQuery(e.target.value)}
               className={`pl-7 border-[#533485] bg-[#2a164a] text-white placeholder:text-[#533485] focus-visible:border-[#d4af37] focus-visible:ring-[#d4af37]/30 ${compact ? 'h-7 text-[11px]' : 'h-8 text-xs'}`}
             />
           </div>
 
-          {opSearchQuery.trim() && opSearchResults.length > 0 && (
+          {opQueue.length === 0 ? (
+            <p className={`text-center ${compact ? 'text-[9px] py-1' : 'text-[10px] py-1.5'}`} style={{ color: THEME.muted }}>
+              {opSearchQuery.trim() ? 'Tidak ditemukan di antrean' : 'Belum ada peserta dikirim MC'}
+            </p>
+          ) : (
             <div
-              className={`overflow-y-auto rounded-md border ${compact ? 'max-h-24' : 'max-h-32'}`}
+              className={`overflow-y-auto rounded-md border ${compact ? 'max-h-32' : 'max-h-48'}`}
               style={{ borderColor: THEME.border }}
             >
               {opSearchResults.map((student) => (
-                <div
+                <button
                   key={student.id}
-                  className={`flex items-center gap-1.5 px-2 text-left ${compact ? 'py-1' : 'py-1.5'}`}
-                  style={{ borderBottom: `1px solid ${THEME.border}44` }}
+                  onClick={() => {
+                    if (!sending) {
+                      setOpCurrentTarget(student)
+                      setOpSearchQuery('')
+                    }
+                  }}
+                  className={`w-full flex items-center gap-1.5 px-2 text-left transition-colors hover:bg-white/5 cursor-pointer ${compact ? 'py-1' : 'py-1.5'} ${opCurrentTarget?.id === student.id ? 'bg-[#d4af37]/10' : ''}`}
+                  style={{
+                    borderBottom: `1px solid ${THEME.border}44`,
+                    borderLeft: opCurrentTarget?.id === student.id ? `3px solid ${THEME.gold}` : `3px solid transparent`,
+                  }}
                 >
                   <span className={`font-mono truncate shrink-0 ${compact ? 'text-[9px] w-12' : 'text-[10px] w-14'}`} style={{ color: THEME.muted }}>
                     {student.nim}
                   </span>
-                  <span className={`font-medium truncate flex-1 ${compact ? 'text-[10px]' : 'text-[11px]'}`} style={{ color: '#ffffff' }}>
+                  <span className={`font-medium truncate flex-1 ${compact ? 'text-[10px]' : 'text-[11px]'}`} style={{ color: opCurrentTarget?.id === student.id ? THEME.gold : '#ffffff' }}>
                     {student.nama}
                   </span>
-                </div>
+                  {opCurrentTarget?.id === student.id && (
+                    <Camera className="size-3 shrink-0" style={{ color: THEME.gold }} />
+                  )}
+                </button>
               ))}
             </div>
-          )}
-
-          {opSearchQuery.trim() && opSearchResults.length === 0 && (
-            <p className={`text-center ${compact ? 'text-[9px] py-1' : 'text-[10px] py-1.5'}`} style={{ color: THEME.muted }}>
-              Tidak ditemukan
-            </p>
           )}
         </CardContent>
       </Card>

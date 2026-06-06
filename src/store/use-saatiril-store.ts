@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 
-export type StudentStatus = 'pending' | 'done' | `active_${number}`
+export type StudentStatus = 'pending' | 'sent' | 'done' | `active_${number}`
 
 export interface Student {
   id: string
@@ -106,12 +106,13 @@ function removeFrameFromStorage(projectId: string) {
 
 // ─── Student status priority for merge ───────────────────────────────────────
 // When merging databases from different clients, we keep the "most advanced" status.
-// pending (0) < active_N (1) < done (2)
+// pending (0) < sent (1) < active_N (2) < done (3)
 function getStatusPriority(status: StudentStatus): number {
   if (status === 'pending') return 0
-  if (status === 'done') return 2
-  // active_N statuses get priority 1
-  return 1
+  if (status === 'sent') return 1
+  if (status === 'done') return 3
+  // active_N statuses get priority 2
+  return 2
 }
 
 /**
