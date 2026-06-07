@@ -53,14 +53,19 @@ async function loadAIScripts(): Promise<boolean> {
   if (scriptsLoadPromise) return scriptsLoadPromise
   scriptsLoadPromise = (async () => {
     try {
-      await loadScript('/ai/tf.min.js')
-      await new Promise(r => setTimeout(r, 100))
-      if (typeof (window as any).tf === 'undefined') throw new Error('TF.js global missing')
-      await loadScript('/ai/pose-detection.min.js')
-      await new Promise(r => setTimeout(r, 100))
-      if (typeof (window as any).poseDetection === 'undefined') throw new Error('poseDetection global missing')
+      // Load TensorFlow.js from local files (offline support)
+      await loadScript('/ai/tfjs/tf.min.js')
+      await new Promise(r => setTimeout(r, 200))
+      if (typeof (window as any).tf === 'undefined') throw new Error('TF.js global missing after load')
+      
+      // Load pose-detection API from local files (offline support)
+      await loadScript('/ai/tfjs/pose-detection.min.js')
+      await new Promise(r => setTimeout(r, 200))
+      if (typeof (window as any).poseDetection === 'undefined') throw new Error('poseDetection global missing after load')
+      
+      // Load our custom AI module (local file)
       await loadScript('/ai/saatiril-ai.js')
-      if (!(window as any).SaatirilAI) throw new Error('SaatirilAI missing')
+      if (!(window as any).SaatirilAI) throw new Error('SaatirilAI missing after load')
       return true
     } catch (e: any) {
       console.error('[SAATIRIL AI Hook] Script load failed:', e.message)
