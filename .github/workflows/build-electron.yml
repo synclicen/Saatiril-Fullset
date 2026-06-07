@@ -68,8 +68,32 @@ jobs:
             exit 1
           }
 
-      - name: Compile Electron TypeScript
+      - name: Compile Electron preload (TypeScript)
         run: npx tsc -p electron/tsconfig.json
+
+      - name: Bundle Electron main process with esbuild
+        run: |
+          npx esbuild electron/main.ts --bundle --platform=node --outfile=electron/main.js --external:electron --external:buffer --external:fs --external:path --external:os --external:http --external:https --external:net --external:crypto --external:stream --external:events --external:url --external:child_process --external:dns --external:tls --external:zlib --external:string_decoder
+          Write-Host "Main process bundled with esbuild (socket.io inlined)"
+
+      - name: Verify bundled main.js
+        shell: pwsh
+        run: |
+          $mainJs = "electron/main.js"
+          if (Test-Path $mainJs) {
+            $size = (Get-Item $mainJs).Length / 1KB
+            Write-Host "electron/main.js : $([math]::Round($size, 1)) KB - OK"
+            # Verify socket.io is bundled inside
+            $content = Get-Content $mainJs -Raw
+            if ($content -match "SocketIOServer" -or $content -match "socket\.io") {
+              Write-Host "socket.io is bundled inside main.js - OK"
+            } else {
+              Write-Warning "socket.io may not be bundled in main.js"
+            }
+          } else {
+            Write-Error "electron/main.js NOT found!"
+            exit 1
+          }
 
       - name: Verify source directories for packaging
         shell: pwsh
@@ -92,78 +116,20 @@ jobs:
       - name: Verify packaged app structure
         shell: pwsh
         run: |
-          Write-Host "=== Verifying packaged app (asar:false) ==="
+          Write-Host "=== Verifying packaged app (asar:true) ==="
+          $asarPath = "dist-electron\win-unpacked\resources\app.asar"
           $appDir = "dist-electron\win-unpacked\resources\app"
-          if (Test-Path $appDir) {
-            Write-Host "App directory found (asar:false confirmed): $appDir"
-            Get-ChildItem $appDir | Format-Table Name, Length
-            # Verify critical directories exist inside app/
-            $outDir = Join-Path $appDir "out"
-            $publicDir = Join-Path $appDir "public"
-            $electronDir = Join-Path $appDir "electron"
-            $nodeModulesDir = Join-Path $appDir "node_modules"
-
-            if (Test-Path $outDir) {
-              $count = (Get-ChildItem $outDir -Recurse -File).Count
-              Write-Host "  out/ : $count files - OK"
-            } else {
-              Write-Error "  out/ : NOT FOUND! App will fail to start!"
-              exit 1
-            }
-            if (Test-Path $publicDir) {
-              Write-Host "  public/ : OK"
-            } else {
-              Write-Error "  public/ : NOT FOUND!"
-              exit 1
-            }
-            if (Test-Path $electronDir) {
-              Write-Host "  electron/ : OK"
-              if (Test-Path (Join-Path $electronDir "main.js")) {
-                Write-Host "  electron/main.js : OK"
-              } else {
-                Write-Error "  electron/main.js : NOT FOUND!"
-                exit 1
-              }
-            } else {
-              Write-Error "  electron/ : NOT FOUND!"
-              exit 1
-            }
-            if (Test-Path $nodeModulesDir) {
-              $nmSize = (Get-ChildItem $nodeModulesDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum / 1MB
-              $nmCount = (Get-ChildItem $nodeModulesDir -Directory).Count
-              Write-Host "  node_modules/ : $nmCount top-level packages, $([math]::Round($nmSize, 2)) MB - OK"
-              # Verify socket.io is present
-              if (Test-Path (Join-Path $nodeModulesDir "socket.io")) {
-                Write-Host "  node_modules/socket.io : OK"
-              } else {
-                Write-Error "  node_modules/socket.io : NOT FOUND! App will crash on startup!"
-                exit 1
-              }
-            } else {
-              Write-Warning "  node_modules/ : NOT FOUND (may be OK if socket.io is bundled)"
-            }
-            # Verify index.html exists for the static server
-            if (Test-Path (Join-Path $outDir "index.html")) {
-              Write-Host "  out/index.html : OK"
-            } else {
-              Write-Error "  out/index.html : NOT FOUND! Static server will fail!"
-              exit 1
-            }
-            # Report total app size
+          
+          if (Test-Path $asarPath) {
+            $size = (Get-Item $asarPath).Length / 1MB
+            Write-Host "app.asar found: $([math]::Round($size, 2)) MB - OK (asar:true confirmed)"
+          } elseif (Test-Path $appDir) {
+            Write-Host "app directory found (asar:false fallback): $appDir"
             $appSize = (Get-ChildItem $appDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum / 1MB
-            Write-Host ""
             Write-Host "  Total app/ size: $([math]::Round($appSize, 2)) MB"
           } else {
-            # Fallback: check for app.asar (shouldn't happen with asar:false)
-            Write-Warning "No app directory found - checking for asar..."
-            $asarPath = "dist-electron\win-unpacked\resources\app.asar"
-            if (Test-Path $asarPath) {
-              Write-Error "app.asar found! asar:false is NOT working correctly!"
-              exit 1
-            } else {
-              Write-Error "No app directory or app.asar found!"
-              exit 1
-            }
+            Write-Error "No app.asar or app directory found!"
+            exit 1
           }
 
       - name: List build artifacts

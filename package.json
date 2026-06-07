@@ -15,9 +15,10 @@
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
     "electron:dev": "SAATIRIL_DEV=1 electron .",
-    "electron:build": "next build && tsc -p electron/tsconfig.json && electron-builder",
-    "electron:build:win": "next build && tsc -p electron/tsconfig.json && electron-builder --win",
-    "electron:compile": "tsc -p electron/tsconfig.json"
+    "electron:build": "next build && tsc -p electron/tsconfig.json && esbuild electron/main.ts --bundle --platform=node --outfile=electron/main.js --external:electron --external:buffer --external:fs --external:path --external:os --external:http --external:https --external:net --external:crypto --external:stream --external:events --external:url --external:child_process --external:dns --external:tls --external:zlib --external:string_decoder && electron-builder",
+    "electron:build:win": "next build && tsc -p electron/tsconfig.json && esbuild electron/main.ts --bundle --platform=node --outfile=electron/main.js --external:electron --external:buffer --external:fs --external:path --external:os --external:http --external:https --external:net --external:crypto --external:stream --external:events --external:url --external:child_process --external:dns --external:tls --external:zlib --external:string_decoder && electron-builder --win",
+    "electron:compile": "tsc -p electron/tsconfig.json",
+    "electron:bundle": "esbuild electron/main.ts --bundle --platform=node --outfile=electron/main.js --external:electron --external:buffer --external:fs --external:path --external:os --external:http --external:https --external:net --external:crypto --external:stream --external:events --external:url --external:child_process --external:dns --external:tls --external:zlib --external:string_decoder"
   },
   "build": {
     "appId": "com.saatiril.fullset",
@@ -25,7 +26,7 @@
     "directories": {
       "output": "dist-electron"
     },
-    "asar": false,
+    "asar": true,
     "files": [
       "electron/main.js",
       "electron/preload.js",
@@ -78,9 +79,7 @@
       ]
     }
   },
-  "dependencies": {
-    "socket.io": "^4.8.3"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
@@ -131,6 +130,7 @@
     "electron": "^42.3.3",
     "electron-builder": "^26.15.0",
     "embla-carousel-react": "^8.6.0",
+    "esbuild": "^0.28.0",
     "eslint": "^9",
     "eslint-config-next": "^16.1.1",
     "framer-motion": "^12.40.0",
@@ -150,6 +150,7 @@
     "react-syntax-highlighter": "^15.6.1",
     "recharts": "^2.15.4",
     "sharp": "^0.34.3",
+    "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "sonner": "^2.0.6",
     "tailwind-merge": "^3.3.1",

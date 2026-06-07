@@ -33,31 +33,31 @@ let httpPort = DEFAULT_HTTP_PORT
 let socketPort = DEFAULT_SOCKET_PORT
 
 // ─── Resource path resolution ──────────────────────────────────────────────
-// With asar:false, packaged app structure is:
-//   resources/app/electron/main.js
-//   resources/app/out/...
-//   resources/app/public/...
-// So __dirname points to resources/app/electron and
-// path.join(__dirname, '..', relativePath) resolves correctly.
-// With asar:true (fallback), extraResources are at process.resourcesPath
+// With asar:true, files are inside resources/app.asar
+//   __dirname → /path/to/resources/app.asar/electron
+//   path.join(__dirname, '..', 'out') → /path/to/resources/app.asar/out
+//   Electron's fs module reads transparently from asar archives.
+// With asar:false (fallback), files are in resources/app/
 function getResourcePath(relativePath: string): string {
-  // Option 1: asar:false — files are directly in resources/app/
+  // Primary: files inside app (asar or directory)
   const appPath = path.join(__dirname, '..', relativePath)
   if (fs.existsSync(appPath)) {
     return appPath
   }
-  // Option 2: extraResources — files are at resources/<name>
+  // Fallback: extraResources at process.resourcesPath
   const extraPath = path.join(process.resourcesPath, relativePath)
   if (fs.existsSync(extraPath)) {
     return extraPath
   }
-  // Fallback
   return appPath
 }
 
 // ─── Static file server for Next.js export ─────────────────────────────────
 let httpServer: ReturnType<typeof createServer> | null = null
 let socketServer: SocketIOServer | null = null
+
+// In-memory path cache to avoid repeated fs.existsSync/fs.statSync calls
+const filePathCache = new Map<string, string | null>()
 
 function startStaticServer(outDir: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -80,54 +80,90 @@ function startStaticServer(outDir: string): Promise<void> {
       '.map': 'application/json',
     }
 
+    // Pre-warm the cache: scan the outDir for all files at startup
+    try {
+      const scanDir = (dir: string, base: string) => {
+        try {
+          const entries = fs.readdirSync(dir, { withFileTypes: true })
+          for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name)
+            const relPath = '/' + path.relative(outDir, fullPath).replace(/\\/g, '/')
+            if (entry.isDirectory()) {
+              scanDir(fullPath, base)
+            } else {
+              filePathCache.set(relPath, fullPath)
+              // Also cache without leading slash
+              filePathCache.set(relPath.slice(1), fullPath)
+            }
+          }
+        } catch { /* ignore scan errors for individual dirs */ }
+      }
+      scanDir(outDir, outDir)
+      console.log(`[SAATIRIL] File path cache: ${filePathCache.size} entries`)
+    } catch (err: any) {
+      console.warn('[SAATIRIL] Failed to pre-cache file paths:', err.message)
+    }
+
     httpServer = createServer((req, res) => {
       let urlPath = req.url?.split('?')[0] || '/'
       if (urlPath === '/') urlPath = '/index.html'
 
-      // Try exact path first, then with .html, then /index.html for SPA-like routing
+      // Check cache first (O(1) lookup instead of 3× fs.existsSync)
+      const cachedPath = filePathCache.get(urlPath)
+      if (cachedPath) {
+        const ext = path.extname(cachedPath).toLowerCase()
+        const contentType = mimeTypes[ext] || 'application/octet-stream'
+
+        res.setHeader('Access-Control-Allow-Origin', '*')
+        res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+
+        if (req.method === 'OPTIONS') {
+          res.writeHead(200)
+          res.end()
+          return
+        }
+
+        res.writeHead(200, { 'Content-Type': contentType })
+        fs.createReadStream(cachedPath).pipe(res)
+        return
+      }
+
+      // Cache miss: try with .html extension and /index.html for SPA routing
       const tryPaths = [
-        path.join(outDir, urlPath),
-        path.join(outDir, urlPath + '.html'),
-        path.join(outDir, urlPath, 'index.html'),
+        urlPath + '.html',
+        urlPath.endsWith('/') ? urlPath + 'index.html' : urlPath + '/index.html',
       ]
 
-      for (const filePath of tryPaths) {
-        try {
-          if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-            const ext = path.extname(filePath).toLowerCase()
-            const contentType = mimeTypes[ext] || 'application/octet-stream'
+      for (const tryPath of tryPaths) {
+        const cachedTry = filePathCache.get(tryPath)
+        if (cachedTry) {
+          const ext = path.extname(cachedTry).toLowerCase()
+          const contentType = mimeTypes[ext] || 'application/octet-stream'
 
-            // Set CORS headers for LAN access
-            res.setHeader('Access-Control-Allow-Origin', '*')
-            res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
-            res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+          res.setHeader('Access-Control-Allow-Origin', '*')
+          res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
+          res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
 
-            if (req.method === 'OPTIONS') {
-              res.writeHead(200)
-              res.end()
-              return
-            }
-
-            res.writeHead(200, { 'Content-Type': contentType })
-            fs.createReadStream(filePath).pipe(res)
+          if (req.method === 'OPTIONS') {
+            res.writeHead(200)
+            res.end()
             return
           }
-        } catch {
-          // File might be inside asar and stat could fail — try next path
-          continue
+
+          res.writeHead(200, { 'Content-Type': contentType })
+          fs.createReadStream(cachedTry).pipe(res)
+          return
         }
       }
 
-      // Fallback to index.html for SPA routing
-      const indexPath = path.join(outDir, 'index.html')
-      try {
-        if (fs.existsSync(indexPath)) {
-          res.writeHead(200, { 'Content-Type': 'text/html' })
-          fs.createReadStream(indexPath).pipe(res)
-          return
-        }
-      } catch {
-        // ignore
+      // Final fallback to index.html for SPA routing
+      const indexCached = filePathCache.get('/index.html')
+      if (indexCached) {
+        res.setHeader('Access-Control-Allow-Origin', '*')
+        res.writeHead(200, { 'Content-Type': 'text/html' })
+        fs.createReadStream(indexCached).pipe(res)
+        return
       }
 
       res.writeHead(404, { 'Content-Type': 'text/plain' })
@@ -497,6 +533,7 @@ function createWindow() {
 
 // ─── App lifecycle ─────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
+  const startTime = Date.now()
   console.log('[SAATIRIL] ═══════════════════════════════════════════════════════════')
   console.log('[SAATIRIL]  SAATIRIL Electron App Starting...')
   console.log(`[SAATIRIL]  Version: ${app.getVersion()}`)
@@ -509,7 +546,7 @@ app.whenReady().then(async () => {
   // Register IPC handlers
   registerIpcHandlers()
 
-  // Show splash screen immediately — gives visual feedback during slow startup
+  // Show splash screen immediately — gives visual feedback during startup
   createSplashWindow()
 
   // Start servers (only in production; in dev they run separately)
@@ -520,37 +557,29 @@ app.whenReady().then(async () => {
     if (fs.existsSync(outDir)) {
       const fileCount = fs.readdirSync(outDir).length
       console.log(`[SAATIRIL] Static export found (${fileCount} top-level items)`)
-      try {
-        await startStaticServer(outDir)
-        console.log('[SAATIRIL] HTTP server is ready.')
-      } catch (err: any) {
-        console.error('[SAATIRIL] Failed to start HTTP server:', err.message)
-      }
     } else {
       console.error('[SAATIRIL] ❌ No static export found at', outDir)
-      console.error('[SAATIRIL] Checking parent directory:')
-      try {
-        const parentDir = path.dirname(outDir)
-        if (fs.existsSync(parentDir)) {
-          fs.readdirSync(parentDir).forEach(f => {
-            const fullPath = path.join(parentDir, f)
-            const isDir = fs.statSync(fullPath).isDirectory()
-            console.error(`  - ${f}${isDir ? '/' : ''}`)
-          })
-        }
-      } catch (_) { /* ignore */ }
     }
 
+    // Start both servers IN PARALLEL instead of sequentially
+    // This saves 2-5 seconds of startup time
     try {
-      await startSocketServer()
-      console.log('[SAATIRIL] Socket server is ready.')
+      await Promise.all([
+        fs.existsSync(outDir)
+          ? startStaticServer(outDir).then(() => { console.log('[SAATIRIL] HTTP server is ready.') })
+          : Promise.reject(new Error('No out/ directory')),
+        startSocketServer().then(() => { console.log('[SAATIRIL] Socket server is ready.') }),
+      ])
     } catch (err: any) {
-      console.error('[SAATIRIL] Failed to start Socket server:', err.message)
+      console.error('[SAATIRIL] Server startup error:', err.message)
     }
   }
 
   // Create main window (servers are now ready, page will load successfully)
   createWindow()
+
+  const elapsed = Date.now() - startTime
+  console.log(`[SAATIRIL] Startup completed in ${elapsed}ms`)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
