@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Megaphone, Users, Clock, CheckCircle2, Loader2, Camera, Monitor, Search, Send, RotateCcw } from 'lucide-react'
-import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, type CameraMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync, isPhotoshootMode, isDualPhotoshootMode, channelCount } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, type CameraMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync, preservePhotoHistoryOnSync, isPhotoshootMode, isDualPhotoshootMode, channelCount } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
@@ -162,6 +162,24 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
   }, [currentlyActive, nextPending])
 
+  // ── Socket: STUDENT_DONE — lightweight event for immediate MC unblocking
+  // In non-photoshoot mode, MC only needs to know the student is done.
+  // This event fires BEFORE the heavy PHOTOS_SAVED payload arrives, so MC
+  // can immediately call the next student without waiting for photo transfer.
+  useEffect(() => {
+    const handleStudentDone = (data: { studentId: string; channel: number }) => {
+      if (photoshoot) return // photoshoot mode uses PHOTOS_SAVED for channel completion
+      if (data.channel !== myChannelRef.current) return
+      console.log('[SAATIRIL MC] STUDENT_DONE received — immediate unblock:', data.studentId, 'Ch.', data.channel)
+      updateStudentStatus(data.studentId, 'done')
+      setOpProgressText('')
+      saveProjectsToStorageNow()
+    }
+
+    onLocal('STUDENT_DONE', handleStudentDone)
+    return () => { offLocal('STUDENT_DONE', handleStudentDone) }
+  }, [updateStudentStatus, saveProjectsToStorageNow, photoshoot])
+
   // ── Socket: SYNC_DB
   useEffect(() => {
     const handleSyncDb = (data: SyncDbData) => {
@@ -171,10 +189,14 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
       if (curProj && proj.id === curProj.id) {
         const mergedDb = mergeDatabases(curProj.database, proj.database)
         const mergedConfig = preserveFrameOnSync(proj.config, curProj.config)
+        const mergedPhotoHistory = preservePhotoHistoryOnSync(
+          proj.photoHistory ?? [],
+          curProj.photoHistory,
+        )
         updateCurrentProject({
           ...curProj,
           database: mergedDb,
-          photoHistory: proj.photoHistory?.length ? proj.photoHistory : curProj.photoHistory,
+          photoHistory: mergedPhotoHistory,
           config: mergedConfig,
         })
       }
@@ -185,22 +207,14 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
   }, [updateCurrentProject])
 
   // ── Socket: PHOTOS_SAVED
+  // In non-photoshoot mode: STUDENT_DONE already unblocked MC, this is a no-op.
+  // In photoshoot mode: adds photo to history and checks per-channel completion.
   useEffect(() => {
     const handlePhotosSaved = (data: PhotosSavedData) => {
       console.log('[SAATIRIL MC] PHOTOS_SAVED received:', data.student?.nama, 'channel:', data.channel)
 
-      if (!photoshoot && data.channel !== myChannelRef.current) {
-        console.log('[SAATIRIL MC] PHOTOS_SAVED ignored: channel mismatch')
-        return
-      }
-
-      // For non-photoshoot: mark done immediately
-      if (!photoshoot) {
-        updateStudentStatus(data.student.id, 'done')
-        setOpProgressText('')
-        saveProjectsToStorageNow()
-        return
-      }
+      // Non-photoshoot: already handled by STUDENT_DONE event — skip here
+      if (!photoshoot) return
 
       // For photoshoot: add to photoHistory and check per-channel completion
       const curProj = currentProjectRef.current
@@ -295,11 +309,13 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     updateCurrentProject(updatedProject)
     setOpProgressText('')
 
-    emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
+    // PRIORITY: MC_CALL first (lightweight, operator gets student immediately)
     emitLocal('MC_CALL', {
       student: { ...nextPending, status: newStatus },
       channel: myChannel,
     })
+    // Then SYNC_DB for consistency (now lightweight — photos stripped)
+    emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
   }, [
     nextPending,
     currentProject,
@@ -332,7 +348,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
       updateCurrentProject(updatedProject)
       saveProjectsToStorageNow()
 
-      // Send MC_CALL to both channels
+      // Send MC_CALL to both channels FIRST (operators get student immediately)
       emitLocal('MC_CALL', {
         student: { ...selectedStudent, status: newStatus, assignedChannel: 1 },
         channel: 1,
@@ -341,6 +357,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
         student: { ...selectedStudent, status: newStatus, assignedChannel: 2 },
         channel: 2,
       })
+      // Then SYNC_DB for consistency (now lightweight — photos stripped)
       emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
     } else {
       // Single photoshoot: send to channel 1

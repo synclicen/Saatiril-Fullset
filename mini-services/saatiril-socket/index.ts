@@ -144,7 +144,7 @@ io.on('connection', (socket: Socket) => {
     socket.broadcast.emit('lan-message', payload)
 
     // Log critical events for debugging
-    const criticalEvents = ['PHOTOS_SAVED', 'MC_CALL', 'SYNC_DB']
+    const criticalEvents = ['PHOTOS_SAVED', 'MC_CALL', 'SYNC_DB', 'STUDENT_DONE']
     if (criticalEvents.includes(payload.event)) {
       console.log(`[SAATIRIL] Relay: ${payload.event} from ${socket.id} to ${io.sockets.sockets.size - 1} clients`)
     }

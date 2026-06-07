@@ -149,24 +149,26 @@ export function mergeDatabases(
 }
 
 /**
- * Strip frame base64 data from a project for SYNC_DB transmission.
+ * Strip frame base64 data AND photo base64 data from a project for SYNC_DB transmission.
  * Frame data can be 500KB-2MB and doesn't need to be re-sent every time.
- * Recipients who already have the frame don't need it again.
- * 
+ * Photo data in photoHistory can grow to hundreds of MB and is ALREADY sent
+ * via PHOTOS_SAVED events — no need to resend in SYNC_DB.
+ * Recipients who already have the data don't need it again.
+ *
  * NOTE: The initial REQUEST_STATE response should NOT use this — new clients
- * need the frame data. Only use this for subsequent SYNC_DB updates.
+ * need the full data. Only use this for subsequent SYNC_DB updates.
  */
 export function stripFrameForSync(project: Project): Project {
-  if (!project.config.frame) return project
   return {
     ...project,
-    config: { ...project.config, frame: '__FRAME_SAVED__' },
+    config: { ...project.config, frame: project.config.frame ? '__FRAME_SAVED__' : null },
+    photoHistory: project.photoHistory.map(h => ({ ...h, photos: [] })),
   }
 }
 
 /**
  * Preserve frame data when receiving SYNC_DB with '__FRAME_SAVED__' marker.
- * 
+ *
  * When a client receives a SYNC_DB where the frame was stripped (marked as
  * '__FRAME_SAVED__'), this function keeps the existing frame data from the
  * current project. This ensures the frame overlay stays visible on the
@@ -185,6 +187,49 @@ export function preserveFrameOnSync(
   }
   // If incoming has actual frame data, or no existing frame, use incoming as-is
   return incomingConfig
+}
+
+/**
+ * Preserve photo data when receiving SYNC_DB with stripped photoHistory.
+ *
+ * When a client receives a SYNC_DB where photos were stripped (empty photos arrays
+ * in photoHistory), this function merges the histories keeping existing photos.
+ * This prevents photo data loss while still accepting updated metadata from the
+ * incoming sync (e.g., new photoHistory entries from other channels).
+ *
+ * Key rules:
+ * - If incoming has photos → use incoming (it's the source of truth)
+ * - If incoming has no photos but existing does → keep existing photos
+ * - If both have no photos → keep as-is
+ * - If incoming has a new entry not in existing → add it
+ */
+export function preservePhotoHistoryOnSync(
+  incomingHistory: PhotoHistoryItem[],
+  existingHistory: PhotoHistoryItem[],
+): PhotoHistoryItem[] {
+  if (!incomingHistory.length) return existingHistory
+  if (!existingHistory.length) return incomingHistory
+
+  const result: PhotoHistoryItem[] = [...existingHistory]
+  for (const incoming of incomingHistory) {
+    const existingIdx = result.findIndex(
+      (h) => h.student.id === incoming.student.id && h.channel === incoming.channel,
+    )
+    if (existingIdx !== -1) {
+      if (incoming.photos.length === 0 && result[existingIdx].photos.length > 0) {
+        // Incoming stripped photos — keep our photos, update metadata only
+        result[existingIdx] = { ...incoming, photos: result[existingIdx].photos }
+      } else if (incoming.photos.length > 0) {
+        // Incoming has photos — use them (source of truth)
+        result[existingIdx] = incoming
+      }
+      // else: both empty → keep as-is
+    } else {
+      // New entry not in existing → add it
+      result.push(incoming)
+    }
+  }
+  return result
 }
 
 // ─── Debounced save ───────────────────────────────────────────────────────

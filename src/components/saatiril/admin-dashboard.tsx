@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
-import { useSaatirilStore, type Student, type PhotoHistoryItem, type CameraMode, mergeDatabases, preserveFrameOnSync, isPhotoshootMode, isDualPhotoshootMode } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type Student, type PhotoHistoryItem, type CameraMode, mergeDatabases, preserveFrameOnSync, preservePhotoHistoryOnSync, isPhotoshootMode, isDualPhotoshootMode } from '@/store/use-saatiril-store'
 import { onLocal, offLocal, getConnectionHealth, onLatencyUpdate, type ConnectionHealth } from '@/lib/socket'
 import { useToast } from '@/hooks/use-toast'
 
@@ -248,10 +248,15 @@ export default function AdminDashboard() {
       const mergedConfig = preserveFrameOnSync(data.project.config, proj.config)
       // Merge database with incoming (prevents channel data overwrite in dual mode)
       const mergedDb = mergeDatabases(proj.database, data.project.database)
+      // Preserve photos: incoming SYNC_DB may have stripped photos
+      const mergedPhotoHistory = preservePhotoHistoryOnSync(
+        data.project.photoHistory ?? [],
+        proj.photoHistory,
+      )
       updateCurrentProject({
         ...proj,
         database: mergedDb,
-        photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : proj.photoHistory,
+        photoHistory: mergedPhotoHistory,
         config: mergedConfig,
       })
 
@@ -266,16 +271,25 @@ export default function AdminDashboard() {
       }
     }
 
+    // STUDENT_DONE: lightweight event for immediate live-target clearing
+    const handleStudentDone = (data: { studentId: string; channel: number }) => {
+      console.log('[SAATIRIL ADMIN] STUDENT_DONE received — immediate clear:', data.studentId, 'Ch.', data.channel)
+      setLiveTargets((prev) => ({ ...prev, [data.channel]: null }))
+      setCameraStatus((prev) => ({ ...prev, [data.channel]: 'Selesai — Menunggu target...' }))
+    }
+
     onLocal('MC_CALL', handleMcCall)
     onLocal('OP_PROGRESS', handleOpProgress)
     onLocal('PHOTOS_SAVED', handlePhotosSaved)
     onLocal('SYNC_DB', handleSyncDb)
+    onLocal('STUDENT_DONE', handleStudentDone)
 
     return () => {
       offLocal('MC_CALL', handleMcCall)
       offLocal('OP_PROGRESS', handleOpProgress)
       offLocal('PHOTOS_SAVED', handlePhotosSaved)
       offLocal('SYNC_DB', handleSyncDb)
+      offLocal('STUDENT_DONE', handleStudentDone)
     }
   }, [updateCurrentProject])
 

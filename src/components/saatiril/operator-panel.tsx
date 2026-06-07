@@ -49,6 +49,7 @@ import {
   mergeDatabases,
   stripFrameForSync,
   preserveFrameOnSync,
+  preservePhotoHistoryOnSync,
   isPhotoshootMode,
   isDualPhotoshootMode,
 } from '@/store/use-saatiril-store'
@@ -531,7 +532,11 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       if (!proj) return
       const mergedDb = mergeDatabases(proj.database, data.project.database)
       const mergedConfig = preserveFrameOnSync(data.project.config, proj.config)
-      updateCurrentProject({ ...proj, database: mergedDb, photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : proj.photoHistory, config: mergedConfig })
+      const mergedPhotoHistory = preservePhotoHistoryOnSync(
+        data.project.photoHistory ?? [],
+        proj.photoHistory,
+      )
+      updateCurrentProject({ ...proj, database: mergedDb, photoHistory: mergedPhotoHistory, config: mergedConfig })
 
       if (!isPhotoshootMode(data.project.config.mode)) {
         const ch = myChannelRef.current
@@ -553,10 +558,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   }, [setOpCurrentTarget, updateCurrentProject])
 
   // ── Finalize capture ────────────────────────────────────────────────────
+  // OPTIMIZED: Removed 400ms of unnecessary delays, added STUDENT_DONE lightweight
+  // event for immediate MC unblocking, and SYNC_DB now strips photos (tiny payload).
   const finalizeCapture = useCallback(
     (canvas: HTMLCanvasElement) => {
       setFlashVisible(true)
-      setTimeout(() => setFlashVisible(false), 300)
+      setTimeout(() => setFlashVisible(false), 200)
 
       const dataUrl = canvas.toDataURL('image/jpeg', 0.95)
       addOpCapturedPhoto(dataUrl)
@@ -568,6 +575,30 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       const isPhotoshoot = isPhotoshootMode(currentMode)
 
       console.log('[SAATIRIL OP] finalizeCapture: photoCount =', photoCount, 'mode =', currentMode)
+
+      // Helper: update local photoHistory and emit lightweight SYNC_DB
+      const finishCapture = (student: Student, historyItem: PhotoHistoryItem) => {
+        const store = useSaatirilStore.getState()
+        if (store.currentProject) {
+          const existingIdx = store.currentProject.photoHistory.findIndex(
+            (h) => h.student.id === student.id && h.channel === myChannel
+          )
+          let newHistory: PhotoHistoryItem[]
+          if (existingIdx !== -1) {
+            newHistory = [...store.currentProject.photoHistory]
+            newHistory[existingIdx] = historyItem
+          } else {
+            newHistory = [...store.currentProject.photoHistory, historyItem]
+          }
+          const updatedProject = { ...store.currentProject, photoHistory: newHistory }
+          store.updateCurrentProject(updatedProject)
+          // SYNC_DB is now lightweight — photos stripped, only metadata sent
+          emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
+        }
+        setSending(false)
+        isCapturingRef.current = false
+        resetOpState()
+      }
 
       // Photoshoot mode: save after 1 photo
       if (isPhotoshoot && photoCount >= 1) {
@@ -591,6 +622,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
         console.log('[SAATIRIL OP] Emitting PHOTOS_SAVED for student:', student.nama, 'channel:', myChannel)
 
+        // PHOTOS_SAVED for Admin/gallery (contains photos for display)
         emitLocal('PHOTOS_SAVED', {
           student: { ...student, status: student.status },
           photos: allPhotos,
@@ -598,6 +630,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         })
         emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Selesai — Menunggu target...' })
 
+        // Save to disk asynchronously (non-blocking)
         const projConfig = useSaatirilStore.getState().currentProject?.config
         if (projConfig) {
           const api = window.saatirilAPI
@@ -616,27 +649,9 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             })
           }
         }
-        setTimeout(() => {
-          const store = useSaatirilStore.getState()
-          if (store.currentProject) {
-            const existingIdx = store.currentProject.photoHistory.findIndex(
-              (h) => h.student.id === student.id && h.channel === myChannel
-            )
-            let newHistory: PhotoHistoryItem[]
-            if (existingIdx !== -1) {
-              newHistory = [...store.currentProject.photoHistory]
-              newHistory[existingIdx] = historyItem
-            } else {
-              newHistory = [...store.currentProject.photoHistory, historyItem]
-            }
-            const updatedProject = { ...store.currentProject, photoHistory: newHistory }
-            store.updateCurrentProject(updatedProject)
-            emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
-          }
-          setSending(false)
-          isCapturingRef.current = false
-          setTimeout(() => { resetOpState() }, 300)
-        }, 100)
+
+        // IMMEDIATE: update local state + emit lightweight SYNC_DB (no delays!)
+        finishCapture(student, historyItem)
         return
       }
 
@@ -663,8 +678,16 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         updateStudentStatus(student.id, 'done')
         saveProjectsToStorageNow()
 
-        console.log('[SAATIRIL OP] Emitting PHOTOS_SAVED for student:', student.nama, 'channel:', myChannel)
+        console.log('[SAATIRIL OP] Emitting STUDENT_DONE + PHOTOS_SAVED for student:', student.nama, 'channel:', myChannel)
 
+        // PRIORITY 1: STUDENT_DONE — lightweight event for IMMEDIATE MC unblocking
+        // This fires BEFORE the heavy PHOTOS_SAVED so MC can call next student instantly
+        emitLocal('STUDENT_DONE', {
+          studentId: student.id,
+          channel: myChannel,
+        })
+
+        // PRIORITY 2: PHOTOS_SAVED — contains photos for Admin gallery
         emitLocal('PHOTOS_SAVED', {
           student: { ...student, status: 'done' },
           photos: allPhotos,
@@ -672,6 +695,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         })
         emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Selesai — Menunggu target...' })
 
+        // Save to disk asynchronously (non-blocking)
         const projConfig = useSaatirilStore.getState().currentProject?.config
         if (projConfig) {
           const api = window.saatirilAPI
@@ -696,27 +720,9 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             console.log('[SAATIRIL OP] Not running in Electron — photos not saved to disk')
           }
         }
-        setTimeout(() => {
-          const store = useSaatirilStore.getState()
-          if (store.currentProject) {
-            const existingIdx = store.currentProject.photoHistory.findIndex(
-              (h) => h.student.id === student.id && h.channel === myChannel
-            )
-            let newHistory: PhotoHistoryItem[]
-            if (existingIdx !== -1) {
-              newHistory = [...store.currentProject.photoHistory]
-              newHistory[existingIdx] = historyItem
-            } else {
-              newHistory = [...store.currentProject.photoHistory, historyItem]
-            }
-            const updatedProject = { ...store.currentProject, photoHistory: newHistory }
-            store.updateCurrentProject(updatedProject)
-            emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
-          }
-          setSending(false)
-          isCapturingRef.current = false
-          setTimeout(() => { resetOpState() }, 300)
-        }, 100)
+
+        // IMMEDIATE: update local state + emit lightweight SYNC_DB (no delays!)
+        finishCapture(student, historyItem)
       }
     },
     [myChannel, addOpCapturedPhoto, updateStudentStatus, saveProjectsToStorageNow, resetOpState],

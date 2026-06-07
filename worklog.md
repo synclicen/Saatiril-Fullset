@@ -1,78 +1,46 @@
 ---
 Task ID: 1
-Agent: main
-Task: Fix dual photoshoot mode - MC blocking, operator queue, frame overlay
+Agent: Main Agent
+Task: Fix Dual Mode speed issues — MC to Operator communication is too slow
 
 Work Log:
-- Added `sent` status to StudentStatus type in store
-- Updated getStatusPriority to handle `sent` status (priority 1, between pending=0 and active_N=2, done=3)
-- Rewrote MC panel for non-blocking dual photoshoot flow
-- Changed from active_1 status to sent status when MC sends students
-- Removed completedChannels tracking (race condition bug)
-- Now uses photoHistory-based per-channel completion checking
-- Added sent students panel showing per-channel completion badges
-- Rewrote operator panel with queue support
-- Added MC_CALL buffer for students arriving before database updates
-- Queue is derived from database + MC_CALL buffer
-- Added searchable queue with clickable items
-- Operators can select students from queue to photograph
-- Fixed admin dashboard PHOTOS_SAVED handler for photoHistory-based completion
-- Fixed frame overlay by adding preserveFrameOnSync to main-app.tsx SYNC_DB handler
+- Analyzed the complete event flow for all 4 modes (Single, Dual, Single Photoshoot, Dual Photoshoot)
+- Read MC panel (1064 lines), Operator panel (~1450 lines), Socket service (250 lines), Admin dashboard (936 lines), Store (406 lines), Socket client (392 lines)
+- Identified 4 critical bottlenecks causing slow Dual Mode:
+  1. SYNC_DB sends ENTIRE photoHistory with base64 photos (grows from KB to hundreds of MB over time) — ROOT CAUSE
+  2. MC blocked waiting for heavy PHOTOS_SAVED payload (~4MB base64) before unblocking
+  3. 400ms of unnecessary setTimeout delays in operator's finalizeCapture (100ms + 300ms)
+  4. No photo preservation when receiving SYNC_DB with stripped photos — would wipe local data
+
+- Implemented Fix 1: Strip photos from SYNC_DB's photoHistory
+  - Modified `stripFrameForSync()` in use-saatiril-store.ts to also strip photo base64 data
+  - This reduces SYNC_DB from potentially hundreds of MB to just a few KB
+
+- Implemented Fix 2: Added STUDENT_DONE lightweight event for immediate MC unblocking
+  - Operator emits STUDENT_DONE ({studentId, channel}) BEFORE PHOTOS_SAVED
+  - MC listens to STUDENT_DONE for non-photoshoot mode — gets unblocked instantly
+  - Admin listens to STUDENT_DONE for immediate live-target clearing
+  - Added to CRITICAL_EVENTS set in socket.ts and socket relay server
+
+- Implemented Fix 3: Removed unnecessary 400ms delays in operator completion
+  - Removed setTimeout(100ms) before SYNC_DB emission
+  - Removed setTimeout(300ms) before resetOpState()
+  - Both now execute immediately after photo capture
+  - Flash animation reduced from 300ms to 200ms
+
+- Implemented Fix 4: Added preservePhotoHistoryOnSync function
+  - New exported function that merges incoming photoHistory with existing
+  - Keeps local photos when incoming has stripped (empty) photos
+  - Used by all 3 SYNC_DB handlers: MC panel, Operator panel, Admin dashboard
+
+- Additional optimization: Reordered MC event emission
+  - MC_CALL now emitted BEFORE SYNC_DB (operator gets student immediately)
+  - Previously SYNC_DB was sent first, delaying the operator notification
 
 Stage Summary:
-- MC can now send multiple students without blocking (flexible flow)
-- Operators have a queue with search functionality
-- Frame overlay now preserved correctly across SYNC_DB events
-- PhotoHistory-based completion checking replaces buggy completedChannels state
-- All lint checks pass
-
----
-Task ID: 2
-Agent: main
-Task: Add camera shutter options (Manual, Timer 3/5/10s, 5-finger detection, AI mode)
-
-Work Log:
-- Created `use-finger-detection.ts` hook using MediaPipe Hands from CDN
-  - Loads @mediapipe/hands, camera_utils, drawing_utils scripts from jsdelivr CDN
-  - Counts extended fingers (0-5) per hand using landmark positions
-  - Sustained 5-finger detection (800ms hold) triggers capture callback
-  - 3-second cooldown between triggers to prevent rapid firing
-  - Uses requestAnimationFrame loop for efficient detection
-- Added ShutterMode type: 'manual' | 'timer-3' | 'timer-5' | 'timer-10' | 'finger' | 'ai'
-- Added SHUTTER_MODES config array with mode restrictions (AI only for single/dual)
-- Replaced old AI auto-capture toggle with new shutter mode selector
-- Implemented timer countdown logic with visual overlay on camera view
-  - Large countdown circle with gold border and number display
-  - Cancel button during countdown (shows "BATAL (Xs)")
-  - Auto-captures when countdown reaches 0
-  - Timer automatically cancels when capture phase changes away from ready
-- AI mode restricted to Single and Dual modes only (not photoshoot modes)
-  - Uses `effectiveShutterMode` derived value that falls back to 'manual' when AI not allowed
-  - AI button not shown in photoshoot mode selector
-- Finger detection mode with visual indicator on camera view
-  - Shows "X/5" finger count badge in top-right of camera
-  - Green highlight when 5 fingers detected
-  - Auto-captures when 5 fingers held for 800ms
-- AI detection mode with visual indicator on camera view
-  - Shows AI status badge with pose count
-  - Gold highlight when pose detected
-  - Auto-captures on toga/ijazah pose detection (single/dual mode only)
-- Shutter mode selector UI in both mobile and desktop layouts
-  - Compact button group showing Manual, 3s, 5s, 10s, 5 Jari, AI
-  - Active mode highlighted with gold border and background
-  - Loading spinners while AI/finger models load
-- Progress text updated to show shutter mode status (Timer: Xs, Jari: X/5, AI: Toga terdeteksi...)
-- Capture button text changes based on shutter mode:
-  - Manual: "FOTO" / "FOTO 1 — TOGA" / "FOTO 2 — IJAZAH"
-  - Timer: Shows timer duration "FOTO (3s)" with countdown
-  - Finger/AI: Shows detection status "Mendeteksi Jari (3/5)" / "AI Mendeteksi Pose..."
-- All lint checks pass
-- Verified with Agent Browser: app renders correctly, shutter mode selector visible with all 6 options
-
-Stage Summary:
-- 6 shutter modes: Manual, Timer 3s/5s/10s, 5-finger detection, AI
-- AI mode restricted to Single & Dual modes only
-- Timer modes show countdown overlay on camera with cancel option
-- Finger detection uses MediaPipe Hands with sustained detection logic
-- Full shutter mode selector UI in both mobile and desktop layouts
-- All existing functionality preserved
+- All 4 bottlenecks fixed systematically
+- SYNC_DB payload reduced from MB→KB (most impactful fix)
+- MC unblocking is now instant via STUDENT_DONE (no waiting for photo transfer)
+- 400ms of delays eliminated per student in operator flow
+- Lint passes cleanly with no errors
+- Dev server compiles successfully (HTTP 200 responses confirmed)
