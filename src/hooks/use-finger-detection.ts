@@ -56,10 +56,10 @@ async function loadFingerScripts(): Promise<boolean> {
   if (scriptsLoadPromise) return scriptsLoadPromise
   scriptsLoadPromise = (async () => {
     try {
-      // Load MediaPipe Hands from CDN
-      await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js')
-      await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js')
-      await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js')
+      // Load MediaPipe Hands from local files (offline support)
+      await loadScript('/ai/mediapipe/camera_utils.js')
+      await loadScript('/ai/mediapipe/drawing_utils.js')
+      await loadScript('/ai/mediapipe/hands.js')
       await new Promise((r) => setTimeout(r, 100))
 
       // Verify globals
@@ -221,7 +221,7 @@ export function useFingerDetection(): UseFingerDetectionReturn {
     try {
       const hands = new (window as any).Hands({
         locateFile: (file: string) => {
-          return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`
+          return `/ai/mediapipe/${file}`
         },
       })
 

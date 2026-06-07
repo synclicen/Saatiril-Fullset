@@ -252,9 +252,11 @@
           reportStatus({ status: 'loading_model', isRunning: false });
           
           // Use MoveNet SinglePose Lightning (fastest model)
+          // modelUrl points to local files for offline support
           const model = poseDetection.SupportedModels.MoveNet;
           detector = await poseDetection.createDetector(model, {
             modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,
+            modelUrl: '/ai/tfjs/movenet/model.json',
           });
           isModelLoaded = true;
         }
