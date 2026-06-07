@@ -208,6 +208,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const updateStudentStatus = useSaatirilStore((s) => s.updateStudentStatus)
   const updateCurrentProject = useSaatirilStore((s) => s.updateCurrentProject)
   const saveProjectsToStorageNow = useSaatirilStore((s) => s.saveProjectsToStorageNow)
+  const saveProjectsToStorage = useSaatirilStore((s) => s.saveProjectsToStorage)
 
   // ── Local state ──────────────────────────────────────────────────────────
   const [videoDevices, setVideoDevices] = useState<VideoDeviceInfo[]>([])
@@ -560,11 +561,11 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     return () => { offLocal('SYNC_DB', handleSyncDb) }
   }, [setOpCurrentTarget, updateCurrentProject])
 
-  // ── Finalize capture ────────────────────────────────────────────────────
+  // ── Finalize capture (optimized: no redundant SYNC_DB, minimal delays) ────
   const finalizeCapture = useCallback(
     (canvas: HTMLCanvasElement) => {
       setFlashVisible(true)
-      setTimeout(() => setFlashVisible(false), 300)
+      setTimeout(() => setFlashVisible(false), 200)
 
       const dataUrl = canvas.toDataURL('image/jpeg', 0.95)
       addOpCapturedPhoto(dataUrl)
@@ -594,8 +595,45 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           photos: allPhotos,
           channel: myChannel,
         }
-        saveProjectsToStorageNow()
+
+        // Update project with photoHistory + mark student done if all channels complete
+        const store = useSaatirilStore.getState()
+        if (store.currentProject) {
+          const existingIdx = store.currentProject.photoHistory.findIndex(
+            (h) => h.student.id === student.id && h.channel === myChannel
+          )
+          let newHistory: PhotoHistoryItem[]
+          if (existingIdx !== -1) {
+            newHistory = [...store.currentProject.photoHistory]
+            newHistory[existingIdx] = historyItem
+          } else {
+            newHistory = [...store.currentProject.photoHistory, historyItem]
+          }
+
+          // Check if all channels done for this student
+          const chCount = channelCount(store.currentProject.config.mode)
+          let allChannelsDone = true
+          for (let ch = 1; ch <= chCount; ch++) {
+            if (!newHistory.some((h) => h.student.id === student.id && h.channel === ch)) {
+              allChannelsDone = false
+              break
+            }
+          }
+
+          const updatedProject = {
+            ...store.currentProject,
+            database: store.currentProject.database.map((s) =>
+              s.id === student.id && allChannelsDone ? { ...s, status: 'done' as StudentStatus } : s
+            ),
+            photoHistory: newHistory,
+          }
+          store.updateCurrentProject(updatedProject)
+          // Send SYNC_DB with updated project (includes photoHistory + status)
+          emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
+        }
+
         setMcCallBuffer((prev) => prev.filter((s) => s.id !== student.id))
+        saveProjectsToStorage()
 
         console.log('[SAATIRIL OP] Emitting PHOTOS_SAVED for student:', student.nama, 'channel:', myChannel)
 
@@ -606,45 +644,26 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         })
         emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Selesai — Menunggu target...' })
 
+        // Save to disk in background (non-blocking)
         const projConfig = useSaatirilStore.getState().currentProject?.config
         if (projConfig) {
           const api = window.saatirilAPI
           if (api?.savePhoto) {
             const targetFolder = projConfig.targetFolder
             const filename = buildPhotoshootFilename(student.nim, student.nama, myChannel)
-
             api.savePhoto({ base64Data: allPhotos[0], filename, targetFolder }).then((path: string | null) => {
-              if (path) {
-                console.log(`[SAATIRIL OP] Photo saved to disk: → ${path}`)
-              } else {
-                console.warn('[SAATIRIL OP] Photo failed to save to disk')
-              }
+              if (path) console.log(`[SAATIRIL OP] Photo saved to disk: → ${path}`)
+              else console.warn('[SAATIRIL OP] Photo failed to save to disk')
             }).catch((err: Error) => {
               console.error('[SAATIRIL OP] Error saving photo to disk:', err)
             })
           }
         }
-        setTimeout(() => {
-          const store = useSaatirilStore.getState()
-          if (store.currentProject) {
-            const existingIdx = store.currentProject.photoHistory.findIndex(
-              (h) => h.student.id === student.id && h.channel === myChannel
-            )
-            let newHistory: PhotoHistoryItem[]
-            if (existingIdx !== -1) {
-              newHistory = [...store.currentProject.photoHistory]
-              newHistory[existingIdx] = historyItem
-            } else {
-              newHistory = [...store.currentProject.photoHistory, historyItem]
-            }
-            const updatedProject = { ...store.currentProject, photoHistory: newHistory }
-            store.updateCurrentProject(updatedProject)
-            emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
-          }
-          setSending(false)
-          isCapturingRef.current = false
-          setTimeout(() => { resetOpState() }, 300)
-        }, 100)
+
+        // Reset immediately — no artificial delay needed
+        setSending(false)
+        isCapturingRef.current = false
+        resetOpState()
         return
       }
 
@@ -668,8 +687,33 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           photos: allPhotos,
           channel: myChannel,
         }
-        updateStudentStatus(student.id, 'done')
-        saveProjectsToStorageNow()
+
+        // Single Zustand update: mark done + add photoHistory
+        const store = useSaatirilStore.getState()
+        if (store.currentProject) {
+          const existingIdx = store.currentProject.photoHistory.findIndex(
+            (h) => h.student.id === student.id && h.channel === myChannel
+          )
+          let newHistory: PhotoHistoryItem[]
+          if (existingIdx !== -1) {
+            newHistory = [...store.currentProject.photoHistory]
+            newHistory[existingIdx] = historyItem
+          } else {
+            newHistory = [...store.currentProject.photoHistory, historyItem]
+          }
+          const updatedProject = {
+            ...store.currentProject,
+            database: store.currentProject.database.map((s) =>
+              s.id === student.id ? { ...s, status: 'done' as StudentStatus } : s
+            ),
+            photoHistory: newHistory,
+          }
+          store.updateCurrentProject(updatedProject)
+          // Send SYNC_DB with updated project (includes photoHistory + done status)
+          emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
+        }
+
+        saveProjectsToStorage()
 
         console.log('[SAATIRIL OP] Emitting PHOTOS_SAVED for student:', student.nama, 'channel:', myChannel)
 
@@ -680,6 +724,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         })
         emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Selesai — Menunggu target...' })
 
+        // Save to disk in background (non-blocking)
         const projConfig = useSaatirilStore.getState().currentProject?.config
         if (projConfig) {
           const api = window.saatirilAPI
@@ -687,16 +732,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             const targetFolder = projConfig.targetFolder
             const togaFilename = buildFilename(student.nim, student.nama, 1, 'Toga')
             const ijazahFilename = buildFilename(student.nim, student.nama, 2, 'Ijazah')
-
             Promise.all([
               api.savePhoto({ base64Data: allPhotos[0], filename: togaFilename, targetFolder }),
               api.savePhoto({ base64Data: allPhotos[1], filename: ijazahFilename, targetFolder }),
             ]).then(([path1, path2]) => {
-              if (path1 && path2) {
-                console.log(`[SAATIRIL OP] Photos saved to disk:\n  → ${path1}\n  → ${path2}`)
-              } else {
-                console.warn('[SAATIRIL OP] Some photos failed to save to disk')
-              }
+              if (path1 && path2) console.log(`[SAATIRIL OP] Photos saved to disk:\n  → ${path1}\n  → ${path2}`)
+              else console.warn('[SAATIRIL OP] Some photos failed to save to disk')
             }).catch((err) => {
               console.error('[SAATIRIL OP] Error saving photos to disk:', err)
             })
@@ -704,30 +745,14 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             console.log('[SAATIRIL OP] Not running in Electron — photos not saved to disk')
           }
         }
-        setTimeout(() => {
-          const store = useSaatirilStore.getState()
-          if (store.currentProject) {
-            const existingIdx = store.currentProject.photoHistory.findIndex(
-              (h) => h.student.id === student.id && h.channel === myChannel
-            )
-            let newHistory: PhotoHistoryItem[]
-            if (existingIdx !== -1) {
-              newHistory = [...store.currentProject.photoHistory]
-              newHistory[existingIdx] = historyItem
-            } else {
-              newHistory = [...store.currentProject.photoHistory, historyItem]
-            }
-            const updatedProject = { ...store.currentProject, photoHistory: newHistory }
-            store.updateCurrentProject(updatedProject)
-            emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
-          }
-          setSending(false)
-          isCapturingRef.current = false
-          setTimeout(() => { resetOpState() }, 300)
-        }, 100)
+
+        // Reset immediately — no artificial delay needed
+        setSending(false)
+        isCapturingRef.current = false
+        resetOpState()
       }
     },
-    [myChannel, addOpCapturedPhoto, updateStudentStatus, saveProjectsToStorageNow, resetOpState],
+    [myChannel, addOpCapturedPhoto, saveProjectsToStorage, resetOpState],
   )
 
   // ── Photo capture logic ──────────────────────────────────────────────────

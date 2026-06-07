@@ -80,6 +80,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
   const updateStudentStatus = useSaatirilStore((s) => s.updateStudentStatus)
   const updateCurrentProject = useSaatirilStore((s) => s.updateCurrentProject)
   const saveProjectsToStorageNow = useSaatirilStore((s) => s.saveProjectsToStorageNow)
+  const saveProjectsToStorage = useSaatirilStore((s) => s.saveProjectsToStorage)
 
   const [opProgressText, setOpProgressText] = useState<string>('')
   const [opProgressChannel, setOpProgressChannel] = useState<number>(0)
@@ -194,11 +195,20 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
         return
       }
 
-      // For non-photoshoot: mark done immediately
+      // For non-photoshoot: mark done immediately (single Zustand update)
       if (!photoshoot) {
-        updateStudentStatus(data.student.id, 'done')
+        const curProj = currentProjectRef.current
+        if (curProj) {
+          const updatedProject = {
+            ...curProj,
+            database: curProj.database.map((s) =>
+              s.id === data.student.id ? { ...s, status: 'done' as StudentStatus } : s
+            ),
+          }
+          updateCurrentProject(updatedProject)
+        }
         setOpProgressText('')
-        saveProjectsToStorageNow()
+        saveProjectsToStorage()
         return
       }
 
@@ -242,14 +252,14 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
         photoHistory: newHistory,
       }
       updateCurrentProject(updatedProject)
-      saveProjectsToStorageNow()
+      saveProjectsToStorage()
 
       console.log('[SAATIRIL MC] PHOTOS_SAVED: allChannelsDone =', allChannelsDone, 'for', data.student.nama)
     }
 
     onLocal('PHOTOS_SAVED', handlePhotosSaved)
     return () => { offLocal('PHOTOS_SAVED', handlePhotosSaved) }
-  }, [updateStudentStatus, updateCurrentProject, saveProjectsToStorageNow, photoshoot])
+  }, [updateCurrentProject, saveProjectsToStorage, photoshoot])
 
   // ── Socket: OP_PROGRESS
   useEffect(() => {
@@ -275,24 +285,20 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     return () => { offLocal('MC_CALL', handleMcCall) }
   }, [updateStudentStatus, photoshoot])
 
-  // ── Call action (non-photoshoot: sequential call)
+  // ── Call action (non-photoshoot: sequential call) — single Zustand update
   const handleCallNow = useCallback(() => {
     if (!nextPending || !currentProject) return
 
     const newStatus: StudentStatus = `active_${myChannel}`
-    updateStudentStatus(nextPending.id, newStatus)
-    saveProjectsToStorageNow()
-
-    const latestProject = useSaatirilStore.getState().currentProject
-    if (!latestProject) return
-
+    // Single update: build the updated project directly
     const updatedProject = {
-      ...latestProject,
-      database: latestProject.database.map((s) =>
+      ...currentProject,
+      database: currentProject.database.map((s) =>
         s.id === nextPending.id ? { ...s, status: newStatus } : s
       ),
     }
     updateCurrentProject(updatedProject)
+    saveProjectsToStorage()
     setOpProgressText('')
 
     emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
@@ -304,34 +310,27 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     nextPending,
     currentProject,
     myChannel,
-    updateStudentStatus,
     updateCurrentProject,
-    saveProjectsToStorageNow,
+    saveProjectsToStorage,
   ])
 
-  // ── Photoshoot: send selected student to operator(s)
+  // ── Photoshoot: send selected student to operator(s) — single Zustand update
   const handleSendToOperator = useCallback(() => {
     if (!selectedStudent || !currentProject) return
 
+    const newStatus: StudentStatus = 'sent'
+    // Single update: build the updated project directly
+    const updatedProject = {
+      ...currentProject,
+      database: currentProject.database.map((s) =>
+        s.id === selectedStudent.id ? { ...s, status: newStatus } : s
+      ),
+    }
+
+    updateCurrentProject(updatedProject)
+    saveProjectsToStorage()
+
     if (dualPhotoshoot) {
-      // Send to BOTH channels
-      const newStatus: StudentStatus = 'sent'
-
-      const latestProject = useSaatirilStore.getState().currentProject
-      if (!latestProject) return
-
-      // Update student status to 'sent' in database
-      const updatedProject = {
-        ...latestProject,
-        database: latestProject.database.map((s) =>
-          s.id === selectedStudent.id ? { ...s, status: newStatus } : s
-        ),
-      }
-
-      updateStudentStatus(selectedStudent.id, newStatus)
-      updateCurrentProject(updatedProject)
-      saveProjectsToStorageNow()
-
       // Send MC_CALL to both channels
       emitLocal('MC_CALL', {
         student: { ...selectedStudent, status: newStatus, assignedChannel: 1 },
@@ -341,60 +340,39 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
         student: { ...selectedStudent, status: newStatus, assignedChannel: 2 },
         channel: 2,
       })
-      emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
     } else {
       // Single photoshoot: send to channel 1
-      const newStatus: StudentStatus = 'sent'
-
-      const latestProject = useSaatirilStore.getState().currentProject
-      if (!latestProject) return
-
-      const updatedProject = {
-        ...latestProject,
-        database: latestProject.database.map((s) =>
-          s.id === selectedStudent.id ? { ...s, status: newStatus } : s
-        ),
-      }
-
-      updateStudentStatus(selectedStudent.id, newStatus)
-      updateCurrentProject(updatedProject)
-      saveProjectsToStorageNow()
-
       emitLocal('MC_CALL', {
         student: { ...selectedStudent, status: newStatus },
         channel: 1,
       })
-      emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
     }
+    emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
 
     setSearchQuery('')
     setSelectedStudent(null)
-  }, [selectedStudent, currentProject, dualPhotoshoot, updateStudentStatus, updateCurrentProject, saveProjectsToStorageNow])
+  }, [selectedStudent, currentProject, dualPhotoshoot, updateCurrentProject, saveProjectsToStorage])
 
-  // ── Photoshoot: reset (for retake)
+  // ── Photoshoot: reset (for retake) — single Zustand update
   const handleResetForRetake = useCallback((student: Student) => {
     if (!currentProject) return
 
-    const latestProject = useSaatirilStore.getState().currentProject
-    if (!latestProject) return
-
     const updatedProject = {
-      ...latestProject,
-      database: latestProject.database.map((s) =>
+      ...currentProject,
+      database: currentProject.database.map((s) =>
         s.id === student.id ? { ...s, status: 'pending' as StudentStatus } : s
       ),
     }
 
-    updateStudentStatus(student.id, 'pending')
     updateCurrentProject(updatedProject)
-    saveProjectsToStorageNow()
+    saveProjectsToStorage()
 
     emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
 
     // Pre-select the student for easy re-send
     setSelectedStudent({ ...student, status: 'pending' })
     setSearchQuery(student.nama)
-  }, [currentProject, updateStudentStatus, updateCurrentProject, saveProjectsToStorageNow])
+  }, [currentProject, updateCurrentProject, saveProjectsToStorage])
 
   // ── Render helpers
   const renderCallButton = () => {
