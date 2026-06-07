@@ -53,17 +53,23 @@ async function loadAIScripts(): Promise<boolean> {
   if (scriptsLoadPromise) return scriptsLoadPromise
   scriptsLoadPromise = (async () => {
     try {
-      await loadScript('/ai/tf.min.js')
-      await new Promise(r => setTimeout(r, 100))
-      if (typeof (window as any).tf === 'undefined') throw new Error('TF.js global missing')
-      await loadScript('/ai/pose-detection.min.js')
-      await new Promise(r => setTimeout(r, 100))
-      if (typeof (window as any).poseDetection === 'undefined') throw new Error('poseDetection global missing')
+      // Load TensorFlow.js from CDN (large files ~10MB, not bundled in app)
+      await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js')
+      await new Promise(r => setTimeout(r, 200))
+      if (typeof (window as any).tf === 'undefined') throw new Error('TF.js global missing after load')
+      
+      // Load pose-detection API from CDN
+      await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js')
+      await new Promise(r => setTimeout(r, 200))
+      if (typeof (window as any).poseDetection === 'undefined') throw new Error('poseDetection global missing after load')
+      
+      // Load our custom AI module (local file)
       await loadScript('/ai/saatiril-ai.js')
-      if (!(window as any).SaatirilAI) throw new Error('SaatirilAI missing')
+      if (!(window as any).SaatirilAI) throw new Error('SaatirilAI missing after load')
       return true
     } catch (e: any) {
       console.error('[SAATIRIL AI Hook] Script load failed:', e.message)
+      console.warn('[SAATIRIL AI Hook] AI mode requires internet connection for TensorFlow.js CDN download')
       scriptsLoadPromise = null
       return false
     }

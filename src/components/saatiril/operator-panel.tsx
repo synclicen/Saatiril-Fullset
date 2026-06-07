@@ -225,8 +225,8 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   // ── Shutter mode state ───────────────────────────────────────────────────
   const [shutterMode, setShutterMode] = useState<ShutterMode>('manual')
   const [timerCountdown, setTimerCountdown] = useState<number>(0)
+  const [timerActive, setTimerActive] = useState(false)
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const timerActiveRef = useRef(false)
 
   // ── AI auto-capture ──────────────────────────────────────────────────────
   const ai = useAIDetection()
@@ -299,8 +299,11 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   // Compute effective shutter mode — if AI is selected but not allowed, fallback to manual
   const effectiveShutterMode: ShutterMode = (shutterMode === 'ai' && !aiAllowed) ? 'manual' : shutterMode
 
+  const hasActiveTarget = opCurrentTarget !== null
+
   // Finger gesture auto-trigger is available when a timer mode is selected
-  const fingerGestureActive = isTimerMode(effectiveShutterMode) && cameraAvailable && hasActiveTarget && !timerActiveRef.current
+  // NOTE: hasActiveTarget must be declared BEFORE fingerGestureActive to avoid TDZ crash
+  const fingerGestureActive = isTimerMode(effectiveShutterMode) && cameraAvailable && hasActiveTarget && !timerActive
 
   const channelStudents = useMemo<Student[]>(() => {
     if (!currentProject) return []
@@ -357,7 +360,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     return channelStudents.filter((s) => s.status === 'pending').length
   }, [channelStudents])
 
-  const hasActiveTarget = opCurrentTarget !== null
+  // hasActiveTarget is declared earlier (before fingerGestureActive) to avoid TDZ crash
 
   const capturePhase = useMemo<CapturePhase>(() => {
     if (sending) return 'sending'
@@ -801,19 +804,22 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       clearInterval(timerIntervalRef.current)
       timerIntervalRef.current = null
     }
-    timerActiveRef.current = false
+    setTimerActive(false)
     setTimerCountdown(0)
     setFingerTriggeredTimer(false)
   }, [])
 
-  // Cancel timer interval when capture phase changes away from ready (external cleanup only)
+  // Cancel timer when capture phase changes away from ready (cleanup only)
   useEffect(() => {
     if (capturePhase !== 'ready-1' && capturePhase !== 'ready-2') {
       if (timerIntervalRef.current) {
         clearInterval(timerIntervalRef.current)
         timerIntervalRef.current = null
       }
-      timerActiveRef.current = false
+      // Use microtask to avoid setState in effect body
+      queueMicrotask(() => {
+        setTimerActive((prev) => prev ? false : prev)
+      })
     }
   }, [capturePhase])
 
@@ -823,7 +829,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const startTimer = useCallback(() => {
     if (!isTimerMode(effectiveShutterMode)) return
     if (capturePhase !== 'ready-1' && capturePhase !== 'ready-2') return
-    if (timerActiveRef.current) {
+    if (timerActive) {
       // Cancel if already running
       cancelTimer()
       return
@@ -831,7 +837,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
     const duration = getTimerDuration(effectiveShutterMode)
     let remaining = duration
-    timerActiveRef.current = true
+    setTimerActive(true)
     setTimerCountdown(remaining)
 
     timerIntervalRef.current = setInterval(() => {
@@ -842,7 +848,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           clearInterval(timerIntervalRef.current)
           timerIntervalRef.current = null
         }
-        timerActiveRef.current = false
+        setTimerActive(false)
         setTimerCountdown(0)
         setFingerTriggeredTimer(false)
         handleCaptureRef.current()
@@ -850,7 +856,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         setTimerCountdown(remaining)
       }
     }, 1000)
-  }, [effectiveShutterMode, capturePhase, cancelTimer])
+  }, [effectiveShutterMode, capturePhase, cancelTimer, timerActive])
 
   // ── Shutter: AI detection ────────────────────────────────────────────────
   const capturePhaseRef = useRef(capturePhase)
@@ -917,7 +923,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   // ── Shutter mode: determine if capture button should trigger timer or direct capture
   const handleCaptureButtonClick = useCallback(() => {
     if (isTimerMode(effectiveShutterMode)) {
-      if (timerActiveRef.current) {
+      if (timerActive) {
         // Cancel running timer
         cancelTimer()
       } else {
@@ -928,7 +934,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       // Manual mode — direct capture
       handleCapture()
     }
-  }, [effectiveShutterMode, startTimer, cancelTimer, handleCapture])
+  }, [effectiveShutterMode, startTimer, cancelTimer, handleCapture, timerActive])
 
   // ── Progress badge text ──────────────────────────────────────────────────
   const progressText = useMemo(() => {
