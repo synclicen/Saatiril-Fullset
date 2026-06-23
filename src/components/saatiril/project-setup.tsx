@@ -490,9 +490,6 @@ export default function ProjectSetup() {
             <h1 className="text-base font-bold text-white">
               <span className="text-[#d4af37]">SAATIRIL</span> — Buat Proyek Baru
             </h1>
-            <p className="text-xs text-[#c4b5fd]">
-              Konfigurasi sistem fotografi event Anda
-            </p>
           </div>
         </header>
 
