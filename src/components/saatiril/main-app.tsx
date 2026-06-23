@@ -27,6 +27,7 @@ import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHe
 import AdminDashboard from '@/components/saatiril/admin-dashboard'
 import { McPanel } from '@/components/saatiril/mc-panel'
 import OperatorPanel from '@/components/saatiril/operator-panel'
+import { SaatirilFooterLines } from '@/components/saatiril/saatiril-footer'
 
 // ─── Theme constants ──────────────────────────────────────────────────────────
 const THEME = {
@@ -581,13 +582,8 @@ export function MainApp() {
           borderColor: `${THEME.border}44`,
         }}
       >
-        <div className="px-4 py-1.5 sm:px-6 sm:py-2">
-          <p
-            className="text-center font-mono text-[8px] tracking-widest sm:text-[10px] md:text-xs"
-            style={{ color: `${THEME.muted}66` }}
-          >
-            Saatiril — Pusat Humas & KI 2026
-          </p>
+        <div className="space-y-1 px-4 py-2 sm:px-6 sm:py-3">
+          <SaatirilFooterLines style={{ color: THEME.muted }} />
         </div>
       </footer>
       )}

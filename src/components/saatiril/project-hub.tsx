@@ -13,6 +13,7 @@ import {
   Card,
   CardContent,
 } from '@/components/ui/card'
+import { SaatirilFooterLines } from '@/components/saatiril/saatiril-footer'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -263,11 +264,8 @@ export function ProjectHub() {
 
       {/* Footer */}
       <footer className="mt-auto border-t border-[#533485]/50 bg-[#2a164a]/60 backdrop-blur-sm">
-        <div className="mx-auto max-w-4xl px-4 py-3 sm:px-6 sm:py-4">
-          <p className="text-center text-[10px] text-[#c4b5fd]/40 sm:text-xs">
-            Saatiril - Made by Fajrianor - Pusat Humas dan Keterbukaan Informasi
-            2026
-          </p>
+        <div className="mx-auto max-w-4xl space-y-1 px-4 py-3 sm:px-6 sm:py-4">
+          <SaatirilFooterLines className="text-[#c4b5fd]" />
         </div>
       </footer>
     </div>
