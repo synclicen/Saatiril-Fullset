@@ -512,10 +512,14 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   useEffect(() => {
     const handleMcCall = (data: McCallData) => {
       if (data.channel !== myChannelRef.current) return
+      console.log('[SAATIRIL OP] MC_CALL received:', data.student.nama, 'status:', data.student.status, 'Ch.', data.channel)
       if (photoshoot) {
+        // REPLACE any existing buffer entry for this student instead of
+        // dedup-skipping. This ensures a RE-SEND (after reset/retake) updates
+        // the buffer with fresh data instead of being silently dropped.
         setMcCallBuffer((prev) => {
-          if (prev.some((s) => s.id === data.student.id)) return prev
-          return [...prev, data.student]
+          const without = prev.filter((s) => s.id !== data.student.id)
+          return [...without, data.student]
         })
       } else {
         setOpCurrentTarget(data.student)
@@ -525,10 +529,51 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     return () => { offLocal('MC_CALL', handleMcCall) }
   }, [setOpCurrentTarget, photoshoot])
 
+  // ── Socket: STUDENT_RESET — explicit reset/retake signal from MC ────────
+  // This bypasses the normal SYNC_DB merge (which blocks status regression:
+  // pending priority 0 < sent/done) so the operator can fully clear a student
+  // for retake: drop from mcCallBuffer, clear active target, remove the
+  // photoHistory entry on this channel, and set status to 'pending' locally.
+  useEffect(() => {
+    const handleStudentReset = (data: { studentId: string; channel: number }) => {
+      if (data.channel !== myChannelRef.current) return
+      console.log('[SAATIRIL OP] STUDENT_RESET received — clearing for retake:', data.studentId, 'Ch.', data.channel)
+
+      // 1. Drop from mcCallBuffer
+      setMcCallBuffer((prev) => prev.filter((s) => s.id !== data.studentId))
+
+      // 2. Clear active target if it matches
+      setOpCurrentTarget((cur) => (cur?.id === data.studentId ? null : cur))
+
+      // 3. Remove this channel's photoHistory entry + reset status locally
+      //    (bypasses mergeDatabases priority which would otherwise ignore the
+      //    'pending' regression coming via SYNC_DB).
+      //    IMPORTANT: read via useSaatirilStore.getState() (synchronous, latest)
+      //    instead of currentProjectRef.current (stale ref updated only after
+      //    render). This prevents a race where SYNC_DB arrives right after
+      //    STUDENT_RESET and sees the OLD photoHistory — which would re-add
+      //    the cleared entry via preservePhotoHistoryOnSync.
+      const proj = useSaatirilStore.getState().currentProject
+      if (proj) {
+        const cleanedHistory = proj.photoHistory.filter(
+          (h) => !(h.student.id === data.studentId && h.channel === myChannelRef.current),
+        )
+        const cleanedDb = proj.database.map((s) =>
+          s.id === data.studentId ? { ...s, status: 'pending' as StudentStatus } : s,
+        )
+        updateCurrentProject({ ...proj, database: cleanedDb, photoHistory: cleanedHistory })
+      }
+    }
+    onLocal('STUDENT_RESET', handleStudentReset)
+    return () => { offLocal('STUDENT_RESET', handleStudentReset) }
+  }, [setOpCurrentTarget, updateCurrentProject])
+
   // ── Socket: SYNC_DB ─────────────────────────────────────────────────────
   useEffect(() => {
     const handleSyncDb = (data: SyncDbData) => {
-      const proj = currentProjectRef.current
+      // Read latest state synchronously (avoids stale currentProjectRef race
+      // when SYNC_DB arrives immediately after STUDENT_RESET / other updates).
+      const proj = useSaatirilStore.getState().currentProject
       if (!proj) return
       const mergedDb = mergeDatabases(proj.database, data.project.database)
       const mergedConfig = preserveFrameOnSync(data.project.config, proj.config)

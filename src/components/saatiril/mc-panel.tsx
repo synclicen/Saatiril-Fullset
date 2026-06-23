@@ -185,7 +185,12 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     const handleSyncDb = (data: SyncDbData) => {
       if (!data.project) return
       const proj = data.project
-      const curProj = currentProjectRef.current
+      // Read latest state synchronously (avoids stale currentProjectRef race).
+      // CRITICAL: the MC receives its OWN SYNC_DB echo from the socket server.
+      // If we used currentProjectRef.current (updated only after render), the
+      // echo would see the PRE-reset photoHistory and preservePhotoHistoryOnSync
+      // would RE-ADD entries that STUDENT_RESET just cleared — defeating the reset.
+      const curProj = useSaatirilStore.getState().currentProject
       if (curProj && proj.id === curProj.id) {
         const mergedDb = mergeDatabases(curProj.database, proj.database)
         const mergedConfig = preserveFrameOnSync(proj.config, curProj.config)
@@ -389,29 +394,51 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
   }, [selectedStudent, currentProject, dualPhotoshoot, updateStudentStatus, updateCurrentProject, saveProjectsToStorageNow])
 
   // ── Photoshoot: reset (for retake)
+  // Clears the student's photoHistory + resets status to 'pending' + emits a
+  // dedicated STUDENT_RESET event so operators (and admin) explicitly clear
+  // their buffer / active target / photoHistory. This is necessary because
+  // the normal SYNC_DB merge (mergeDatabases) BLOCKS status regression
+  // (pending priority 0 < sent/done), and preservePhotoHistoryOnSync does
+  // not propagate photoHistory deletions — so a reset via SYNC_DB alone would
+  // be silently dropped on the receiver side.
   const handleResetForRetake = useCallback((student: Student) => {
-    if (!currentProject) return
-
     const latestProject = useSaatirilStore.getState().currentProject
     if (!latestProject) return
 
-    const updatedProject = {
+    // Remove ALL photoHistory entries for this student (every channel) so the
+    // operator queue (which filters via `alreadyPhotographed`) will re-show
+    // the student after re-send.
+    const cleanedPhotoHistory = latestProject.photoHistory.filter(
+      (h) => h.student.id !== student.id,
+    )
+
+    const updatedProject: typeof latestProject = {
       ...latestProject,
       database: latestProject.database.map((s) =>
-        s.id === student.id ? { ...s, status: 'pending' as StudentStatus } : s
+        s.id === student.id ? { ...s, status: 'pending' as StudentStatus } : s,
       ),
+      photoHistory: cleanedPhotoHistory,
     }
 
     updateStudentStatus(student.id, 'pending')
     updateCurrentProject(updatedProject)
     saveProjectsToStorageNow()
 
+    // Emit STUDENT_RESET to every relevant channel — this bypasses the merge
+    // priority logic and tells each operator to: clear mcCallBuffer entry,
+    // clear opCurrentTarget if it matches, remove their photoHistory entry,
+    // and set the student status to 'pending' locally.
+    const channels = dualPhotoshoot ? [1, 2] : [1]
+    for (const ch of channels) {
+      emitLocal('STUDENT_RESET', { studentId: student.id, channel: ch })
+    }
+    // Also emit SYNC_DB for consistency (photoHistory + status now cleaned)
     emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
 
     // Pre-select the student for easy re-send
     setSelectedStudent({ ...student, status: 'pending' })
     setSearchQuery(student.nama)
-  }, [currentProject, updateStudentStatus, updateCurrentProject, saveProjectsToStorageNow])
+  }, [dualPhotoshoot, updateStudentStatus, updateCurrentProject, saveProjectsToStorageNow])
 
   // ── Render helpers
   const renderCallButton = () => {

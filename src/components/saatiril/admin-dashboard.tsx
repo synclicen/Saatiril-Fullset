@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
-import { useSaatirilStore, type Student, type PhotoHistoryItem, type CameraMode, mergeDatabases, preserveFrameOnSync, preservePhotoHistoryOnSync, isPhotoshootMode, isDualPhotoshootMode } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, type CameraMode, mergeDatabases, preserveFrameOnSync, preservePhotoHistoryOnSync, isPhotoshootMode, isDualPhotoshootMode } from '@/store/use-saatiril-store'
 import { onLocal, offLocal, getConnectionHealth, onLatencyUpdate, type ConnectionHealth } from '@/lib/socket'
 import { useToast } from '@/hooks/use-toast'
 
@@ -242,7 +242,8 @@ export default function AdminDashboard() {
     }
 
     const handleSyncDb = (data: SyncDbData) => {
-      const proj = currentProjectRef.current
+      // Read latest state synchronously to avoid stale-ref race
+      const proj = useSaatirilStore.getState().currentProject
       if (!proj) return
       // Preserve frame data: if incoming has '__FRAME_SAVED__', keep existing frame
       const mergedConfig = preserveFrameOnSync(data.project.config, proj.config)
@@ -278,11 +279,29 @@ export default function AdminDashboard() {
       setCameraStatus((prev) => ({ ...prev, [data.channel]: 'Selesai — Menunggu target...' }))
     }
 
+    // STUDENT_RESET: explicit reset/retake signal from MC.
+    // Bypasses the SYNC_DB merge (which blocks status regression pending<sent)
+    // so admin clears the student's photoHistory entries + resets status here.
+    const handleStudentReset = (data: { studentId: string; channel: number }) => {
+      console.log('[SAATIRIL ADMIN] STUDENT_RESET received — clearing for retake:', data.studentId, 'Ch.', data.channel)
+      // Read latest state synchronously to avoid stale-ref race with SYNC_DB
+      const proj = useSaatirilStore.getState().currentProject
+      if (!proj) return
+      const cleanedHistory = proj.photoHistory.filter((h) => h.student.id !== data.studentId)
+      const cleanedDb = proj.database.map((s) =>
+        s.id === data.studentId ? { ...s, status: 'pending' as StudentStatus } : s,
+      )
+      updateCurrentProject({ ...proj, database: cleanedDb, photoHistory: cleanedHistory })
+      // Clear any live target showing this student on the reset channel
+      setLiveTargets((prev) => (prev[data.channel]?.id === data.studentId ? { ...prev, [data.channel]: null } : prev))
+    }
+
     onLocal('MC_CALL', handleMcCall)
     onLocal('OP_PROGRESS', handleOpProgress)
     onLocal('PHOTOS_SAVED', handlePhotosSaved)
     onLocal('SYNC_DB', handleSyncDb)
     onLocal('STUDENT_DONE', handleStudentDone)
+    onLocal('STUDENT_RESET', handleStudentReset)
 
     return () => {
       offLocal('MC_CALL', handleMcCall)
@@ -290,6 +309,7 @@ export default function AdminDashboard() {
       offLocal('PHOTOS_SAVED', handlePhotosSaved)
       offLocal('SYNC_DB', handleSyncDb)
       offLocal('STUDENT_DONE', handleStudentDone)
+      offLocal('STUDENT_RESET', handleStudentReset)
     }
   }, [updateCurrentProject])
 

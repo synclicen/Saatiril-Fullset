@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useSaatirilStore, type AppTab, type Role, type Project, type CameraMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync, isDualMode, isPhotoshootMode } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type AppTab, type Role, type Project, type CameraMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync, preservePhotoHistoryOnSync, isDualMode, isPhotoshootMode } from '@/store/use-saatiril-store'
 import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth } from '@/lib/socket'
 
 import AdminDashboard from '@/components/saatiril/admin-dashboard'
@@ -226,17 +226,23 @@ export function MainApp() {
   useEffect(() => {
     const handleSyncDb = (data: { project: Project }) => {
       const role = myRoleRef.current
-      const curProj = currentProjectRef.current
+      // Read latest state synchronously (avoids stale currentProjectRef race
+      // when SYNC_DB echo arrives right after a local state update like reset).
+      const curProj = useSaatirilStore.getState().currentProject
 
       if (role !== 'admin' && data.project) {
         // For MC/Operator: merge incoming database with local (prevents data regression)
         if (curProj && data.project.id === curProj.id) {
           const mergedDb = mergeDatabases(curProj.database, data.project.database)
           const mergedConfig = preserveFrameOnSync(data.project.config, curProj.config)
+          const mergedPhotoHistory = preservePhotoHistoryOnSync(
+            data.project.photoHistory ?? [],
+            curProj.photoHistory,
+          )
           updateCurrentProject({
             ...curProj,
             database: mergedDb,
-            photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : curProj.photoHistory,
+            photoHistory: mergedPhotoHistory,
             config: mergedConfig,
           })
         } else {
@@ -247,10 +253,14 @@ export function MainApp() {
         if (curProj && data.project.id === curProj.id) {
           const mergedDb = mergeDatabases(curProj.database, data.project.database)
           const mergedConfig = preserveFrameOnSync(data.project.config, curProj.config)
+          const mergedPhotoHistory = preservePhotoHistoryOnSync(
+            data.project.photoHistory ?? [],
+            curProj.photoHistory,
+          )
           updateCurrentProject({
             ...curProj,
             database: mergedDb,
-            photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : curProj.photoHistory,
+            photoHistory: mergedPhotoHistory,
             config: mergedConfig,
           })
         }
