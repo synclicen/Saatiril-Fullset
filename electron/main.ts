@@ -462,7 +462,7 @@ function createWindow() {
     height: 900,
     minWidth: 800,
     minHeight: 600,
-    title: 'SAATIRIL — Manajemen Acara Foto',
+    title: 'SAATIRIL — Sistem Auto Track Input, Raw Into Live',
     icon: finalIconPath,
     backgroundColor: '#1a0b2e',
     show: false, // Show when ready

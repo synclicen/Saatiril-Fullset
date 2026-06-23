@@ -84,7 +84,7 @@ export function ProjectHub() {
                 SAATIRIL
               </h1>
               <p className="text-xs text-[#c4b5fd]/70 sm:text-sm">
-                Manajemen Acara Foto
+                Sistem Auto Track Input, Raw Into Live
               </p>
             </div>
           </div>

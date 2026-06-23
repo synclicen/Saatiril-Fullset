@@ -1,7 +1,7 @@
 {
   "name": "saatiril-fullset",
   "version": "1.0.0",
-  "description": "SAATIRIL — Sistem Manajemen Acara Foto",
+  "description": "SAATIRIL — Sistem Auto Track Input, Raw Into Live",
   "main": "electron/main.js",
   "private": true,
   "scripts": {
