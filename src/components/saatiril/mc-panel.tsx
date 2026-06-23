@@ -931,73 +931,78 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     )
   }
 
-  // ── DESKTOP LAYOUT (original)
+  // ── DESKTOP LAYOUT — side-by-side: control column + full-height participant list
+  // Control panel (left, fixed width) berdampingan dengan daftar peserta (right,
+  // flex-1 full height). Daftar peserta TIDAK PERNAH terdesak meski banyak peserta
+  // sudah dipanggil, karena panel kontrol ada di kolom terpisah.
   return (
-    <div className="flex flex-col gap-3 h-full p-3" style={{ backgroundColor: THEME.bg }}>
-      {/* Top: Call Panel */}
-      {photoshoot ? renderPhotoshootSearch() : (
-        <Card
-          className="shrink-0 border-2 rounded-xl"
-          style={{
-            backgroundColor: THEME.card,
-            borderColor: THEME.gold,
-            boxShadow: `0 0 20px ${THEME.gold}22`,
-          }}
-        >
-          <CardContent className="p-4 space-y-3">
-            <p
-              className="text-xs font-semibold uppercase tracking-widest"
-              style={{ color: THEME.gold }}
-            >
-              Target Pemanggilan Selanjutnya
-            </p>
+    <div className="flex flex-row gap-3 h-full p-3" style={{ backgroundColor: THEME.bg }}>
+      {/* LEFT: Control column (fixed width, internal scroll if overflow) */}
+      <div className="flex flex-col gap-3 shrink-0 w-[340px] lg:w-[360px] xl:w-[400px] min-h-0 overflow-y-auto pr-1">
+        {photoshoot ? renderPhotoshootSearch() : (
+          <Card
+            className="shrink-0 border-2 rounded-xl"
+            style={{
+              backgroundColor: THEME.card,
+              borderColor: THEME.gold,
+              boxShadow: `0 0 20px ${THEME.gold}22`,
+            }}
+          >
+            <CardContent className="p-4 space-y-3">
+              <p
+                className="text-xs font-semibold uppercase tracking-widest"
+                style={{ color: THEME.gold }}
+              >
+                Target Pemanggilan Selanjutnya
+              </p>
 
-            {nextPending ? (
-              <div className="space-y-1">
-                <p className="text-2xl font-bold leading-tight" style={{ color: '#ffffff' }}>
-                  {nextPending.nama}
-                </p>
-                <p className="text-sm font-mono" style={{ color: THEME.muted }}>
-                  {nextPending.nim}
-                </p>
-              </div>
-            ) : currentlyActive ? (
-              <div className="space-y-1">
-                <p className="text-lg font-semibold leading-tight" style={{ color: THEME.gold }}>
-                  Sedang difoto:
-                </p>
-                <p className="text-2xl font-bold leading-tight" style={{ color: '#ffffff' }}>
-                  {currentlyActive.nama}
-                </p>
-                <p className="text-sm font-mono" style={{ color: THEME.muted }}>
-                  {currentlyActive.nim}
-                </p>
-                {opProgressText && (
-                  <div className="flex items-center gap-2 mt-1">
-                    <Camera className="size-3.5" style={{ color: THEME.gold }} />
-                    <span className="text-xs font-medium" style={{ color: THEME.gold }}>
-                      {opProgressText}
-                    </span>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-1">
-                <p className="text-lg italic" style={{ color: THEME.muted }}>
-                  Semua peserta telah dipanggil
-                </p>
-              </div>
-            )}
+              {nextPending ? (
+                <div className="space-y-1">
+                  <p className="text-2xl font-bold leading-tight" style={{ color: '#ffffff' }}>
+                    {nextPending.nama}
+                  </p>
+                  <p className="text-sm font-mono" style={{ color: THEME.muted }}>
+                    {nextPending.nim}
+                  </p>
+                </div>
+              ) : currentlyActive ? (
+                <div className="space-y-1">
+                  <p className="text-lg font-semibold leading-tight" style={{ color: THEME.gold }}>
+                    Sedang difoto:
+                  </p>
+                  <p className="text-2xl font-bold leading-tight" style={{ color: '#ffffff' }}>
+                    {currentlyActive.nama}
+                  </p>
+                  <p className="text-sm font-mono" style={{ color: THEME.muted }}>
+                    {currentlyActive.nim}
+                  </p>
+                  {opProgressText && (
+                    <div className="flex items-center gap-2 mt-1">
+                      <Camera className="size-3.5" style={{ color: THEME.gold }} />
+                      <span className="text-xs font-medium" style={{ color: THEME.gold }}>
+                        {opProgressText}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <p className="text-lg italic" style={{ color: THEME.muted }}>
+                    Semua peserta telah dipanggil
+                  </p>
+                </div>
+              )}
 
-            {renderCallButton()}
-          </CardContent>
-        </Card>
-      )}
+              {renderCallButton()}
+            </CardContent>
+          </Card>
+        )}
 
-      {/* Sent Students (photoshoot) */}
-      {photoshoot && renderSentStudents()}
+        {/* Sent Students (photoshoot) */}
+        {photoshoot && renderSentStudents()}
+      </div>
 
-      {/* Bottom: Queue List */}
+      {/* RIGHT: Full-height participant list — selalu terlihat penuh, tidak terdesak */}
       <Card
         className="flex-1 min-h-0 border rounded-xl overflow-hidden flex flex-col"
         style={{ backgroundColor: THEME.card, borderColor: THEME.border }}
