@@ -1,0 +1,1886 @@
+     1→'use client'
+     2→
+     3→import {
+     4→  useCallback,
+     5→  useEffect,
+     6→  useMemo,
+     7→  useRef,
+     8→  useState,
+     9→} from 'react'
+    10→import { Card, CardContent } from '@/components/ui/card'
+    11→import { Button } from '@/components/ui/button'
+    12→import { Badge } from '@/components/ui/badge'
+    13→import { ScrollArea } from '@/components/ui/scroll-area'
+    14→import { Input } from '@/components/ui/input'
+    15→import {
+    16→  Select,
+    17→  SelectContent,
+    18→  SelectItem,
+    19→  SelectTrigger,
+    20→  SelectValue,
+    21→} from '@/components/ui/select'
+    22→import {
+    23→  Camera,
+    24→  CheckCircle2,
+    25→  Clock,
+    26→  Loader2,
+    27→  Monitor,
+    28→  Search,
+    29→  User,
+    30→  Video,
+    31→  VideoOff,
+    32→  Aperture,
+    33→  Frame,
+    34→  List,
+    35→  X,
+    36→  SwitchCamera,
+    37→  Brain,
+    38→  Sparkles,
+    39→  Zap,
+    40→  Timer,
+    41→  Hand,
+    42→} from 'lucide-react'
+    43→import {
+    44→  useSaatirilStore,
+    45→  type Student,
+    46→  type StudentStatus,
+    47→  type PhotoHistoryItem,
+    48→  type CameraMode,
+    49→  mergeDatabases,
+    50→  stripFrameForSync,
+    51→  preserveFrameOnSync,
+    52→  preservePhotoHistoryOnSync,
+    53→  isPhotoshootMode,
+    54→  isDualPhotoshootMode,
+    55→} from '@/store/use-saatiril-store'
+    56→import { emitLocal, onLocal, offLocal } from '@/lib/socket'
+    57→import { useIsMobile } from '@/hooks/use-mobile'
+    58→import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
+    59→import { useAIDetection, type AIMomentEvent } from '@/hooks/use-ai-detection'
+    60→import { usePalmDetection } from '@/hooks/use-palm-detection'
+    61→
+    62→// ─── Theme tokens ───────────────────────────────────────────────────────────
+    63→const THEME = {
+    64→  bg: '#1a0b2e',
+    65→  panel: '#2a164a',
+    66→  card: '#3b2263',
+    67→  border: '#533485',
+    68→  gold: '#d4af37',
+    69→  muted: '#c4b5fd',
+    70→} as const
+    71→
+    72→// ─── Shutter mode types ────────────────────────────────────────────────────
+    73→type ShutterMode = 'manual' | 'timer-3' | 'timer-5' | 'timer-10' | 'ai'
+    74→
+    75→const SHUTTER_MODES: { id: ShutterMode; label: string; shortLabel: string; icon: React.ReactNode; modesAllowed?: CameraMode[] }[] = [
+    76→  { id: 'manual', label: 'Manual', shortLabel: 'Manual', icon: <Camera className="size-3" /> },
+    77→  { id: 'timer-3', label: 'Timer 3 detik', shortLabel: '3s', icon: <Timer className="size-3" /> },
+    78→  { id: 'timer-5', label: 'Timer 5 detik', shortLabel: '5s', icon: <Timer className="size-3" /> },
+    79→  { id: 'timer-10', label: 'Timer 10 detik', shortLabel: '10s', icon: <Timer className="size-3" /> },
+    80→  { id: 'ai', label: 'AI Pintar', shortLabel: 'AI', icon: <Brain className="size-3" />, modesAllowed: ['single', 'dual'] },
+    81→]
+    82→
+    83→function getTimerDuration(mode: ShutterMode): number {
+    84→  switch (mode) {
+    85→    case 'timer-3': return 3
+    86→    case 'timer-5': return 5
+    87→    case 'timer-10': return 10
+    88→    default: return 0
+    89→  }
+    90→}
+    91→
+    92→function isTimerMode(mode: ShutterMode): boolean {
+    93→  return mode === 'timer-3' || mode === 'timer-5' || mode === 'timer-10'
+    94→}
+    95→
+    96→// ─── Filter preset map ──────────────────────────────────────────────────────
+    97→const PRESET_FILTERS: Record<string, string> = {
+    98→  original: 'none',
+    99→  studio: 'brightness(1.1) contrast(1.05) saturate(1.1)',
+   100→  cinematic: 'sepia(0.15) contrast(1.1) brightness(0.95) saturate(1.3)',
+   101→  pro: 'contrast(1.25) brightness(1.05) saturate(1.15)',
+   102→  vivid: 'brightness(1.08) contrast(1.12) saturate(1.45) hue-rotate(5deg)',
+   103→  softPortrait: 'brightness(1.12) contrast(0.92) saturate(1.08) sepia(0.08)',
+   104→  classicFilm: 'brightness(1.02) contrast(1.15) saturate(0.85) sepia(0.2)',
+   105→  dramaticBW: 'brightness(1.05) contrast(1.35) saturate(0) grayscale(1)',
+   106→  warmSunset: 'brightness(1.06) contrast(1.08) saturate(1.3) sepia(0.18) hue-rotate(-10deg)',
+   107→}
+   108→
+   109→// ─── Ratio parser ───────────────────────────────────────────────────────────
+   110→function parseRatio(ratioStr: string): number {
+   111→  const parts = ratioStr.split(':')
+   112→  if (parts.length === 2) {
+   113→    const w = parseFloat(parts[0])
+   114→    const h = parseFloat(parts[1])
+   115→    if (w > 0 && h > 0) return w / h
+   116→  }
+   117→  return 4 / 3
+   118→}
+   119→
+   120→// ─── Helpers ────────────────────────────────────────────────────────────────
+   121→function sanitizeNama(nama: string): string {
+   122→  return nama.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '')
+   123→}
+   124→
+   125→function buildFilename(nim: string, nama: string, suffix: number, type: string): string {
+   126→  return `${nim}_${sanitizeNama(nama)}_${suffix}_${type}.jpg`
+   127→}
+   128→
+   129→function buildPhotoshootFilename(nim: string, nama: string, channel: number): string {
+   130→  return channel > 1
+   131→    ? `${nim}_${sanitizeNama(nama)}_Ch${channel}.jpg`
+   132→    : `${nim}_${sanitizeNama(nama)}.jpg`
+   133→}
+   134→
+   135→function isActiveStatus(status: StudentStatus): boolean {
+   136→  return status.startsWith('active')
+   137→}
+   138→
+   139→function getActiveChannel(status: StudentStatus): number | null {
+   140→  if (!isActiveStatus(status)) return null
+   141→  const ch = status.split('_')[1]
+   142→  return ch ? parseInt(ch, 10) : null
+   143→}
+   144→
+   145→function statusLabel(status: StudentStatus): string {
+   146→  if (status === 'pending') return 'Menunggu'
+   147→  if (status === 'sent') return 'Dikirim'
+   148→  if (status === 'done') return 'Selesai'
+   149→  const ch = getActiveChannel(status)
+   150→  return ch != null ? `Foto Ch.${ch}` : 'Aktif'
+   151→}
+   152→
+   153→function fitAspectRatio(
+   154→  availW: number,
+   155→  availH: number,
+   156→  ratio: number,
+   157→): { width: number; height: number } {
+   158→  const hFromW = availW / ratio
+   159→  if (hFromW <= availH) {
+   160→    return { width: availW, height: hFromW }
+   161→  }
+   162→  const wFromH = availH * ratio
+   163→  return { width: wFromH, height: availH }
+   164→}
+   165→
+   166→// ─── Capture state machine ──────────────────────────────────────────────────
+   167→type CapturePhase = 'standby' | 'ready-1' | 'ready-2' | 'sending'
+   168→
+   169→// ─── Video device info ──────────────────────────────────────────────────────
+   170→interface VideoDeviceInfo {
+   171→  deviceId: string
+   172→  label: string
+   173→}
+   174→
+   175→// ─── Socket event data shapes ───────────────────────────────────────────────
+   176→interface McCallData {
+   177→  student: Student
+   178→  channel: number
+   179→}
+   180→
+   181→interface SyncDbData {
+   182→  project: {
+   183→    id: string
+   184→    name: string
+   185→    config: {
+   186→      mode: CameraMode
+   187→      ratio: string
+   188→      preset: string
+   189→      targetFolder: string
+   190→      frame: string | null
+   191→    }
+   192→    database: Student[]
+   193→    photoHistory: PhotoHistoryItem[]
+   194→  }
+   195→}
+   196→
+   197→// ─── Component ──────────────────────────────────────────────────────────────
+   198→export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
+   199→  const isMobile = useIsMobile()
+   200→
+   201→  // ── Store ────────────────────────────────────────────────────────────────
+   202→  const currentProject = useSaatirilStore((s) => s.currentProject)
+   203→  const myChannel = useSaatirilStore((s) => s.myChannel)
+   204→  const opCurrentTarget = useSaatirilStore((s) => s.opCurrentTarget)
+   205→  const opCapturedPhotos = useSaatirilStore((s) => s.opCapturedPhotos)
+   206→  const setOpCurrentTarget = useSaatirilStore((s) => s.setOpCurrentTarget)
+   207→  const addOpCapturedPhoto = useSaatirilStore((s) => s.addOpCapturedPhoto)
+   208→  const resetOpState = useSaatirilStore((s) => s.resetOpState)
+   209→  const updateStudentStatus = useSaatirilStore((s) => s.updateStudentStatus)
+   210→  const updateCurrentProject = useSaatirilStore((s) => s.updateCurrentProject)
+   211→  const saveProjectsToStorageNow = useSaatirilStore((s) => s.saveProjectsToStorageNow)
+   212→
+   213→  // ── Local state ──────────────────────────────────────────────────────────
+   214→  const [videoDevices, setVideoDevices] = useState<VideoDeviceInfo[]>([])
+   215→  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('')
+   216→  const [cameraAvailable, setCameraAvailable] = useState(false)
+   217→  const [flashVisible, setFlashVisible] = useState(false)
+   218→  const [sending, setSending] = useState(false)
+   219→  const [cameraDims, setCameraDims] = useState({ width: 0, height: 0 })
+   220→  const [showQueueOnMobile, setShowQueueOnMobile] = useState(false)
+   221→  const [opSearchQuery, setOpSearchQuery] = useState('')
+   222→  // Buffer for MC_CALL events that arrive before the database updates via SYNC_DB
+   223→  const [mcCallBuffer, setMcCallBuffer] = useState<Student[]>([])
+   224→  const isCapturingRef = useRef(false)
+   225→
+   226→  // ── Shutter mode state ───────────────────────────────────────────────────
+   227→  const [shutterMode, setShutterMode] = useState<ShutterMode>('manual')
+   228→  // Palm trigger: when ON, showing an open palm to the camera triggers the
+   229→  // selected shutter mode (manual → instant photo, timer → starts countdown).
+   230→  // This is a hands-free trigger, NOT a shutter mode itself.
+   231→  const [palmTriggerEnabled, setPalmTriggerEnabled] = useState(false)
+   232→  const [timerCountdown, setTimerCountdown] = useState<number>(0)
+   233→  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+   234→  const timerActiveRef = useRef(false)
+   235→
+   236→  // ── AI auto-capture ──────────────────────────────────────────────────────
+   237→  const ai = useAIDetection()
+   238→
+   239→  // ── Palm detection (selfie-style shutter) ────────────────────────────────
+   240→  const palm = usePalmDetection()
+   241→
+   242→  // ── Refs ─────────────────────────────────────────────────────────────────
+   243→  const videoRef = useRef<HTMLVideoElement>(null)
+   244→  const canvasRef = useRef<HTMLCanvasElement>(null)
+   245→  const flashRef = useRef<HTMLDivElement>(null)
+   246→  const activeRowRef = useRef<HTMLDivElement>(null)
+   247→  const nextRowRef = useRef<HTMLDivElement>(null)
+   248→  const streamRef = useRef<MediaStream | null>(null)
+   249→  const selectedDeviceRef = useRef<string>('')
+   250→  const frameImgRef = useRef<HTMLImageElement | null>(null)
+   251→  const cameraZoneRef = useRef<HTMLDivElement>(null)
+   252→
+   253→  // ── Derived config ───────────────────────────────────────────────────────
+   254→  const config = currentProject?.config
+   255→  const aspectRatio = config?.ratio ? parseRatio(config.ratio) : 4 / 3
+   256→  const cssFilter = config?.preset ? PRESET_FILTERS[config.preset] ?? 'none' : 'none'
+   257→  const frameData = (config?.frame && config.frame !== '__FRAME_SAVED__') ? config.frame : null
+   258→
+   259→  // ── Resize Observer: calculate camera dimensions ─────────────────────────
+   260→  useEffect(() => {
+   261→    const zone = cameraZoneRef.current
+   262→    if (!zone) return
+   263→
+   264→    const updateSize = () => {
+   265→      const rect = zone.getBoundingClientRect()
+   266→      const padding = isMobile ? 8 : 16
+   267→      const availW = rect.width - padding
+   268→      const availH = rect.height - padding
+   269→      if (availW > 0 && availH > 0) {
+   270→        setCameraDims(fitAspectRatio(availW, availH, aspectRatio))
+   271→      }
+   272→    }
+   273→
+   274→    updateSize()
+   275→    const observer = new ResizeObserver(updateSize)
+   276→    observer.observe(zone)
+   277→    return () => observer.disconnect()
+   278→  }, [aspectRatio, isMobile])
+   279→
+   280→  // ── Preload frame image ──────────────────────────────────────────────────
+   281→  useEffect(() => {
+   282→    if (frameData) {
+   283→      const img = new Image()
+   284→      img.crossOrigin = 'anonymous'
+   285→      img.onload = () => { frameImgRef.current = img }
+   286→      img.onerror = () => { frameImgRef.current = null }
+   287→      img.src = frameData
+   288→    } else {
+   289→      frameImgRef.current = null
+   290→    }
+   291→  }, [frameData])
+   292→
+   293→  // ── Derived data ─────────────────────────────────────────────────────────
+   294→  const mode = currentProject?.config.mode ?? 'single'
+   295→  const photoshoot = isPhotoshootMode(mode)
+   296→  const dualPhotoshoot = isDualPhotoshootMode(mode)
+   297→
+   298→  // AI mode is only allowed in single/dual mode
+   299→  const aiAllowed = mode === 'single' || mode === 'dual'
+   300→
+   301→  // Compute effective shutter mode — if AI is selected but not allowed, fallback to manual
+   302→  const effectiveShutterMode: ShutterMode = (shutterMode === 'ai' && !aiAllowed) ? 'manual' : shutterMode
+   303→
+   304→  const channelStudents = useMemo<Student[]>(() => {
+   305→    if (!currentProject) return []
+   306→    if (photoshoot) {
+   307→      // In photoshoot modes, show all students
+   308→      return currentProject.database
+   309→    }
+   310→    return currentProject.database.filter((s) => s.assignedChannel === myChannel)
+   311→  }, [currentProject, myChannel, photoshoot])
+   312→
+   313→  // ── Operator queue: derived from database + MC_CALL buffer ──────────────────
+   314→  const opQueue = useMemo<Student[]>(() => {
+   315→    if (!photoshoot || !currentProject) return []
+   316→    const alreadyPhotographed = new Set(
+   317→      currentProject.photoHistory
+   318→        .filter((h) => h.channel === myChannel)
+   319→        .map((h) => h.student.id)
+   320→    )
+   321→    const doneIds = new Set(
+   322→      currentProject.database.filter((s) => s.status === 'done').map((s) => s.id)
+   323→    )
+   324→    const dbQueueIds = new Set<string>()
+   325→    const dbItems = currentProject.database.filter(
+   326→      (s) => s.status === 'sent' && !alreadyPhotographed.has(s.id)
+   327→    )
+   328→    dbItems.forEach((s) => dbQueueIds.add(s.id))
+   329→    const bufferItems = mcCallBuffer.filter(
+   330→      (s) => !dbQueueIds.has(s.id) && !doneIds.has(s.id) && !alreadyPhotographed.has(s.id)
+   331→    )
+   332→    return [...dbItems, ...bufferItems]
+   333→  }, [photoshoot, currentProject, myChannel, mcCallBuffer])
+   334→
+   335→  const opSearchResults = useMemo<Student[]>(() => {
+   336→    if (!opSearchQuery.trim()) return opQueue
+   337→    const q = opSearchQuery.toLowerCase().trim()
+   338→    return opQueue.filter(
+   339→      (s) => s.nim.toLowerCase().includes(q) || s.nama.toLowerCase().includes(q)
+   340→    )
+   341→  }, [opSearchQuery, opQueue])
+   342→
+   343→  const currentlyActive = useMemo<Student | null>(() => {
+   344→    if (photoshoot) {
+   345→      return opCurrentTarget
+   346→    }
+   347→    const targetStatus: StudentStatus = `active_${myChannel}`
+   348→    return channelStudents.find((s) => s.status === targetStatus) ?? null
+   349→  }, [channelStudents, myChannel, photoshoot, opCurrentTarget])
+   350→
+   351→  const nextPending = useMemo<Student | null>(() => {
+   352→    return channelStudents.find((s) => s.status === 'pending') ?? null
+   353→  }, [channelStudents])
+   354→
+   355→  const remainingCount = useMemo<number>(() => {
+   356→    return channelStudents.filter((s) => s.status === 'pending').length
+   357→  }, [channelStudents])
+   358→
+   359→  const hasActiveTarget = opCurrentTarget !== null
+   360→
+   361→  const capturePhase = useMemo<CapturePhase>(() => {
+   362→    if (sending) return 'sending'
+   363→    if (!hasActiveTarget) return 'standby'
+   364→    if (photoshoot) {
+   365→      if (opCapturedPhotos.length === 0) return 'ready-1'
+   366→      return 'sending'
+   367→    }
+   368→    if (opCapturedPhotos.length === 0) return 'ready-1'
+   369→    if (opCapturedPhotos.length === 1) return 'ready-2'
+   370→    return 'standby'
+   371→  }, [sending, hasActiveTarget, opCapturedPhotos.length, photoshoot])
+   372→
+   373→  // ── Auto-scroll refs ─────────────────────────────────────────────────────
+   374→  useEffect(() => {
+   375→    const target = activeRowRef.current ?? nextRowRef.current
+   376→    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+   377→  }, [currentlyActive, nextPending])
+   378→
+   379→  // ── Camera: enumerate devices ────────────────────────────────────────────
+   380→  const enumerateVideoDevices = useCallback(async () => {
+   381→    if (typeof navigator === 'undefined' || !navigator.mediaDevices) return
+   382→    try {
+   383→      const devices = await navigator.mediaDevices.enumerateDevices()
+   384→      const videoInputs = devices
+   385→        .filter((d) => d.kind === 'videoinput')
+   386→        .map((d) => ({
+   387→          deviceId: d.deviceId,
+   388→          label: d.label || `Kamera ${d.deviceId.slice(0, 6)}`,
+   389→        }))
+   390→      setVideoDevices(videoInputs)
+   391→      if (videoInputs.length > 0 && !selectedDeviceRef.current) {
+   392→        setSelectedDeviceId(videoInputs[0].deviceId)
+   393→        selectedDeviceRef.current = videoInputs[0].deviceId
+   394→      }
+   395→    } catch (err) {
+   396→      console.error('[SAATIRIL OP] Failed to enumerate devices:', err)
+   397→    }
+   398→  }, [])
+   399→
+   400→  // ── Camera: start stream ─────────────────────────────────────────────────
+   401→  const startCamera = useCallback(
+   402→    async (deviceId?: string) => {
+   403→      if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
+   404→        setCameraAvailable(false)
+   405→        return
+   406→      }
+   407→      if (streamRef.current) {
+   408→        streamRef.current.getTracks().forEach((t) => t.stop())
+   409→        streamRef.current = null
+   410→      }
+   411→
+   412→      let constraints: MediaStreamConstraints
+   413→      if (deviceId) {
+   414→        constraints = {
+   415→          video: { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+   416→          audio: false,
+   417→        }
+   418→      } else if (isMobile) {
+   419→        constraints = {
+   420→          video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+   421→          audio: false,
+   422→        }
+   423→      } else {
+   424→        constraints = {
+   425→          video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+   426→          audio: false,
+   427→        }
+   428→      }
+   429→
+   430→      try {
+   431→        const stream = await navigator.mediaDevices.getUserMedia(constraints)
+   432→        streamRef.current = stream
+   433→        setCameraAvailable(true)
+   434→        if (videoRef.current) videoRef.current.srcObject = stream
+   435→        await enumerateVideoDevices()
+   436→      } catch (err) {
+   437→        console.error('[SAATIRIL OP] Camera access failed:', err)
+   438→        if (isMobile && !deviceId) {
+   439→          try {
+   440→            const fallbackConstraints: MediaStreamConstraints = {
+   441→              video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+   442→              audio: false,
+   443→            }
+   444→            const stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints)
+   445→            streamRef.current = stream
+   446→            setCameraAvailable(true)
+   447→            if (videoRef.current) videoRef.current.srcObject = stream
+   448→            await enumerateVideoDevices()
+   449→          } catch (fallbackErr) {
+   450→            console.error('[SAATIRIL OP] Camera fallback also failed:', fallbackErr)
+   451→            setCameraAvailable(false)
+   452→          }
+   453→        } else {
+   454→          setCameraAvailable(false)
+   455→        }
+   456→      }
+   457→    },
+   458→    [enumerateVideoDevices, isMobile],
+   459→  )
+   460→
+   461→  useEffect(() => {
+   462→    queueMicrotask(() => void startCamera())
+   463→    return () => {
+   464→      if (streamRef.current) {
+   465→        streamRef.current.getTracks().forEach((t) => t.stop())
+   466→        streamRef.current = null
+   467→      }
+   468→    }
+   469→  }, [startCamera])
+   470→
+   471→  useEffect(() => {
+   472→    if (selectedDeviceId && selectedDeviceRef.current !== selectedDeviceId) {
+   473→      selectedDeviceRef.current = selectedDeviceId
+   474→      queueMicrotask(() => void startCamera(selectedDeviceId))
+   475→    }
+   476→  }, [selectedDeviceId, startCamera])
+   477→
+   478→  useEffect(() => {
+   479→    if (typeof navigator === 'undefined' || !navigator.mediaDevices) return
+   480→    const handler = () => enumerateVideoDevices()
+   481→    navigator.mediaDevices.addEventListener('devicechange', handler)
+   482→    return () => { navigator.mediaDevices.removeEventListener('devicechange', handler) }
+   483→  }, [enumerateVideoDevices])
+   484→
+   485→  // ── Switch camera (mobile: toggle front/rear) ────────────────────────────
+   486→  const handleSwitchCamera = useCallback(async () => {
+   487→    if (videoDevices.length < 2) return
+   488→    const currentIdx = videoDevices.findIndex((d) => d.deviceId === selectedDeviceId)
+   489→    const nextIdx = (currentIdx + 1) % videoDevices.length
+   490→    const nextDeviceId = videoDevices[nextIdx].deviceId
+   491→    setSelectedDeviceId(nextDeviceId)
+   492→    selectedDeviceRef.current = nextDeviceId
+   493→  }, [videoDevices, selectedDeviceId])
+   494→
+   495→  // ── Refs for stable handlers ─────────────────────────────────────────────
+   496→  const myChannelRef = useRef(myChannel)
+   497→  const currentProjectRef = useRef(currentProject)
+   498→  useEffect(() => { myChannelRef.current = myChannel }, [myChannel])
+   499→  useEffect(() => { currentProjectRef.current = currentProject }, [currentProject])
+   500→
+   501→  // ── State recovery (non-photoshoot only) ────────────────────────────────
+   502→  useEffect(() => {
+   503→    if (!currentProject || photoshoot) return
+   504→    const activeStudent = currentProject.database.find((s) => {
+   505→      return s.assignedChannel === myChannel && isActiveStatus(s.status)
+   506→    })
+   507→    if (activeStudent) {
+   508→      setOpCurrentTarget(activeStudent)
+   509→    } else if (opCurrentTarget && !isActiveStatus(opCurrentTarget.status)) {
+   510→      setOpCurrentTarget(null)
+   511→    }
+   512→  }, [currentProject, myChannel, setOpCurrentTarget, photoshoot])
+   513→
+   514→  // ── Socket: MC_CALL ─────────────────────────────────────────────────────
+   515→  useEffect(() => {
+   516→    const handleMcCall = (data: McCallData) => {
+   517→      if (data.channel !== myChannelRef.current) return
+   518→      console.log('[SAATIRIL OP] MC_CALL received:', data.student.nama, 'status:', data.student.status, 'Ch.', data.channel)
+   519→      if (photoshoot) {
+   520→        // REPLACE any existing buffer entry for this student instead of
+   521→        // dedup-skipping. This ensures a RE-SEND (after reset/retake) updates
+   522→        // the buffer with fresh data instead of being silently dropped.
+   523→        setMcCallBuffer((prev) => {
+   524→          const without = prev.filter((s) => s.id !== data.student.id)
+   525→          return [...without, data.student]
+   526→        })
+   527→      } else {
+   528→        setOpCurrentTarget(data.student)
+   529→      }
+   530→    }
+   531→    onLocal('MC_CALL', handleMcCall)
+   532→    return () => { offLocal('MC_CALL', handleMcCall) }
+   533→  }, [setOpCurrentTarget, photoshoot])
+   534→
+   535→  // ── Socket: STUDENT_RESET — explicit reset/retake signal from MC ────────
+   536→  // This bypasses the normal SYNC_DB merge (which blocks status regression:
+   537→  // pending priority 0 < sent/done) so the operator can fully clear a student
+   538→  // for retake: drop from mcCallBuffer, clear active target, remove the
+   539→  // photoHistory entry on this channel, and set status to 'pending' locally.
+   540→  useEffect(() => {
+   541→    const handleStudentReset = (data: { studentId: string; channel: number }) => {
+   542→      if (data.channel !== myChannelRef.current) return
+   543→      console.log('[SAATIRIL OP] STUDENT_RESET received — clearing for retake:', data.studentId, 'Ch.', data.channel)
+   544→
+   545→      // 1. Drop from mcCallBuffer
+   546→      setMcCallBuffer((prev) => prev.filter((s) => s.id !== data.studentId))
+   547→
+   548→      // 2. Clear active target if it matches
+   549→      setOpCurrentTarget((cur) => (cur?.id === data.studentId ? null : cur))
+   550→
+   551→      // 3. Remove this channel's photoHistory entry + reset status locally
+   552→      //    (bypasses mergeDatabases priority which would otherwise ignore the
+   553→      //    'pending' regression coming via SYNC_DB).
+   554→      //    IMPORTANT: read via useSaatirilStore.getState() (synchronous, latest)
+   555→      //    instead of currentProjectRef.current (stale ref updated only after
+   556→      //    render). This prevents a race where SYNC_DB arrives right after
+   557→      //    STUDENT_RESET and sees the OLD photoHistory — which would re-add
+   558→      //    the cleared entry via preservePhotoHistoryOnSync.
+   559→      const proj = useSaatirilStore.getState().currentProject
+   560→      if (proj) {
+   561→        const cleanedHistory = proj.photoHistory.filter(
+   562→          (h) => !(h.student.id === data.studentId && h.channel === myChannelRef.current),
+   563→        )
+   564→        const cleanedDb = proj.database.map((s) =>
+   565→          s.id === data.studentId ? { ...s, status: 'pending' as StudentStatus } : s,
+   566→        )
+   567→        updateCurrentProject({ ...proj, database: cleanedDb, photoHistory: cleanedHistory })
+   568→      }
+   569→    }
+   570→    onLocal('STUDENT_RESET', handleStudentReset)
+   571→    return () => { offLocal('STUDENT_RESET', handleStudentReset) }
+   572→  }, [setOpCurrentTarget, updateCurrentProject])
+   573→
+   574→  // ── Socket: SYNC_DB ─────────────────────────────────────────────────────
+   575→  useEffect(() => {
+   576→    const handleSyncDb = (data: SyncDbData) => {
+   577→      // Read latest state synchronously (avoids stale currentProjectRef race
+   578→      // when SYNC_DB arrives immediately after STUDENT_RESET / other updates).
+   579→      const proj = useSaatirilStore.getState().currentProject
+   580→      if (!proj) return
+   581→      const mergedDb = mergeDatabases(proj.database, data.project.database)
+   582→      const mergedConfig = preserveFrameOnSync(data.project.config, proj.config)
+   583→      const mergedPhotoHistory = preservePhotoHistoryOnSync(
+   584→        data.project.photoHistory ?? [],
+   585→        proj.photoHistory,
+   586→      )
+   587→      updateCurrentProject({ ...proj, database: mergedDb, photoHistory: mergedPhotoHistory, config: mergedConfig })
+   588→
+   589→      if (!isPhotoshootMode(data.project.config.mode)) {
+   590→        const ch = myChannelRef.current
+   591→        const activeStudent = data.project.database.find((s: Student) => {
+   592→          return s.assignedChannel === ch && isActiveStatus(s.status)
+   593→        })
+   594→        if (activeStudent) setOpCurrentTarget(activeStudent)
+   595→      }
+   596→
+   597→      const doneIds = new Set(
+   598→        data.project.database.filter((s: Student) => s.status === 'done').map((s: Student) => s.id)
+   599→      )
+   600→      if (doneIds.size > 0) {
+   601→        setMcCallBuffer((prev) => prev.filter((s) => !doneIds.has(s.id)))
+   602→      }
+   603→
+   604→      // Dual-photoshoot: when EITHER camera takes a photo, the participant is
+   605→      // considered done. If our current target is now 'done' (because the OTHER
+   606→      // operator took the photo), clear our target + captured photos so we don't
+   607→      // take a redundant photo. This realizes the "1 camera is enough" rule.
+   608→      const curTarget = useSaatirilStore.getState().opCurrentTarget
+   609→      if (curTarget && doneIds.has(curTarget.id)) {
+   610→        console.log('[SAATIRIL OP] SYNC_DB: current target is now done — clearing (other operator finished):', curTarget.nama)
+   611→        resetOpState()
+   612→      }
+   613→    }
+   614→    onLocal('SYNC_DB', handleSyncDb)
+   615→    return () => { offLocal('SYNC_DB', handleSyncDb) }
+   616→  }, [setOpCurrentTarget, resetOpState, updateCurrentProject])
+   617→
+   618→  // ── Finalize capture ────────────────────────────────────────────────────
+   619→  // OPTIMIZED: Removed 400ms of unnecessary delays, added STUDENT_DONE lightweight
+   620→  // event for immediate MC unblocking, and SYNC_DB now strips photos (tiny payload).
+   621→  const finalizeCapture = useCallback(
+   622→    (canvas: HTMLCanvasElement) => {
+   623→      setFlashVisible(true)
+   624→      setTimeout(() => setFlashVisible(false), 200)
+   625→
+   626→      const dataUrl = canvas.toDataURL('image/jpeg', 0.95)
+   627→      addOpCapturedPhoto(dataUrl)
+   628→
+   629→      const currentPhotos = useSaatirilStore.getState().opCapturedPhotos
+   630→      const currentTarget = useSaatirilStore.getState().opCurrentTarget
+   631→      const photoCount = currentPhotos.length
+   632→      const currentMode = useSaatirilStore.getState().currentProject?.config.mode ?? 'single'
+   633→      const isPhotoshoot = isPhotoshootMode(currentMode)
+   634→
+   635→      console.log('[SAATIRIL OP] finalizeCapture: photoCount =', photoCount, 'mode =', currentMode)
+   636→
+   637→      // Helper: update local photoHistory and emit lightweight SYNC_DB
+   638→      const finishCapture = (student: Student, historyItem: PhotoHistoryItem) => {
+   639→        const store = useSaatirilStore.getState()
+   640→        if (store.currentProject) {
+   641→          const existingIdx = store.currentProject.photoHistory.findIndex(
+   642→            (h) => h.student.id === student.id && h.channel === myChannel
+   643→          )
+   644→          let newHistory: PhotoHistoryItem[]
+   645→          if (existingIdx !== -1) {
+   646→            newHistory = [...store.currentProject.photoHistory]
+   647→            newHistory[existingIdx] = historyItem
+   648→          } else {
+   649→            newHistory = [...store.currentProject.photoHistory, historyItem]
+   650→          }
+   651→          const updatedProject = { ...store.currentProject, photoHistory: newHistory }
+   652→          store.updateCurrentProject(updatedProject)
+   653→          // SYNC_DB is now lightweight — photos stripped, only metadata sent
+   654→          emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
+   655→        }
+   656→        setSending(false)
+   657→        isCapturingRef.current = false
+   658→        resetOpState()
+   659→      }
+   660→
+   661→      // Photoshoot mode: save after 1 photo
+   662→      if (isPhotoshoot && photoCount >= 1) {
+   663→        if (!currentTarget) {
+   664→          console.warn('[SAATIRIL OP] finalizeCapture: opCurrentTarget is null — aborting')
+   665→          setSending(false)
+   666→          isCapturingRef.current = false
+   667→          resetOpState()
+   668→          return
+   669→        }
+   670→        setSending(true)
+   671→        const student = currentTarget
+   672→        const allPhotos = [...currentPhotos]
+   673→        const historyItem: PhotoHistoryItem = {
+   674→          student: { ...student },
+   675→          photos: allPhotos,
+   676→          channel: myChannel,
+   677→        }
+   678→        saveProjectsToStorageNow()
+   679→        setMcCallBuffer((prev) => prev.filter((s) => s.id !== student.id))
+   680→
+   681→        console.log('[SAATIRIL OP] Emitting PHOTOS_SAVED for student:', student.nama, 'channel:', myChannel)
+   682→
+   683→        // PHOTOS_SAVED for Admin/gallery (contains photos for display)
+   684→        emitLocal('PHOTOS_SAVED', {
+   685→          student: { ...student, status: student.status },
+   686→          photos: allPhotos,
+   687→          channel: myChannel,
+   688→        })
+   689→        emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Selesai — Menunggu target...' })
+   690→
+   691→        // Save to disk asynchronously (non-blocking)
+   692→        const projConfig = useSaatirilStore.getState().currentProject?.config
+   693→        if (projConfig) {
+   694→          const api = window.saatirilAPI
+   695→          if (api?.savePhoto) {
+   696→            const targetFolder = projConfig.targetFolder
+   697→            const filename = buildPhotoshootFilename(student.nim, student.nama, myChannel)
+   698→
+   699→            api.savePhoto({ base64Data: allPhotos[0], filename, targetFolder }).then((path: string | null) => {
+   700→              if (path) {
+   701→                console.log(`[SAATIRIL OP] Photo saved to disk: → ${path}`)
+   702→              } else {
+   703→                console.warn('[SAATIRIL OP] Photo failed to save to disk')
+   704→              }
+   705→            }).catch((err: Error) => {
+   706→              console.error('[SAATIRIL OP] Error saving photo to disk:', err)
+   707→            })
+   708→          }
+   709→        }
+   710→
+   711→        // IMMEDIATE: update local state + emit lightweight SYNC_DB (no delays!)
+   712→        finishCapture(student, historyItem)
+   713→        return
+   714→      }
+   715→
+   716→      // Standard mode (single/dual): 2 photos
+   717→      if (photoCount === 1) {
+   718→        isCapturingRef.current = false
+   719→        emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Pose 1 OK — Siap Foto 2' })
+   720→      } else if (photoCount >= 2) {
+   721→        if (!currentTarget) {
+   722→          console.warn('[SAATIRIL OP] finalizeCapture: opCurrentTarget is null — aborting')
+   723→          setSending(false)
+   724→          isCapturingRef.current = false
+   725→          resetOpState()
+   726→          return
+   727→        }
+   728→        setSending(true)
+   729→        const student = currentTarget
+   730→        const allPhotos = [...currentPhotos]
+   731→        const historyItem: PhotoHistoryItem = {
+   732→          student: { ...student },
+   733→          photos: allPhotos,
+   734→          channel: myChannel,
+   735→        }
+   736→        updateStudentStatus(student.id, 'done')
+   737→        saveProjectsToStorageNow()
+   738→
+   739→        console.log('[SAATIRIL OP] Emitting STUDENT_DONE + PHOTOS_SAVED for student:', student.nama, 'channel:', myChannel)
+   740→
+   741→        // PRIORITY 1: STUDENT_DONE — lightweight event for IMMEDIATE MC unblocking
+   742→        // This fires BEFORE the heavy PHOTOS_SAVED so MC can call next student instantly
+   743→        emitLocal('STUDENT_DONE', {
+   744→          studentId: student.id,
+   745→          channel: myChannel,
+   746→        })
+   747→
+   748→        // PRIORITY 2: PHOTOS_SAVED — contains photos for Admin gallery
+   749→        emitLocal('PHOTOS_SAVED', {
+   750→          student: { ...student, status: 'done' },
+   751→          photos: allPhotos,
+   752→          channel: myChannel,
+   753→        })
+   754→        emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Selesai — Menunggu target...' })
+   755→
+   756→        // Save to disk asynchronously (non-blocking)
+   757→        const projConfig = useSaatirilStore.getState().currentProject?.config
+   758→        if (projConfig) {
+   759→          const api = window.saatirilAPI
+   760→          if (api?.savePhoto) {
+   761→            const targetFolder = projConfig.targetFolder
+   762→            const togaFilename = buildFilename(student.nim, student.nama, 1, 'Toga')
+   763→            const ijazahFilename = buildFilename(student.nim, student.nama, 2, 'Ijazah')
+   764→
+   765→            Promise.all([
+   766→              api.savePhoto({ base64Data: allPhotos[0], filename: togaFilename, targetFolder }),
+   767→              api.savePhoto({ base64Data: allPhotos[1], filename: ijazahFilename, targetFolder }),
+   768→            ]).then(([path1, path2]) => {
+   769→              if (path1 && path2) {
+   770→                console.log(`[SAATIRIL OP] Photos saved to disk:\n  → ${path1}\n  → ${path2}`)
+   771→              } else {
+   772→                console.warn('[SAATIRIL OP] Some photos failed to save to disk')
+   773→              }
+   774→            }).catch((err) => {
+   775→              console.error('[SAATIRIL OP] Error saving photos to disk:', err)
+   776→            })
+   777→          } else {
+   778→            console.log('[SAATIRIL OP] Not running in Electron — photos not saved to disk')
+   779→          }
+   780→        }
+   781→
+   782→        // IMMEDIATE: update local state + emit lightweight SYNC_DB (no delays!)
+   783→        finishCapture(student, historyItem)
+   784→      }
+   785→    },
+   786→    [myChannel, addOpCapturedPhoto, updateStudentStatus, saveProjectsToStorageNow, resetOpState],
+   787→  )
+   788→
+   789→  // ── Photo capture logic ──────────────────────────────────────────────────
+   790→  const handleCapture = useCallback(() => {
+   791→    if (!opCurrentTarget) return
+   792→    if (photoshoot) {
+   793→      if (capturePhase !== 'ready-1') return
+   794→    } else {
+   795→      if (capturePhase !== 'ready-1' && capturePhase !== 'ready-2') return
+   796→    }
+   797→    if (isCapturingRef.current) return
+   798→    isCapturingRef.current = true
+   799→
+   800→    const canvas = canvasRef.current
+   801→    const video = videoRef.current
+   802→    if (!canvas) return
+   803→
+   804→    const targetWidth = 1920
+   805→    const targetHeight = Math.round(targetWidth / aspectRatio)
+   806→    canvas.width = targetWidth
+   807→    canvas.height = targetHeight
+   808→
+   809→    const ctx = canvas.getContext('2d')
+   810→    if (!ctx) return
+   811→
+   812→    ctx.fillStyle = '#000000'
+   813→    ctx.fillRect(0, 0, targetWidth, targetHeight)
+   814→
+   815→    if (video && video.readyState >= 2) {
+   816→      const videoWidth = video.videoWidth
+   817→      const videoHeight = video.videoHeight
+   818→      const videoRatio = videoWidth / videoHeight
+   819→      let sx = 0, sy = 0, sw = videoWidth, sh = videoHeight
+   820→      if (videoRatio > aspectRatio) {
+   821→        sw = videoHeight * aspectRatio
+   822→        sx = (videoWidth - sw) / 2
+   823→      } else {
+   824→        sh = videoWidth / aspectRatio
+   825→        sy = (videoHeight - sh) / 2
+   826→      }
+   827→      if (cssFilter !== 'none') ctx.filter = cssFilter
+   828→      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight)
+   829→      ctx.filter = 'none'
+   830→    } else {
+   831→      ctx.fillStyle = '#1a0b2e'
+   832→      ctx.fillRect(0, 0, targetWidth, targetHeight)
+   833→      ctx.fillStyle = '#533485'
+   834→      ctx.font = 'bold 48px sans-serif'
+   835→      ctx.textAlign = 'center'
+   836→      ctx.textBaseline = 'middle'
+   837→      ctx.fillText('NO CAMERA SIGNAL', targetWidth / 2, targetHeight / 2)
+   838→    }
+   839→
+   840→    if (frameImgRef.current) {
+   841→      ctx.drawImage(frameImgRef.current, 0, 0, targetWidth, targetHeight)
+   842→      finalizeCapture(canvas)
+   843→    } else if (frameData) {
+   844→      const frameImg = new Image()
+   845→      frameImg.crossOrigin = 'anonymous'
+   846→      frameImg.onload = () => { ctx.drawImage(frameImg, 0, 0, targetWidth, targetHeight); finalizeCapture(canvas) }
+   847→      frameImg.onerror = () => { finalizeCapture(canvas) }
+   848→      frameImg.src = frameData
+   849→    } else {
+   850→      finalizeCapture(canvas)
+   851→    }
+   852→  }, [opCurrentTarget, capturePhase, aspectRatio, cssFilter, frameData, finalizeCapture, photoshoot])
+   853→
+   854→  // ── Shutter: Timer logic ─────────────────────────────────────────────────
+   855→  const handleCaptureRef = useRef(handleCapture)
+   856→  useEffect(() => { handleCaptureRef.current = handleCapture }, [handleCapture])
+   857→  const handleCaptureClickRef = useRef<() => void>(() => {})
+   858→
+   859→  const cancelTimer = useCallback(() => {
+   860→    if (timerIntervalRef.current) {
+   861→      clearInterval(timerIntervalRef.current)
+   862→      timerIntervalRef.current = null
+   863→    }
+   864→    timerActiveRef.current = false
+   865→    setTimerCountdown(0)
+   866→  }, [])
+   867→
+   868→  // Cancel timer interval when capture phase changes away from ready (external cleanup only)
+   869→  useEffect(() => {
+   870→    if (capturePhase !== 'ready-1' && capturePhase !== 'ready-2') {
+   871→      if (timerIntervalRef.current) {
+   872→        clearInterval(timerIntervalRef.current)
+   873→        timerIntervalRef.current = null
+   874→      }
+   875→      timerActiveRef.current = false
+   876→    }
+   877→  }, [capturePhase])
+   878→
+   879→  // Derived: only show countdown when in ready phase
+   880→  const effectiveTimerCountdown = (capturePhase === 'ready-1' || capturePhase === 'ready-2') ? timerCountdown : 0
+   881→
+   882→  const startTimer = useCallback(() => {
+   883→    if (!isTimerMode(effectiveShutterMode)) return
+   884→    if (capturePhase !== 'ready-1' && capturePhase !== 'ready-2') return
+   885→    if (timerActiveRef.current) {
+   886→      // Cancel if already running
+   887→      cancelTimer()
+   888→      return
+   889→    }
+   890→
+   891→    const duration = getTimerDuration(effectiveShutterMode)
+   892→    let remaining = duration
+   893→    timerActiveRef.current = true
+   894→    setTimerCountdown(remaining)
+   895→
+   896→    timerIntervalRef.current = setInterval(() => {
+   897→      remaining -= 1
+   898→      if (remaining <= 0) {
+   899→        // Time's up — capture!
+   900→        if (timerIntervalRef.current) {
+   901→          clearInterval(timerIntervalRef.current)
+   902→          timerIntervalRef.current = null
+   903→        }
+   904→        timerActiveRef.current = false
+   905→        setTimerCountdown(0)
+   906→        handleCaptureRef.current()
+   907→      } else {
+   908→        setTimerCountdown(remaining)
+   909→      }
+   910→    }, 1000)
+   911→  }, [effectiveShutterMode, capturePhase, cancelTimer])
+   912→
+   913→  // ── Shutter: AI detection ────────────────────────────────────────────────
+   914→  const capturePhaseRef = useRef(capturePhase)
+   915→  useEffect(() => { capturePhaseRef.current = capturePhase }, [capturePhase])
+   916→
+   917→  // AI: Initialize when camera is ready and AI shutter mode is active
+   918→  useEffect(() => {
+   919→    if (effectiveShutterMode === 'ai' && cameraAvailable && hasActiveTarget && !ai.scriptsLoaded && ai.status === 'unloaded') {
+   920→      ai.initialize().then((ok) => {
+   921→        if (ok) console.log('[SAATIRIL OP] AI initialized for shutter mode')
+   922→      })
+   923→    }
+   924→  }, [effectiveShutterMode, cameraAvailable, hasActiveTarget])
+   925→
+   926→  // AI: Start/stop detection based on shutter mode
+   927→  useEffect(() => {
+   928→    if (effectiveShutterMode === 'ai' && ai.modelLoaded && cameraAvailable && videoRef.current && hasActiveTarget) {
+   929→      ai.startDetection(videoRef.current, (event: AIMomentEvent) => {
+   930→        console.log('[SAATIRIL OP] AI moment:', event.type, 'phase:', capturePhaseRef.current)
+   931→        const phase = capturePhaseRef.current
+   932→        if (event.type === 'toga' && phase === 'ready-1') {
+   933→          handleCaptureRef.current()
+   934→        } else if (event.type === 'ijazah' && phase === 'ready-2') {
+   935→          handleCaptureRef.current()
+   936→        }
+   937→      })
+   938→    } else if (effectiveShutterMode !== 'ai' && ai.isRunning) {
+   939→      ai.stopDetection()
+   940→    }
+   941→  }, [effectiveShutterMode, ai.modelLoaded, cameraAvailable, hasActiveTarget, capturePhase])
+   942→
+   943→  // ── Palm trigger (hands-free shutter) ────────────────────────────────────
+   944→  // Palm detection is a TRIGGER, not a shutter mode. When the toggle is ON,
+   945→  // showing an open palm fires handleCaptureButtonClick() — which respects
+   946→  // the selected mode (manual → instant photo, timer → starts countdown).
+   947→  // Disabled in AI mode (AI already auto-triggers).
+   948→  const palmTriggerActive = palmTriggerEnabled && effectiveShutterMode !== 'ai'
+   949→
+   950→  useEffect(() => {
+   951→    if (palmTriggerActive && cameraAvailable && hasActiveTarget && palm.status === 'unloaded') {
+   952→      palm.initialize().then((ok) => {
+   953→        if (ok) console.log('[SAATIRIL OP] Palm trigger initialized')
+   954→      })
+   955→    }
+   956→  }, [palmTriggerActive, cameraAvailable, hasActiveTarget])
+   957→
+   958→  useEffect(() => {
+   959→    if (palmTriggerActive && (palm.status === 'model_ready' || palm.status === 'stopped') && cameraAvailable && videoRef.current && hasActiveTarget) {
+   960→      palm.startDetection(videoRef.current, {
+   961→        onPalmConfirmed: () => {
+   962→          console.log('[SAATIRIL OP] Palm confirmed — triggering shutter')
+   963→          handleCaptureClickRef.current()
+   964→        },
+   965→        onPalmReleased: () => {
+   966→          // No-op: let the selected mode run to completion.
+   967→        },
+   968→      })
+   969→    } else if (!palmTriggerActive && palm.isRunning) {
+   970→      palm.stopDetection()
+   971→    }
+   972→  }, [palmTriggerActive, palm.status, cameraAvailable, hasActiveTarget])
+   973→
+   974→  // ── Cleanup on unmount ───────────────────────────────────────────────────
+   975→  useEffect(() => {
+   976→    return () => {
+   977→      cancelTimer()
+   978→      if (ai.isRunning) ai.stopDetection()
+   979→      if (palm.isRunning) palm.stopDetection()
+   980→    }
+   981→  }, [])
+   982→
+   983→  // ── Shutter mode: determine if capture button should trigger timer or direct capture
+   984→  const handleCaptureButtonClick = useCallback(() => {
+   985→    if (isTimerMode(effectiveShutterMode)) {
+   986→      if (timerActiveRef.current) {
+   987→        // Cancel running timer
+   988→        cancelTimer()
+   989→      } else {
+   990→        // Start timer
+   991→        startTimer()
+   992→      }
+   993→    } else {
+   994→      // Manual mode — direct capture
+   995→      handleCapture()
+   996→    }
+   997→  }, [effectiveShutterMode, startTimer, cancelTimer, handleCapture])
+   998→
+   999→  // Keep handleCaptureClickRef in sync with the latest handler
+  1000→  useEffect(() => { handleCaptureClickRef.current = handleCaptureButtonClick }, [handleCaptureButtonClick])
+  1001→
+  1002→  // ── Keyboard shortcuts (physical shutter for camera operator) ──────────────
+  1003→  // Space / Enter → trigger capture (same as clicking the FOTO button)
+  1004→  // Esc           → cancel a running countdown timer
+  1005→  // F             → toggle browser fullscreen (hands-free operation)
+  1006→  const cancelTimerRef = useRef(cancelTimer)
+  1007→  useEffect(() => { cancelTimerRef.current = cancelTimer }, [cancelTimer])
+  1008→  const [isFullscreen, setIsFullscreen] = useState(false)
+  1009→
+  1010→  useEffect(() => {
+  1011→    if (readOnly) return // Monitor mode: no physical shutter
+  1012→
+  1013→    const isTypingTarget = (el: EventTarget | null): boolean => {
+  1014→      if (!(el instanceof HTMLElement)) return false
+  1015→      const tag = el.tagName
+  1016→      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable
+  1017→    }
+  1018→
+  1019→    const toggleFullscreen = () => {
+  1020→      const docEl = document.documentElement
+  1021→      if (!document.fullscreenElement) {
+  1022→        docEl.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {})
+  1023→      } else {
+  1024→        document.exitFullscreen?.().then(() => setIsFullscreen(false)).catch(() => {})
+  1025→      }
+  1026→    }
+  1027→
+  1028→    const onKeyDown = (e: KeyboardEvent) => {
+  1029→      if (isTypingTarget(e.target)) return
+  1030→
+  1031→      if (e.key === 'Escape') {
+  1032→        if (timerActiveRef.current) {
+  1033→          e.preventDefault()
+  1034→          cancelTimerRef.current()
+  1035→        }
+  1036→        return
+  1037→      }
+  1038→
+  1039→      if (e.key === ' ' || e.key === 'Enter') {
+  1040→        e.preventDefault()
+  1041→        handleCaptureClickRef.current()
+  1042→        return
+  1043→      }
+  1044→
+  1045→      if (e.key === 'f' || e.key === 'F') {
+  1046→        e.preventDefault()
+  1047→        toggleFullscreen()
+  1048→        return
+  1049→      }
+  1050→    }
+  1051→
+  1052→    const onFullscreenChange = () => {
+  1053→      setIsFullscreen(!!document.fullscreenElement)
+  1054→    }
+  1055→
+  1056→    window.addEventListener('keydown', onKeyDown)
+  1057→    document.addEventListener('fullscreenchange', onFullscreenChange)
+  1058→    return () => {
+  1059→      window.removeEventListener('keydown', onKeyDown)
+  1060→      document.removeEventListener('fullscreenchange', onFullscreenChange)
+  1061→    }
+  1062→  }, [readOnly])
+  1063→
+  1064→  // ── Progress badge text ──────────────────────────────────────────────────
+  1065→  const progressText = useMemo(() => {
+  1066→    if (!hasActiveTarget) return 'Menunggu Arahan MC...'
+  1067→    if (effectiveTimerCountdown > 0) return `Timer: ${effectiveTimerCountdown}s`
+  1068→    if (effectiveShutterMode === 'ai' && ai.isRunning) {
+  1069→      if (ai.momentState === 'toga_possible' || ai.momentState === 'toga_sustained') return 'AI: Toga terdeteksi...'
+  1070→      if (ai.momentState === 'ijazah_possible' || ai.momentState === 'ijazah_sustained') return 'AI: Ijazah terdeteksi...'
+  1071→    }
+  1072→    if (palmTriggerEnabled && palm.isRunning) {
+  1073→      if (palm.palmState === 'confirmed') return 'Telapak terdeteksi — memicu shutter...'
+  1074→      if (palm.palmState === 'held') return 'Telapak terdeteksi...'
+  1075→      if (palm.palmState === 'searching') return 'Mencari telapak tangan...'
+  1076→    }
+  1077→    if (photoshoot) {
+  1078→      if (capturePhase === 'ready-1') return 'Siap Foto'
+  1079→      if (capturePhase === 'sending') return 'Mengirim...'
+  1080→    } else {
+  1081→      if (capturePhase === 'ready-1') return 'Siap Foto 1'
+  1082→      if (capturePhase === 'ready-2') return 'Pose 1 OK - Siap Foto 2'
+  1083→      if (capturePhase === 'sending') return 'Mengirim...'
+  1084→    }
+  1085→    return 'Menunggu Arahan MC...'
+  1086→  }, [hasActiveTarget, capturePhase, photoshoot, effectiveTimerCountdown, effectiveShutterMode, ai.isRunning, ai.momentState, palmTriggerEnabled, palm.isRunning, palm.palmState])
+  1087→
+  1088→  // ── Render helpers ───────────────────────────────────────────────────────
+  1089→  const getRowStyle = (student: Student): React.CSSProperties => {
+  1090→    const isActive = student.status === `active_${myChannel}`
+  1091→    const isSent = student.status === 'sent'
+  1092→    const isNext = !photoshoot && student.id === nextPending?.id && student.status === 'pending'
+  1093→    const isDone = student.status === 'done'
+  1094→    if (isActive) return { backgroundColor: `${THEME.gold}22`, borderLeft: `4px solid ${THEME.gold}`, boxShadow: `0 0 12px ${THEME.gold}44` }
+  1095→    if (isSent) return { backgroundColor: `${THEME.gold}0a`, borderLeft: `4px solid ${THEME.gold}88` }
+  1096→    if (isNext) return { backgroundColor: THEME.panel, borderLeft: `4px solid ${THEME.gold}` }
+  1097→    if (isDone) return { backgroundColor: '#22c55e0d', opacity: 0.55, borderLeft: `4px solid #22c55e66` }
+  1098→    return { backgroundColor: THEME.panel, borderLeft: `4px solid ${THEME.border}` }
+  1099→  }
+  1100→
+  1101→  const renderStatusBadge = (status: StudentStatus) => {
+  1102→    if (status === 'done') return <Badge className="text-[10px] px-1.5 py-0" style={{ backgroundColor: '#22c55e33', color: '#4ade80', border: '1px solid #22c55e55' }}><CheckCircle2 className="size-3 mr-0.5" />Selesai</Badge>
+  1103→    if (status === 'sent') return <Badge className="text-[10px] px-1.5 py-0" style={{ backgroundColor: '#d4af3733', color: THEME.gold, border: '1px solid #d4af3766' }}><Camera className="size-3 mr-0.5" />Dikirim</Badge>
+  1104→    if (isActiveStatus(status)) return <Badge className="text-[10px] px-1.5 py-0 animate-pulse" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}66` }}><Loader2 className="size-3 mr-0.5 animate-spin" />{statusLabel(status)}</Badge>
+  1105→    return <Badge className="text-[10px] px-1.5 py-0" style={{ backgroundColor: `${THEME.border}44`, color: THEME.muted, border: `1px solid ${THEME.border}` }}><Clock className="size-3 mr-0.5" />Menunggu</Badge>
+  1106→  }
+  1107→
+  1108→  // ── Shutter mode selector ────────────────────────────────────────────────
+  1109→  const renderShutterModeSelector = (compact = false) => {
+  1110→    const availableModes = SHUTTER_MODES.filter((m) => {
+  1111→      if (m.modesAllowed && !m.modesAllowed.includes(mode as CameraMode)) return false
+  1112→      return true
+  1113→    })
+  1114→
+  1115→    return (
+  1116→      <div className={`flex flex-col gap-1 ${compact ? '' : ''}`}>
+  1117→        <p className={`font-semibold uppercase tracking-widest ${compact ? 'text-[8px]' : 'text-[9px]'}`} style={{ color: THEME.muted }}>
+  1118→          Mode Shutter
+  1119→        </p>
+  1120→        <div className={`flex flex-wrap gap-1 ${compact ? '' : ''}`}>
+  1121→          {availableModes.map((m) => {
+  1122→            const isActive = effectiveShutterMode === m.id
+  1123→            const isLoading = (m.id === 'ai' && (ai.status === 'loading_scripts' || ai.status === 'loading_model'))
+  1124→
+  1125→            return (
+  1126→              <button
+  1127→                key={m.id}
+  1128→                onClick={() => {
+  1129→                  if (!isLoading) {
+  1130→                    setShutterMode(m.id)
+  1131→                    cancelTimer()
+  1132→                  }
+  1133→                }}
+  1134→                className={`flex items-center gap-1 rounded-md font-semibold transition-all duration-200 cursor-pointer ${
+  1135→                  compact ? 'px-1.5 py-1 text-[9px]' : 'px-2 py-1.5 text-[10px]'
+  1136→                } ${isActive ? 'scale-105' : 'hover:bg-white/5'}`}
+  1137→                style={{
+  1138→                  backgroundColor: isActive ? `${THEME.gold}33` : THEME.panel,
+  1139→                  color: isActive ? THEME.gold : THEME.muted,
+  1140→                  border: `1px solid ${isActive ? THEME.gold : THEME.border}`,
+  1141→                  boxShadow: isActive ? `0 0 8px ${THEME.gold}22` : 'none',
+  1142→                  opacity: isLoading ? 0.6 : 1,
+  1143→                }}
+  1144→                title={m.label}
+  1145→              >
+  1146→                {isLoading ? <Loader2 className="size-3 animate-spin" /> : m.icon}
+  1147→                <span>{m.shortLabel}</span>
+  1148→              </button>
+  1149→            )
+  1150→          })}
+  1151→        </div>
+  1152→        {/* Palm trigger toggle — independent of shutter mode */}
+  1153→        {!readOnly && effectiveShutterMode !== 'ai' && (
+  1154→          <button
+  1155→            onClick={() => {
+  1156→              setPalmTriggerEnabled((v) => !v)
+  1157→              if (palmTriggerEnabled) palm.stopDetection()
+  1158→            }}
+  1159→            className={`flex items-center gap-1.5 rounded-md font-semibold transition-all duration-200 cursor-pointer ${
+  1160→              compact ? 'px-1.5 py-1 text-[9px]' : 'px-2 py-1.5 text-[10px]'
+  1161→            } ${palmTriggerEnabled ? 'scale-105' : 'hover:bg-white/5'}`}
+  1162→            style={{
+  1163→              backgroundColor: palmTriggerEnabled ? '#22c55e22' : THEME.panel,
+  1164→              color: palmTriggerEnabled ? '#4ade80' : THEME.muted,
+  1165→              border: `1px solid ${palmTriggerEnabled ? '#22c55e' : THEME.border}`,
+  1166→              boxShadow: palmTriggerEnabled ? '0 0 8px #22c55e22' : 'none',
+  1167→            }}
+  1168→            title="Trigger Telapak — tunjukkan telapak tangan ke kamera untuk memotret"
+  1169→          >
+  1170→            {palm.status === 'loading_scripts' || palm.status === 'loading_model' ? (
+  1171→              <Loader2 className="size-3 animate-spin" />
+  1172→            ) : (
+  1173→              <Hand className="size-3" />
+  1174→            )}
+  1175→            <span>Trigger Telapak</span>
+  1176→            {palmTriggerEnabled && palm.isRunning && palm.fingersExtended > 0 && (
+  1177→              <span className="text-[8px] font-mono" style={{ color: palm.palmState === 'confirmed' ? '#4ade80' : THEME.gold }}>
+  1178→                {palm.fingersExtended}/5
+  1179→              </span>
+  1180→            )}
+  1181→          </button>
+  1182→        )}
+  1183→      </div>
+  1184→    )
+  1185→  }
+  1186→
+  1187→  // ── Operator queue with search (photoshoot mode) ────────────────────────
+  1188→  const renderOpSearch = (compact = false) => {
+  1189→    if (!photoshoot) return null
+  1190→    return (
+  1191→      <Card
+  1192→        className="shrink-0 border rounded-lg overflow-hidden"
+  1193→        style={{ backgroundColor: THEME.card, borderColor: THEME.gold }}
+  1194→      >
+  1195→        <CardContent className={compact ? 'p-2 space-y-1.5' : 'p-2.5 space-y-2'}>
+  1196→          <div className="flex items-center justify-between">
+  1197→            <p
+  1198→              className="text-[9px] font-semibold uppercase tracking-widest"
+  1199→              style={{ color: THEME.gold }}
+  1200→            >
+  1201→              <List className="size-3 inline mr-1" />
+  1202→              Antre dari MC ({opQueue.length})
+  1203→            </p>
+  1204→          </div>
+  1205→
+  1206→          <div className="relative">
+  1207→            <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3.5" style={{ color: THEME.muted }} />
+  1208→            <Input
+  1209→              placeholder="Cari NIM / Nama di antrean..."
+  1210→              value={opSearchQuery}
+  1211→              onChange={(e) => setOpSearchQuery(e.target.value)}
+  1212→              className={`pl-7 border-[#533485] bg-[#2a164a] text-white placeholder:text-[#533485] focus-visible:border-[#d4af37] focus-visible:ring-[#d4af37]/30 ${compact ? 'h-7 text-[11px]' : 'h-8 text-xs'}`}
+  1213→            />
+  1214→          </div>
+  1215→
+  1216→          {opQueue.length === 0 ? (
+  1217→            <p className={`text-center ${compact ? 'text-[9px] py-1' : 'text-[10px] py-1.5'}`} style={{ color: THEME.muted }}>
+  1218→              {opSearchQuery.trim() ? 'Tidak ditemukan di antrean' : 'Belum ada peserta dikirim MC'}
+  1219→            </p>
+  1220→          ) : (
+  1221→            <div
+  1222→              className={`overflow-y-auto rounded-md border ${compact ? 'max-h-32' : 'max-h-48'}`}
+  1223→              style={{ borderColor: THEME.border }}
+  1224→            >
+  1225→              {opSearchResults.map((student) => (
+  1226→                <button
+  1227→                  key={student.id}
+  1228→                  onClick={() => {
+  1229→                    if (!sending) {
+  1230→                      setOpCurrentTarget(student)
+  1231→                      setOpSearchQuery('')
+  1232→                    }
+  1233→                  }}
+  1234→                  className={`w-full flex items-center gap-1.5 px-2 text-left transition-colors hover:bg-white/5 cursor-pointer ${compact ? 'py-1' : 'py-1.5'} ${opCurrentTarget?.id === student.id ? 'bg-[#d4af37]/10' : ''}`}
+  1235→                  style={{
+  1236→                    borderBottom: `1px solid ${THEME.border}44`,
+  1237→                    borderLeft: opCurrentTarget?.id === student.id ? `3px solid ${THEME.gold}` : `3px solid transparent`,
+  1238→                  }}
+  1239→                >
+  1240→                  <span className={`font-mono truncate shrink-0 ${compact ? 'text-[9px] w-12' : 'text-[10px] w-14'}`} style={{ color: THEME.muted }}>
+  1241→                    {student.nim}
+  1242→                  </span>
+  1243→                  <span className={`font-medium truncate flex-1 ${compact ? 'text-[10px]' : 'text-[11px]'}`} style={{ color: opCurrentTarget?.id === student.id ? THEME.gold : '#ffffff' }}>
+  1244→                    {student.nama}
+  1245→                  </span>
+  1246→                  {opCurrentTarget?.id === student.id && (
+  1247→                    <Camera className="size-3 shrink-0" style={{ color: THEME.gold }} />
+  1248→                  )}
+  1249→                </button>
+  1250→              ))}
+  1251→            </div>
+  1252→          )}
+  1253→        </CardContent>
+  1254→      </Card>
+  1255→    )
+  1256→  }
+  1257→
+  1258→  // ── Shared camera view component ─────────────────────────────────────────
+  1259→  const renderCameraView = () => (
+  1260→    <div
+  1261→      className="relative rounded-xl overflow-hidden border-2"
+  1262→      style={{
+  1263→        width: cameraDims.width > 0 ? cameraDims.width : undefined,
+  1264→        height: cameraDims.height > 0 ? cameraDims.height : undefined,
+  1265→        borderColor: hasActiveTarget ? THEME.gold : THEME.border,
+  1266→        boxShadow: hasActiveTarget ? `0 0 16px ${THEME.gold}15` : 'none',
+  1267→        backgroundColor: '#000000',
+  1268→      }}
+  1269→    >
+  1270→      <video
+  1271→        ref={videoRef}
+  1272→        autoPlay
+  1273→        playsInline
+  1274→        muted
+  1275→        className="absolute inset-0 w-full h-full object-cover"
+  1276→        style={{
+  1277→          filter: cssFilter !== 'none' ? cssFilter : undefined,
+  1278→        }}
+  1279→      />
+  1280→
+  1281→      {frameData && (
+  1282→        <img
+  1283→          src={frameData}
+  1284→          alt="Frame overlay"
+  1285→          className="absolute inset-0 w-full h-full object-fill pointer-events-none"
+  1286→          style={{ zIndex: 5 }}
+  1287→        />
+  1288→      )}
+  1289→
+  1290→      {/* Rule of thirds grid */}
+  1291→      <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 6 }}>
+  1292→        <div className="absolute top-0 bottom-0 left-[33.333%] w-px bg-white/[0.12]" />
+  1293→        <div className="absolute top-0 bottom-0 left-[66.666%] w-px bg-white/[0.12]" />
+  1294→        <div className="absolute left-0 right-0 top-[33.333%] h-px bg-white/[0.12]" />
+  1295→        <div className="absolute left-0 right-0 top-[66.666%] h-px bg-white/[0.12]" />
+  1296→      </div>
+  1297→
+  1298→      {/* Timer countdown overlay */}
+  1299→      {effectiveTimerCountdown > 0 && (
+  1300→        <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: 15 }}>
+  1301→          <div className="flex items-center justify-center" style={{
+  1302→            width: isMobile ? '80px' : '120px',
+  1303→            height: isMobile ? '80px' : '120px',
+  1304→            borderRadius: '50%',
+  1305→            backgroundColor: `${THEME.bg}cc`,
+  1306→            border: `4px solid ${THEME.gold}`,
+  1307→            boxShadow: `0 0 40px ${THEME.gold}66, 0 0 80px ${THEME.gold}33`,
+  1308→          }}>
+  1309→            <span className="font-bold" style={{
+  1310→              color: THEME.gold,
+  1311→              fontSize: isMobile ? '36px' : '56px',
+  1312→              textShadow: `0 0 20px ${THEME.gold}88`,
+  1313→            }}>
+  1314→              {effectiveTimerCountdown}
+  1315→            </span>
+  1316→          </div>
+  1317→        </div>
+  1318→      )}
+  1319→
+  1320→      {/* Palm trigger indicator */}
+  1321→      {palmTriggerEnabled && palm.isRunning && (
+  1322→        <div className="absolute top-2 right-2 flex items-center gap-1.5 pointer-events-none" style={{ zIndex: 10 }}>
+  1323→          <div className="flex items-center gap-1 rounded-full px-2 py-1" style={{
+  1324→            backgroundColor: palm.palmState === 'confirmed' ? '#22c55e88' : palm.palmState === 'held' ? '#d4af3788' : 'rgba(0,0,0,0.7)',
+  1325→            border: `1px solid ${palm.palmState === 'confirmed' ? '#22c55e' : palm.palmState === 'held' ? THEME.gold : THEME.border}`,
+  1326→          }}>
+  1327→            <Hand className={`size-3 ${palm.palmState === 'held' ? 'animate-pulse' : ''}`} style={{ color: palm.palmState === 'confirmed' ? '#4ade80' : THEME.gold }} />
+  1328→            <span className="text-[10px] font-bold" style={{ color: palm.palmState === 'confirmed' ? '#4ade80' : THEME.muted }}>
+  1329→              {palm.palmState === 'confirmed' ? 'OK' : palm.palmState === 'held' ? '...' : palm.fingersExtended > 0 ? `${palm.fingersExtended}/5` : 'Telapak'}
+  1330→            </span>
+  1331→          </div>
+  1332→        </div>
+  1333→      )}
+  1334→
+  1335→      {/* AI detection indicator */}
+  1336→      {effectiveShutterMode === 'ai' && ai.isRunning && (
+  1337→        <div className="absolute top-2 right-2 flex items-center gap-1.5 pointer-events-none" style={{ zIndex: 10 }}>
+  1338→          <div className="flex items-center gap-1 rounded-full px-2 py-1" style={{
+  1339→            backgroundColor: ai.momentState !== 'idle' ? '#d4af3788' : 'rgba(0,0,0,0.7)',
+  1340→            border: `1px solid ${ai.momentState !== 'idle' ? THEME.gold : THEME.border}`,
+  1341→          }}>
+  1342→            <Sparkles className={`size-3 ${ai.momentState !== 'idle' ? 'animate-pulse' : ''}`} style={{ color: ai.momentState !== 'idle' ? THEME.gold : THEME.muted }} />
+  1343→            <span className="text-[10px] font-bold" style={{ color: ai.momentState !== 'idle' ? THEME.gold : THEME.muted }}>
+  1344→              AI {ai.posesDetected > 0 ? `(${ai.posesDetected})` : ''}
+  1345→            </span>
+  1346→          </div>
+  1347→        </div>
+  1348→      )}
+  1349→
+  1350→      {/* Flash overlay */}
+  1351→      <div
+  1352→        ref={flashRef}
+  1353→        className="absolute inset-0 transition-opacity duration-150 pointer-events-none"
+  1354→        style={{
+  1355→          backgroundColor: '#ffffff',
+  1356→          opacity: flashVisible ? 0.85 : 0,
+  1357→          zIndex: 20,
+  1358→        }}
+  1359→      />
+  1360→
+  1361→      {/* NO CAMERA SIGNAL */}
+  1362→      {!cameraAvailable && (
+  1363→        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80" style={{ zIndex: 8 }}>
+  1364→          <VideoOff className={isMobile ? 'size-8' : 'size-12'} style={{ color: THEME.border }} />
+  1365→          <p className={`font-semibold tracking-wider ${isMobile ? 'text-xs' : 'text-sm'}`} style={{ color: THEME.muted }}>
+  1366→            NO CAMERA SIGNAL
+  1367→          </p>
+  1368→          <p className="text-[10px]" style={{ color: THEME.border }}>
+  1369→            Pastikan kamera terhubung dan izin diberikan
+  1370→          </p>
+  1371→        </div>
+  1372→      )}
+  1373→
+  1374→      {/* Aspect ratio & frame badges */}
+  1375→      <div className="absolute top-2 left-2 flex gap-1.5" style={{ zIndex: 10 }}>
+  1376→        <Badge className="text-[9px] px-1.5 py-0.5 border-0" style={{ backgroundColor: 'rgba(0,0,0,0.6)', color: THEME.muted }}>
+  1377→          {config?.ratio ?? '4:3'}
+  1378→        </Badge>
+  1379→        {frameData && (
+  1380→          <Badge className="text-[9px] px-1.5 py-0.5 border-0" style={{ backgroundColor: 'rgba(0,0,0,0.6)', color: THEME.gold }}>
+  1381→            <Frame className="size-2.5 mr-0.5" />Frame
+  1382→          </Badge>
+  1383→        )}
+  1384→      </div>
+  1385→
+  1386→      {/* Mobile: Switch camera button */}
+  1387→      {isMobile && videoDevices.length > 1 && (
+  1388→        <button
+  1389→          onClick={handleSwitchCamera}
+  1390→          className="absolute top-2 right-2 flex items-center justify-center w-9 h-9 rounded-full bg-black/60 backdrop-blur-sm cursor-pointer active:scale-95 transition-transform"
+  1391→          style={{ zIndex: 10 }}
+  1392→          title="Ganti kamera"
+  1393→        >
+  1394→          <SwitchCamera className="size-4" style={{ color: THEME.gold }} />
+  1395→        </button>
+  1396→      )}
+  1397→
+  1398→      <canvas ref={canvasRef} className="hidden" />
+  1399→    </div>
+  1400→  )
+  1401→
+  1402→  // ── Capture button (shared) ──────────────────────────────────────────────
+  1403→  const renderCaptureButton = (size: 'normal' | 'large' | 'xl' = 'normal') => {
+  1404→    const btnClass = size === 'xl'
+  1405→      ? 'w-full h-16 sm:h-20 text-lg sm:text-xl font-bold cursor-pointer rounded-xl transition-all duration-200 active:scale-[0.97] shadow-lg'
+  1406→      : size === 'large'
+  1407→        ? 'w-full h-14 text-base font-bold cursor-pointer rounded-lg transition-all duration-200 active:scale-[0.97]'
+  1408→        : 'w-full h-12 text-sm font-bold cursor-pointer rounded-lg transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]'
+  1409→    // Icon size scales with button size so the shutter is easy to hit
+  1410→    const iconCls = size === 'xl' ? 'size-6 sm:size-7' : 'size-4'
+  1411→
+  1412→    if (readOnly) {
+  1413→      return (
+  1414→        <Button disabled className={`${btnClass} cursor-not-allowed`} style={{ backgroundColor: THEME.panel, color: THEME.muted, border: `2px solid ${THEME.border}`, opacity: 0.6 }}>
+  1415→          <Monitor className={`${iconCls} mr-2`} />MODE MONITOR
+  1416→        </Button>
+  1417→      )
+  1418→    }
+  1419→
+  1420→    if (capturePhase === 'standby') {
+  1421→      return (
+  1422→        <Button disabled className={`${btnClass} cursor-not-allowed`} style={{ backgroundColor: THEME.panel, color: THEME.muted, border: `2px solid ${THEME.border}`, opacity: 0.6 }}>
+  1423→          <Aperture className={`${iconCls} mr-2`} />STANDBY
+  1424→        </Button>
+  1425→      )
+  1426→    }
+  1427→
+  1428→    // Timer is counting down — show cancel button
+  1429→    if (effectiveTimerCountdown > 0) {
+  1430→      return (
+  1431→        <Button onClick={handleCaptureButtonClick} className={btnClass} style={{
+  1432→          backgroundColor: '#ef4444',
+  1433→          color: '#ffffff',
+  1434→          border: '2px solid #ef4444',
+  1435→          boxShadow: '0 0 30px #ef444444, 0 0 60px #ef444422',
+  1436→        }}>
+  1437→          <X className={`${iconCls} mr-2`} />BATAL ({effectiveTimerCountdown}s)
+  1438→        </Button>
+  1439→      )
+  1440→    }
+  1441→
+  1442→    if (capturePhase === 'ready-1') {
+  1443→      const isAutoMode = effectiveShutterMode === 'ai'
+  1444→      const isTimer = isTimerMode(effectiveShutterMode)
+  1445→
+  1446→      if (isAutoMode) {
+  1447→        // AI auto-capture mode: show status button
+  1448→        const isDetecting = ai.isRunning
+  1449→        return (
+  1450→          <Button disabled className={`${btnClass} cursor-default`} style={{
+  1451→            backgroundColor: isDetecting ? '#22c55e33' : THEME.panel,
+  1452→            color: isDetecting ? '#4ade80' : THEME.muted,
+  1453→            border: `2px solid ${isDetecting ? '#22c55e' : THEME.border}`,
+  1454→          }}>
+  1455→            {isDetecting ? <Loader2 className={`${iconCls} mr-2 animate-spin`} /> : <Aperture className={`${iconCls} mr-2`} />}
+  1456→            {isDetecting ? 'AI Mendeteksi Pose...' : 'AI Loading...'}
+  1457→          </Button>
+  1458→        )
+  1459→      }
+  1460→
+  1461→      if (isTimer) {
+  1462→        return (
+  1463→          <Button onClick={handleCaptureButtonClick} className={btnClass} style={{
+  1464→            backgroundColor: THEME.gold,
+  1465→            color: THEME.bg,
+  1466→            border: `2px solid ${THEME.gold}`,
+  1467→            boxShadow: `0 0 30px ${THEME.gold}44, 0 0 60px ${THEME.gold}22`,
+  1468→          }}>
+  1469→            <Timer className={`${iconCls} mr-2`} />
+  1470→            {photoshoot ? `FOTO (${getTimerDuration(effectiveShutterMode)}s)` : `FOTO 1 — TOGA (${getTimerDuration(effectiveShutterMode)}s)`}
+  1471→          </Button>
+  1472→        )
+  1473→      }
+  1474→
+  1475→      // Manual mode
+  1476→      return (
+  1477→        <Button onClick={handleCaptureButtonClick} className={btnClass} style={photoshoot
+  1478→          ? { backgroundColor: '#4ade80', color: '#1a0b2e', border: '2px solid #4ade80', boxShadow: '0 0 30px #4ade8044, 0 0 60px #4ade8022' }
+  1479→          : { backgroundColor: THEME.gold, color: THEME.bg, border: `2px solid ${THEME.gold}`, boxShadow: `0 0 30px ${THEME.gold}44, 0 0 60px ${THEME.gold}22` }
+  1480→        }>
+  1481→          <Camera className={`${iconCls} mr-2`} />{photoshoot ? 'FOTO' : 'FOTO 1 — TOGA'}
+  1482→        </Button>
+  1483→      )
+  1484→    }
+  1485→
+  1486→    if (capturePhase === 'ready-2') {
+  1487→      const isAutoMode = effectiveShutterMode === 'ai'
+  1488→      const isTimer = isTimerMode(effectiveShutterMode)
+  1489→
+  1490→      if (isAutoMode) {
+  1491→        const isDetecting = ai.isRunning
+  1492→        return (
+  1493→          <Button disabled className={`${btnClass} cursor-default`} style={{
+  1494→            backgroundColor: isDetecting ? '#22c55e33' : THEME.panel,
+  1495→            color: isDetecting ? '#4ade80' : THEME.muted,
+  1496→            border: `2px solid ${isDetecting ? '#22c55e' : THEME.border}`,
+  1497→          }}>
+  1498→            {isDetecting ? <Loader2 className={`${iconCls} mr-2 animate-spin`} /> : <Aperture className={`${iconCls} mr-2`} />}
+  1499→            AI Mendeteksi Ijazah...
+  1500→          </Button>
+  1501→        )
+  1502→      }
+  1503→
+  1504→      if (isTimer) {
+  1505→        return (
+  1506→          <Button onClick={handleCaptureButtonClick} className={btnClass} style={{
+  1507→            backgroundColor: THEME.gold,
+  1508→            color: THEME.bg,
+  1509→            border: `2px solid ${THEME.gold}`,
+  1510→            boxShadow: `0 0 30px ${THEME.gold}44, 0 0 60px ${THEME.gold}22`,
+  1511→          }}>
+  1512→            <Timer className={`${iconCls} mr-2`} />
+  1513→            FOTO 2 — IJAZAH ({getTimerDuration(effectiveShutterMode)}s)
+  1514→          </Button>
+  1515→        )
+  1516→      }
+  1517→
+  1518→      return (
+  1519→        <Button onClick={handleCaptureButtonClick} className={btnClass} style={{ backgroundColor: '#22c55e', color: '#ffffff', border: '2px solid #22c55e', boxShadow: '0 0 30px #22c55e44, 0 0 60px #22c55e22' }}>
+  1520→          <Camera className={`${iconCls} mr-2`} />FOTO 2 — IJAZAH
+  1521→        </Button>
+  1522→      )
+  1523→    }
+  1524→
+  1525→    if (capturePhase === 'sending') {
+  1526→      return (
+  1527→        <Button disabled className={`${btnClass} cursor-not-allowed`} style={{ backgroundColor: THEME.panel, color: THEME.muted, border: `2px solid ${THEME.border}` }}>
+  1528→          <Loader2 className={`${iconCls} mr-2 animate-spin`} />MENGIRIM...
+  1529→        </Button>
+  1530→      )
+  1531→    }
+  1532→
+  1533→    return null
+  1534→  }
+  1535→
+  1536→  // ── Queue list (shared) ──────────────────────────────────────────────────
+  1537→  const renderQueueList = (compact = false) => (
+  1538→    <Card
+  1539→      className={`${compact ? 'flex-1 min-h-0' : 'flex-1 min-h-0'} border rounded-lg overflow-hidden flex flex-col`}
+  1540→      style={{ backgroundColor: THEME.card, borderColor: THEME.border }}
+  1541→    >
+  1542→      <div
+  1543→        className="shrink-0 flex items-center justify-between px-3 py-2"
+  1544→        style={{ borderBottom: `1px solid ${THEME.border}` }}
+  1545→      >
+  1546→        <h3 className="text-xs font-semibold" style={{ color: '#ffffff' }}>
+  1547→          Antrean: <span style={{ color: THEME.gold }} className="font-bold">{remainingCount}</span>
+  1548→        </h3>
+  1549→        <span className="text-[10px]" style={{ color: THEME.muted }}>Ch.{myChannel}</span>
+  1550→      </div>
+  1551→
+  1552→      {!compact && (
+  1553→        <div
+  1554→          className="shrink-0 grid grid-cols-[24px_60px_1fr_60px] gap-0.5 px-2 py-1 text-[8px] font-semibold uppercase tracking-wider"
+  1555→          style={{ backgroundColor: THEME.panel, color: THEME.muted, borderBottom: `1px solid ${THEME.border}` }}
+  1556→        >
+  1557→          <span>No</span><span>NIM</span><span>Nama</span><span className="text-right">Status</span>
+  1558→        </div>
+  1559→      )}
+  1560→
+  1561→      <ScrollArea className="flex-1 min-h-0">
+  1562→        <div className="flex flex-col">
+  1563→          {channelStudents.length === 0 ? (
+  1564→            <div className="flex items-center justify-center py-8">
+  1565→              <p className="text-xs" style={{ color: THEME.muted }}>Tidak ada mahasiswa</p>
+  1566→            </div>
+  1567→          ) : (
+  1568→            channelStudents.map((student, idx) => {
+  1569→              const isActive = student.status === `active_${myChannel}`
+  1570→              const isNext = student.id === nextPending?.id && student.status === 'pending'
+  1571→
+  1572→              if (compact) {
+  1573→                return (
+  1574→                  <div
+  1575→                    key={student.id}
+  1576→                    ref={isActive ? activeRowRef : isNext ? nextRowRef : undefined}
+  1577→                    className="flex items-center gap-2 px-3 py-1.5 transition-colors duration-200"
+  1578→                    style={getRowStyle(student)}
+  1579→                  >
+  1580→                    <span className="text-[10px] font-mono w-5 shrink-0" style={{ color: THEME.muted }}>{idx + 1}</span>
+  1581→                    <span className={`text-xs font-medium truncate flex-1 ${student.status === 'done' ? 'line-through' : ''}`} style={{ color: isActive ? THEME.gold : student.status === 'done' ? THEME.muted : '#ffffff' }}>
+  1582→                      {student.nama}
+  1583→                    </span>
+  1584→                    <div className="shrink-0">{renderStatusBadge(student.status)}</div>
+  1585→                  </div>
+  1586→                )
+  1587→              }
+  1588→
+  1589→              return (
+  1590→                <div
+  1591→                  key={student.id}
+  1592→                  ref={isActive ? activeRowRef : isNext ? nextRowRef : undefined}
+  1593→                  className="grid grid-cols-[24px_60px_1fr_60px] gap-0.5 items-center px-2 py-1 transition-colors duration-200"
+  1594→                  style={getRowStyle(student)}
+  1595→                >
+  1596→                  <span className="text-[9px] font-mono" style={{ color: THEME.muted }}>{idx + 1}</span>
+  1597→                  <span className="text-[9px] font-mono truncate" style={{ color: THEME.muted }}>{student.nim}</span>
+  1598→                  <span className={`text-[10px] font-medium truncate ${student.status === 'done' ? 'line-through' : ''}`} style={{ color: isActive ? THEME.gold : student.status === 'done' ? THEME.muted : '#ffffff' }}>
+  1599→                    {student.nama}
+  1600→                  </span>
+  1601→                  <div className="flex justify-end">{renderStatusBadge(student.status)}</div>
+  1602→                </div>
+  1603→              )
+  1604→            })
+  1605→          )}
+  1606→        </div>
+  1607→      </ScrollArea>
+  1608→    </Card>
+  1609→  )
+  1610→
+  1611→  // ── Main render ──────────────────────────────────────────────────────────
+  1612→  if (!currentProject) {
+  1613→    return (
+  1614→      <div className="flex items-center justify-center h-full" style={{ backgroundColor: THEME.bg, color: THEME.muted }}>
+  1615→        <p className="text-sm opacity-60">Belum ada proyek aktif</p>
+  1616→      </div>
+  1617→    )
+  1618→  }
+  1619→
+  1620→  // ── MOBILE LAYOUT ────────────────────────────────────────────────────────
+  1621→  if (isMobile) {
+  1622→    return (
+  1623→      <div className="flex flex-col h-full touch-no-select" style={{ backgroundColor: THEME.bg }}>
+  1624→
+  1625→        {/* ── Camera Zone ────────────────────────────────────────────────── */}
+  1626→        <div
+  1627→          ref={cameraZoneRef}
+  1628→          className="flex-1 flex items-center justify-center min-h-0 p-1"
+  1629→        >
+  1630→          {renderCameraView()}
+  1631→        </div>
+  1632→
+  1633→        {/* ── Capture Button (centered, directly below camera view) ─────── */}
+  1634→        <div
+  1635→          className="shrink-0 w-full px-3 py-2 border-t"
+  1636→          style={{
+  1637→            backgroundColor: `${THEME.panel}ee`,
+  1638→            borderColor: THEME.border,
+  1639→            backdropFilter: 'blur(12px)',
+  1640→          }}
+  1641→        >
+  1642→          <div className="mx-auto w-full max-w-md">
+  1643→            {renderCaptureButton('xl')}
+  1644→          </div>
+  1645→        </div>
+  1646→
+  1647→        {/* ── Bottom Control Bar ──────────────────────────────────────────── */}
+  1648→        <div
+  1649→          className="shrink-0 border-t safe-bottom"
+  1650→          style={{
+  1651→            backgroundColor: `${THEME.panel}ee`,
+  1652→            borderColor: THEME.border,
+  1653→            backdropFilter: 'blur(12px)',
+  1654→          }}
+  1655→        >
+  1656→          {/* Target info row */}
+  1657→          <div className="flex items-center gap-2 px-3 py-2">
+  1658→            <div
+  1659→              className="shrink-0 flex items-center justify-center w-8 h-8 rounded-full border-2"
+  1660→              style={{
+  1661→                backgroundColor: THEME.bg,
+  1662→                borderColor: hasActiveTarget ? THEME.gold : THEME.border,
+  1663→              }}
+  1664→            >
+  1665→              <User className="size-3.5" style={{ color: hasActiveTarget ? THEME.gold : THEME.border }} />
+  1666→            </div>
+  1667→
+  1668→            <div className="flex-1 min-w-0">
+  1669→              {hasActiveTarget ? (
+  1670→                <div className="flex items-center gap-2">
+  1671→                  <div className="min-w-0">
+  1672→                    <p className="text-sm font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
+  1673→                      {opCurrentTarget.nama}
+  1674→                    </p>
+  1675→                    <p className="text-[10px] font-mono" style={{ color: THEME.muted }}>
+  1676→                      {opCurrentTarget.nim}
+  1677→                    </p>
+  1678→                  </div>
+  1679→                  <Badge
+  1680→                    className={`text-[9px] px-1.5 py-0.5 shrink-0 ${hasActiveTarget && !sending ? 'animate-pulse' : ''}`}
+  1681→                    style={{
+  1682→                      backgroundColor:
+  1683→                        capturePhase === 'ready-1' ? `${THEME.gold}33`
+  1684→                          : capturePhase === 'ready-2' ? '#22c55e33'
+  1685→                            : capturePhase === 'sending' ? `${THEME.border}66`
+  1686→                              : `${THEME.border}44`,
+  1687→                      color:
+  1688→                        capturePhase === 'ready-1' ? THEME.gold
+  1689→                          : capturePhase === 'ready-2' ? '#4ade80'
+  1690→                            : THEME.muted,
+  1691→                      border: `1px solid ${capturePhase === 'ready-1' ? `${THEME.gold}66` : capturePhase === 'ready-2' ? '#22c55e66' : THEME.border}`,
+  1692→                    }}
+  1693→                  >
+  1694→                    {capturePhase === 'sending' && <Loader2 className="size-2.5 mr-0.5 animate-spin" />}
+  1695→                    {capturePhase === 'ready-1' && <Camera className="size-2.5 mr-0.5" />}
+  1696→                    {capturePhase === 'ready-2' && <CheckCircle2 className="size-2.5 mr-0.5" />}
+  1697→                    {capturePhase === 'standby' && <Clock className="size-2.5 mr-0.5" />}
+  1698→                    {progressText}
+  1699→                  </Badge>
+  1700→                </div>
+  1701→              ) : (
+  1702→                <p className="text-xs italic" style={{ color: THEME.muted }}>
+  1703→                  Menunggu panggilan MC...
+  1704→                </p>
+  1705→              )}
+  1706→            </div>
+  1707→
+  1708→            <button
+  1709→              onClick={() => setShowQueueOnMobile(!showQueueOnMobile)}
+  1710→              className="shrink-0 flex items-center justify-center w-9 h-9 rounded-lg border cursor-pointer active:scale-95 transition-transform"
+  1711→              style={{
+  1712→                backgroundColor: showQueueOnMobile ? THEME.gold : THEME.card,
+  1713→                borderColor: showQueueOnMobile ? THEME.gold : THEME.border,
+  1714→              }}
+  1715→              title="Lihat antrean"
+  1716→            >
+  1717→              {showQueueOnMobile ? (
+  1718→                <X className="size-4" style={{ color: showQueueOnMobile ? THEME.bg : THEME.muted }} />
+  1719→              ) : (
+  1720→                <List className="size-4" style={{ color: THEME.muted }} />
+  1721→              )}
+  1722→            </button>
+  1723→          </div>
+  1724→
+  1725→          {/* Operator search (photoshoot only) */}
+  1726→          {showQueueOnMobile && renderOpSearch(true)}
+  1727→
+  1728→          {/* Queue list (expandable) */}
+  1729→          {showQueueOnMobile && (
+  1730→            <div
+  1731→              className="border-t"
+  1732→              style={{ borderColor: THEME.border, maxHeight: '35vh' }}
+  1733→            >
+  1734→              {renderQueueList(true)}
+  1735→            </div>
+  1736→          )}
+  1737→
+  1738→          {/* Camera selector (compact) + Shutter mode selector */}
+  1739→          <div className="px-3 py-1 flex items-center gap-2">
+  1740→            {videoDevices.length > 1 && (
+  1741→              <Select value={selectedDeviceId} onValueChange={setSelectedDeviceId}>
+  1742→                <SelectTrigger
+  1743→                  className="text-[10px] h-7 w-32"
+  1744→                  style={{ backgroundColor: THEME.bg, borderColor: THEME.border, color: THEME.muted }}
+  1745→                >
+  1746→                  <Video className="size-3 mr-1 shrink-0" style={{ color: THEME.gold }} />
+  1747→                  <SelectValue placeholder="Pilih Kamera" />
+  1748→                </SelectTrigger>
+  1749→                <SelectContent style={{ backgroundColor: THEME.panel, borderColor: THEME.border }}>
+  1750→                  {videoDevices.map((dev) => (
+  1751→                    <SelectItem key={dev.deviceId} value={dev.deviceId} style={{ color: '#ffffff' }}>
+  1752→                      {dev.label}
+  1753→                    </SelectItem>
+  1754→                  ))}
+  1755→                </SelectContent>
+  1756→              </Select>
+  1757→            )}
+  1758→            <div className="flex-1 min-w-0">
+  1759→              {renderShutterModeSelector(true)}
+  1760→            </div>
+  1761→          </div>
+  1762→        </div>
+  1763→      </div>
+  1764→    )
+  1765→  }
+  1766→
+  1767→  // ── DESKTOP LAYOUT ──────────────────────────────────────────────────────
+  1768→  return (
+  1769→    <div className="flex h-full overflow-hidden" style={{ backgroundColor: THEME.bg }}>
+  1770→
+  1771→      {/* MAIN: Camera view + Capture button directly below it (centered) */}
+  1772→      <div className="flex flex-1 flex-col h-full min-w-0">
+  1773→
+  1774→        {/* CAMERA ZONE */}
+  1775→        <div
+  1776→          ref={cameraZoneRef}
+  1777→          className="flex-1 flex items-center justify-center min-h-0 p-2"
+  1778→        >
+  1779→          {renderCameraView()}
+  1780→        </div>
+  1781→
+  1782→        {/* Capture Button (centered, directly below camera view) */}
+  1783→        <div
+  1784→          className="shrink-0 w-full px-4 py-3 border-t"
+  1785→          style={{
+  1786→            backgroundColor: `${THEME.panel}ee`,
+  1787→            borderColor: THEME.border,
+  1788→            backdropFilter: 'blur(12px)',
+  1789→          }}
+  1790→        >
+  1791→          <div className="mx-auto w-full max-w-xl">
+  1792→            {renderCaptureButton('xl')}
+  1793→          </div>
+  1794→        </div>
+  1795→      </div>
+  1796→
+  1797→      {/* SIDEBAR */}
+  1798→      <div className="flex flex-col gap-2 p-2 w-[300px] shrink-0 min-h-0">
+  1799→
+  1800→        {/* Target Info Panel */}
+  1801→        <Card
+  1802→          className="shrink-0 border-2 rounded-lg transition-all duration-300"
+  1803→          style={{
+  1804→            backgroundColor: THEME.card,
+  1805→            borderColor: hasActiveTarget ? THEME.gold : THEME.border,
+  1806→            opacity: hasActiveTarget ? 1 : 0.5,
+  1807→            boxShadow: hasActiveTarget ? `0 0 20px ${THEME.gold}22` : 'none',
+  1808→          }}
+  1809→        >
+  1810→          <CardContent className="p-2.5">
+  1811→            <div className="flex items-center gap-2.5">
+  1812→              <div
+  1813→                className="shrink-0 flex items-center justify-center w-9 h-9 rounded-full border-2"
+  1814→                style={{ backgroundColor: THEME.panel, borderColor: hasActiveTarget ? THEME.gold : THEME.border }}
+  1815→              >
+  1816→                <User className="size-4" style={{ color: hasActiveTarget ? THEME.gold : THEME.border }} />
+  1817→              </div>
+  1818→
+  1819→              <div className="flex-1 min-w-0">
+  1820→                {hasActiveTarget ? (
+  1821→                  <>
+  1822→                    <p className="text-sm font-bold leading-tight truncate" style={{ color: '#ffffff' }}>{opCurrentTarget.nama}</p>
+  1823→                    <p className="text-[11px] font-mono" style={{ color: THEME.muted }}>{opCurrentTarget.nim}</p>
+  1824→                  </>
+  1825→                ) : (
+  1826→                  <p className="text-xs italic" style={{ color: THEME.muted }}>Menunggu panggilan MC...</p>
+  1827→                )}
+  1828→              </div>
+  1829→
+  1830→              <Badge
+  1831→                className={`text-[10px] px-2 py-0.5 shrink-0 ${hasActiveTarget && !sending ? 'animate-pulse' : ''}`}
+  1832→                style={{
+  1833→                  backgroundColor: capturePhase === 'ready-1' ? `${THEME.gold}33` : capturePhase === 'ready-2' ? '#22c55e33' : capturePhase === 'sending' ? `${THEME.border}66` : `${THEME.border}44`,
+  1834→                  color: capturePhase === 'ready-1' ? THEME.gold : capturePhase === 'ready-2' ? '#4ade80' : THEME.muted,
+  1835→                  border: `1px solid ${capturePhase === 'ready-1' ? `${THEME.gold}66` : capturePhase === 'ready-2' ? '#22c55e66' : THEME.border}`,
+  1836→                }}
+  1837→              >
+  1838→                {capturePhase === 'sending' && <Loader2 className="size-3 mr-0.5 animate-spin" />}
+  1839→                {capturePhase === 'ready-1' && <Camera className="size-3 mr-0.5" />}
+  1840→                {capturePhase === 'ready-2' && <CheckCircle2 className="size-3 mr-0.5" />}
+  1841→                {capturePhase === 'standby' && <Clock className="size-3 mr-0.5" />}
+  1842→                {progressText}
+  1843→              </Badge>
+  1844→            </div>
+  1845→
+  1846→            <div className="mt-2 flex items-center gap-2">
+  1847→              <Select value={selectedDeviceId} onValueChange={setSelectedDeviceId}>
+  1848→                <SelectTrigger className="flex-1 text-[11px] h-7" style={{ backgroundColor: THEME.panel, borderColor: THEME.border, color: THEME.muted }}>
+  1849→                  <Video className="size-3 mr-1 shrink-0" style={{ color: THEME.gold }} />
+  1850→                  <SelectValue placeholder="Pilih Kamera" />
+  1851→                </SelectTrigger>
+  1852→                <SelectContent style={{ backgroundColor: THEME.panel, borderColor: THEME.border }}>
+  1853→                  {videoDevices.length === 0 ? (
+  1854→                    <SelectItem value="__none" disabled>Tidak ada kamera</SelectItem>
+  1855→                  ) : (
+  1856→                    videoDevices.map((dev) => (
+  1857→                      <SelectItem key={dev.deviceId} value={dev.deviceId} style={{ color: '#ffffff' }}>{dev.label}</SelectItem>
+  1858→                    ))
+  1859→                  )}
+  1860→                </SelectContent>
+  1861→              </Select>
+  1862→            </div>
+  1863→          </CardContent>
+  1864→        </Card>
+  1865→
+  1866→        {/* Shutter Mode Selector */}
+  1867→        {!readOnly && (
+  1868→          <Card className="shrink-0 border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: THEME.border }}>
+  1869→            <CardContent className="p-2.5">
+  1870→              {renderShutterModeSelector(false)}
+  1871→            </CardContent>
+  1872→          </Card>
+  1873→        )}
+  1874→
+  1875→        {/* Operator search (photoshoot only) */}
+  1876→        {renderOpSearch(false)}
+  1877→
+  1878→        {/* Queue List */}
+  1879→        {renderQueueList(false)}
+  1880→      </div>
+  1881→    </div>
+  1882→  )
+  1883→}
+  1884→
+  1885→export default OperatorPanel
+  1886→

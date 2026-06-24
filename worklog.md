@@ -338,3 +338,27 @@ Stage Summary:
 - Admin Live Command Center camera panels replaced with a comprehensive Daftar Peserta panel showing Total/Selesai/Belum stats, progress bar, scrollable participant list, and one-click Excel export
 - Lint passes with zero errors
 - Dev server compiles cleanly (HTTP 200)
+
+---
+Task ID: AUDIT-1
+Agent: main (Z.ai Code)
+Task: Audit apakah aplikasi SAATIRIL aman digunakan untuk 4000-5000 foto dalam satu sesi event
+
+Work Log:
+- Membaca src/store/use-saatiril-store.ts — menemukan MAX_PHOTO_HISTORY_IN_MEMORY = 200 (memori dibatasi)
+- Membaca electron/main.ts — konfirmasi IPC handler 'save-photo' menulis file langsung ke disk via fs.writeFileSync
+- Membaca electron/preload.ts — konfirmasi window.saatirilAPI.savePhoto diekspos ke renderer
+- Membaca operator-panel.tsx — konfirmasi setiap capture memanggil api.savePhoto() secara async
+- Membaca admin-dashboard.tsx — konfirmasi PHOTOS_SAVED handler menyimpan ke photoHistory (yang di-trim ke 200)
+- Memeriksa saveProjectsToStorage — konfirmasi photo arrays di-strip ke [] sebelum save ke localStorage
+- Memeriksa dev.log — tidak ada error memory/storage
+
+Stage Summary:
+- VERDICT: AMAN untuk 4000-5000 foto, dengan catatan.
+- Foto disimpan ke DISK (file system) via Electron IPC, bukan localStorage. 5000 foto × ~200KB = ~1GB di disk, tidak masalah.
+- localStorage hanya simpan metadata (photo arrays di-strip), jadi tidak akan hit limit 5-10MB.
+- Memori Zustand dibatasi 200 foto terbaru (trimPhotoHistory), jadi RAM tidak grow unbounded.
+- Socket.IO SYNC_DB di-strip (stripFrameForSync), hanya metadata yang di-broadcast.
+- CAVEAT: Harus pakai Electron app (bukan browser biasa), karena window.saatirilAPI hanya ada di Electron.
+- CAVEAT: Admin gallery hanya tampil 200 foto terbaru (by design), foto lama tetap di disk.
+- CAVEAT: PHOTOS_SAVED mengirim base64 ~200KB per foto ke admin via LAN — total ~1GB traffic selama event, fine untuk LAN.
