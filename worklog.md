@@ -246,3 +246,42 @@ Stage Summary:
 - Total local AI assets: ~20MB (MediaPipe ~10M + TF.js ~6.2M + MoveNet model ~4.6M)
 - All features work offline: camera capture, finger detection, AI pose detection, socket.io LAN, database
 - No code behavior changes — only URL paths changed from CDN to local
+
+---
+Task ID: 2
+Agent: full-stack-developer
+Task: Rebuild palm detection as a TRIGGER (not a shutter mode) — palm triggers the selected mode's action
+
+Work Log:
+- Read worklog.md, use-palm-detection.ts hook (confirmed correct API), and operator-panel.tsx (1876 lines)
+- Verified use-palm-detection.ts exports: status, palmState, fingersExtended, isRunning, error, initialize, startDetection, stopDetection, dispose — no changes needed
+- Edit A (line 73): Changed ShutterMode type to remove 'palm' — now `'manual' | 'timer-3' | 'timer-5' | 'timer-10' | 'ai'`
+- Edit B (line 80): Removed the `{ id: 'palm', label: 'Telapak', ... }` entry from SHUTTER_MODES array
+- Edit C (lines 97-98): Removed `PALM_COUNTDOWN_SECONDS` constant entirely (no longer needed — palm no longer runs its own countdown)
+- Edit D (line 231): Added `palmTriggerEnabled` state + `setPalmTriggerEnabled` setter with explanatory comment
+- Edit E (line 847): Added `handleCaptureClickRef = useRef<() => void>(() => {})` after handleCaptureRef
+- Edit F (lines 932-995): Replaced entire palm detection block — removed startPalmCountdown useCallback, startPalmCountdownRef, and the old palm-shutter-mode useEffect. New block introduces `palmTriggerActive = palmTriggerEnabled && effectiveShutterMode !== 'ai'` and two useEffects: one for initialize, one for start/stop detection with onPalmConfirmed → handleCaptureClickRef.current() and onPalmReleased as no-op. Kept the cleanup-on-unmount useEffect.
+- Edit G (after line 1011): Added (1) useEffect to sync handleCaptureClickRef with handleCaptureButtonClick, (2) cancelTimerRef declaration + sync useEffect (fixes the undefined cancelTimerRef bug), (3) isFullscreen state, (4) keyboard shortcuts useEffect: Space/Enter → capture, Esc → cancel timer, F → toggle fullscreen. Includes isTypingTarget guard and fullscreenchange listener.
+- Edit H (lines 1017, 1031): Removed `finger.isRunning`/`finger.fingerCount` from progressText — removed the `effectiveShutterMode === 'finger'` line, added palm trigger state text (confirmed/held/searching), updated useMemo deps to include palmTriggerEnabled, palm.isRunning, palm.palmState
+- Edit I (lines 1053-1105): In renderShutterModeSelector — (1) removed finger loading check from isLoading, (2) removed finger badge block, (3) added "Trigger Telapak" toggle button after the mode buttons flex container, shown when !readOnly && effectiveShutterMode !== 'ai'. Toggle uses green theme when active, calls setPalmTriggerEnabled + palm.stopDetection on disable.
+- Edit J (lines 1240-1253): Replaced finger detection indicator with palm trigger indicator — shows palm.palmState (confirmed=green OK, held=gold ..., searching=finger count), with animate-pulse on held state
+- Edit K (lines 1362-1380): In renderCaptureButton ready-1 — changed isAutoMode to only check 'ai' (removed 'finger'), simplified isDetecting to only ai.isRunning, removed finger status text
+- Edit L (lines 1407-1423): In renderCaptureButton ready-2 — same changes as Edit K, simplified to AI-only auto mode
+
+Verification Results:
+- `bun run lint`: EXIT CODE 0 — zero errors, zero warnings (clean pass)
+- `grep -n "finger." src/components/saatiril/operator-panel.tsx`: ZERO matches (old `finger` variable fully removed)
+- `grep -n "'finger'" src/components/saatiril/operator-panel.tsx`: ZERO matches (old 'finger' shutter mode ID removed)
+- `grep -n "finger" src/components/saatiril/operator-panel.tsx`: 3 matches, ALL are `palm.fingersExtended` (legitimate API field from usePalmDetection hook — same field explicitly listed in task's "Palm fields" reference and used in task's own Edit I/J code). No old-variable references remain.
+- `grep -n "cancelTimerRef"`: declared at line 996, synced at line 997, used at line 1024 ✅
+- Dev server: next-server v16.1.3 running (PID 1039). Note: /home/z/my-project/dev.log does not exist in this environment, but ESLint clean pass + tsc structure check confirm the file is valid.
+
+Stage Summary:
+- Palm detection is now a TRIGGER, not a shutter mode — independent toggle works with any selected mode
+- When palm trigger is ON + open palm confirmed: fires handleCaptureButtonClick() which respects selected mode (manual→instant, timer→countdown). AI mode disables the toggle (AI auto-triggers).
+- Palm release does NOT cancel — onPalmReleased is a no-op, letting the selected mode run to completion (phone-selfie behavior)
+- All leftover `finger` variable references removed (zero `finger.` accesses, zero `'finger'` literals)
+- `cancelTimerRef` properly declared and used in keyboard handler
+- Keyboard shortcuts restored: Space/Enter=photo, Esc=cancel timer, F=fullscreen
+- ShutterMode type no longer includes 'palm'; SHUTTER_MODES array no longer has palm entry
+- ESLint passes with zero errors

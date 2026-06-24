@@ -39,7 +39,6 @@ import {
   Zap,
   Timer,
   Hand,
-  Maximize,
 } from 'lucide-react'
 import {
   useSaatirilStore,
@@ -71,14 +70,13 @@ const THEME = {
 } as const
 
 // ─── Shutter mode types ────────────────────────────────────────────────────
-type ShutterMode = 'manual' | 'timer-3' | 'timer-5' | 'timer-10' | 'palm' | 'ai'
+type ShutterMode = 'manual' | 'timer-3' | 'timer-5' | 'timer-10' | 'ai'
 
 const SHUTTER_MODES: { id: ShutterMode; label: string; shortLabel: string; icon: React.ReactNode; modesAllowed?: CameraMode[] }[] = [
   { id: 'manual', label: 'Manual', shortLabel: 'Manual', icon: <Camera className="size-3" /> },
   { id: 'timer-3', label: 'Timer 3 detik', shortLabel: '3s', icon: <Timer className="size-3" /> },
   { id: 'timer-5', label: 'Timer 5 detik', shortLabel: '5s', icon: <Timer className="size-3" /> },
   { id: 'timer-10', label: 'Timer 10 detik', shortLabel: '10s', icon: <Timer className="size-3" /> },
-  { id: 'palm', label: 'Telapak', shortLabel: 'Telapak', icon: <Hand className="size-3" /> },
   { id: 'ai', label: 'AI Pintar', shortLabel: 'AI', icon: <Brain className="size-3" />, modesAllowed: ['single', 'dual'] },
 ]
 
@@ -94,9 +92,6 @@ function getTimerDuration(mode: ShutterMode): number {
 function isTimerMode(mode: ShutterMode): boolean {
   return mode === 'timer-3' || mode === 'timer-5' || mode === 'timer-10'
 }
-
-// Palm selfie mode: countdown duration (seconds) once an open palm is confirmed
-const PALM_COUNTDOWN_SECONDS = 3
 
 // ─── Filter preset map ──────────────────────────────────────────────────────
 const PRESET_FILTERS: Record<string, string> = {
@@ -230,6 +225,10 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
   // ── Shutter mode state ───────────────────────────────────────────────────
   const [shutterMode, setShutterMode] = useState<ShutterMode>('manual')
+  // Palm trigger: when ON, showing an open palm to the camera triggers the
+  // selected shutter mode (manual → instant photo, timer → starts countdown).
+  // This is a hands-free trigger, NOT a shutter mode itself.
+  const [palmTriggerEnabled, setPalmTriggerEnabled] = useState(false)
   const [timerCountdown, setTimerCountdown] = useState<number>(0)
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const timerActiveRef = useRef(false)
@@ -845,6 +844,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   // ── Shutter: Timer logic ─────────────────────────────────────────────────
   const handleCaptureRef = useRef(handleCapture)
   useEffect(() => { handleCaptureRef.current = handleCapture }, [handleCapture])
+  const handleCaptureClickRef = useRef<() => void>(() => {})
 
   const cancelTimer = useCallback(() => {
     if (timerIntervalRef.current) {
@@ -930,61 +930,36 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
   }, [effectiveShutterMode, ai.modelLoaded, cameraAvailable, hasActiveTarget, capturePhase])
 
-  // ── Shutter: Palm detection (selfie-style) ───────────────────────────────
-  // Initialize palm detection when palm shutter mode is active
+  // ── Palm trigger (hands-free shutter) ────────────────────────────────────
+  // Palm detection is a TRIGGER, not a shutter mode. When the toggle is ON,
+  // showing an open palm fires handleCaptureButtonClick() — which respects
+  // the selected mode (manual → instant photo, timer → starts countdown).
+  // Disabled in AI mode (AI already auto-triggers).
+  const palmTriggerActive = palmTriggerEnabled && effectiveShutterMode !== 'ai'
+
   useEffect(() => {
-    if (effectiveShutterMode === 'palm' && cameraAvailable && hasActiveTarget && palm.status === 'unloaded') {
+    if (palmTriggerActive && cameraAvailable && hasActiveTarget && palm.status === 'unloaded') {
       palm.initialize().then((ok) => {
-        if (ok) console.log('[SAATIRIL OP] Palm detection initialized')
+        if (ok) console.log('[SAATIRIL OP] Palm trigger initialized')
       })
     }
-  }, [effectiveShutterMode, cameraAvailable, hasActiveTarget])
+  }, [palmTriggerActive, cameraAvailable, hasActiveTarget])
 
-  // Palm countdown: a 3s countdown that reuses the shared timerCountdown state
-  // + overlay. Started when an open palm is confirmed, cancelled if the palm
-  // is removed before the countdown reaches zero.
-  const startPalmCountdown = useCallback(() => {
-    if (capturePhase !== 'ready-1' && capturePhase !== 'ready-2') return
-    if (timerActiveRef.current) return // already counting down (e.g. a timer mode)
-    let remaining = PALM_COUNTDOWN_SECONDS
-    timerActiveRef.current = true
-    setTimerCountdown(remaining)
-    timerIntervalRef.current = setInterval(() => {
-      remaining -= 1
-      if (remaining <= 0) {
-        if (timerIntervalRef.current) {
-          clearInterval(timerIntervalRef.current)
-          timerIntervalRef.current = null
-        }
-        timerActiveRef.current = false
-        setTimerCountdown(0)
-        handleCaptureRef.current()
-      } else {
-        setTimerCountdown(remaining)
-      }
-    }, 1000)
-  }, [capturePhase])
-
-  const startPalmCountdownRef = useRef(startPalmCountdown)
-  useEffect(() => { startPalmCountdownRef.current = startPalmCountdown }, [startPalmCountdown])
-
-  // Start/stop palm detection with confirm/release callbacks
   useEffect(() => {
-    if (effectiveShutterMode === 'palm' && (palm.status === 'model_ready' || palm.status === 'stopped') && cameraAvailable && videoRef.current && hasActiveTarget) {
+    if (palmTriggerActive && (palm.status === 'model_ready' || palm.status === 'stopped') && cameraAvailable && videoRef.current && hasActiveTarget) {
       palm.startDetection(videoRef.current, {
         onPalmConfirmed: () => {
-          console.log('[SAATIRIL OP] Palm confirmed — starting 3s countdown')
-          startPalmCountdownRef.current()
+          console.log('[SAATIRIL OP] Palm confirmed — triggering shutter')
+          handleCaptureClickRef.current()
         },
         onPalmReleased: () => {
-          console.log('[SAATIRIL OP] Palm released — cancelling countdown')
-          cancelTimerRef.current()
+          // No-op: let the selected mode run to completion.
         },
       })
-    } else if (effectiveShutterMode !== 'palm' && palm.isRunning) {
+    } else if (!palmTriggerActive && palm.isRunning) {
       palm.stopDetection()
     }
-  }, [effectiveShutterMode, palm.status, cameraAvailable, hasActiveTarget])
+  }, [palmTriggerActive, palm.status, cameraAvailable, hasActiveTarget])
 
   // ── Cleanup on unmount ───────────────────────────────────────────────────
   useEffect(() => {
@@ -1011,13 +986,13 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
   }, [effectiveShutterMode, startTimer, cancelTimer, handleCapture])
 
+  // Keep handleCaptureClickRef in sync with the latest handler
+  useEffect(() => { handleCaptureClickRef.current = handleCaptureButtonClick }, [handleCaptureButtonClick])
+
   // ── Keyboard shortcuts (physical shutter for camera operator) ──────────────
   // Space / Enter → trigger capture (same as clicking the FOTO button)
   // Esc           → cancel a running countdown timer
   // F             → toggle browser fullscreen (hands-free operation)
-  // Refs keep the latest handlers so the window listener is attached only once.
-  const handleCaptureClickRef = useRef(handleCaptureButtonClick)
-  useEffect(() => { handleCaptureClickRef.current = handleCaptureButtonClick }, [handleCaptureButtonClick])
   const cancelTimerRef = useRef(cancelTimer)
   useEffect(() => { cancelTimerRef.current = cancelTimer }, [cancelTimer])
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -1041,10 +1016,8 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
-      // Never hijack keys while the operator is typing in a field
       if (isTypingTarget(e.target)) return
 
-      // Esc → cancel timer (only meaningful while a countdown is running)
       if (e.key === 'Escape') {
         if (timerActiveRef.current) {
           e.preventDefault()
@@ -1053,14 +1026,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         return
       }
 
-      // Space / Enter → shutter
       if (e.key === ' ' || e.key === 'Enter') {
-        e.preventDefault() // prevent page scroll on Space
+        e.preventDefault()
         handleCaptureClickRef.current()
         return
       }
 
-      // F → toggle fullscreen
       if (e.key === 'f' || e.key === 'F') {
         e.preventDefault()
         toggleFullscreen()
@@ -1084,10 +1055,14 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const progressText = useMemo(() => {
     if (!hasActiveTarget) return 'Menunggu Arahan MC...'
     if (effectiveTimerCountdown > 0) return `Timer: ${effectiveTimerCountdown}s`
-    if (effectiveShutterMode === 'finger' && finger.isRunning) return `Jari: ${finger.fingerCount}/5`
     if (effectiveShutterMode === 'ai' && ai.isRunning) {
       if (ai.momentState === 'toga_possible' || ai.momentState === 'toga_sustained') return 'AI: Toga terdeteksi...'
       if (ai.momentState === 'ijazah_possible' || ai.momentState === 'ijazah_sustained') return 'AI: Ijazah terdeteksi...'
+    }
+    if (palmTriggerEnabled && palm.isRunning) {
+      if (palm.palmState === 'confirmed') return 'Telapak terdeteksi — memicu shutter...'
+      if (palm.palmState === 'held') return 'Telapak terdeteksi...'
+      if (palm.palmState === 'searching') return 'Mencari telapak tangan...'
     }
     if (photoshoot) {
       if (capturePhase === 'ready-1') return 'Siap Foto'
@@ -1098,7 +1073,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       if (capturePhase === 'sending') return 'Mengirim...'
     }
     return 'Menunggu Arahan MC...'
-  }, [hasActiveTarget, capturePhase, photoshoot, effectiveTimerCountdown, effectiveShutterMode, finger.isRunning, finger.fingerCount, ai.isRunning, ai.momentState])
+  }, [hasActiveTarget, capturePhase, photoshoot, effectiveTimerCountdown, effectiveShutterMode, ai.isRunning, ai.momentState, palmTriggerEnabled, palm.isRunning, palm.palmState])
 
   // ── Render helpers ───────────────────────────────────────────────────────
   const getRowStyle = (student: Student): React.CSSProperties => {
@@ -1135,8 +1110,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         <div className={`flex flex-wrap gap-1 ${compact ? '' : ''}`}>
           {availableModes.map((m) => {
             const isActive = effectiveShutterMode === m.id
-            const isLoading = (m.id === 'ai' && (ai.status === 'loading_scripts' || ai.status === 'loading_model')) ||
-              (m.id === 'finger' && (finger.status === 'loading_scripts' || finger.status === 'loading_model'))
+            const isLoading = (m.id === 'ai' && (ai.status === 'loading_scripts' || ai.status === 'loading_model'))
 
             return (
               <button
@@ -1161,15 +1135,41 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               >
                 {isLoading ? <Loader2 className="size-3 animate-spin" /> : m.icon}
                 <span>{m.shortLabel}</span>
-                {m.id === 'finger' && finger.isRunning && finger.fingerCount > 0 && (
-                  <span className="text-[8px] font-mono" style={{ color: finger.fingerCount >= 5 ? '#4ade80' : THEME.gold }}>
-                    {finger.fingerCount}/5
-                  </span>
-                )}
               </button>
             )
           })}
         </div>
+        {/* Palm trigger toggle — independent of shutter mode */}
+        {!readOnly && effectiveShutterMode !== 'ai' && (
+          <button
+            onClick={() => {
+              setPalmTriggerEnabled((v) => !v)
+              if (palmTriggerEnabled) palm.stopDetection()
+            }}
+            className={`flex items-center gap-1.5 rounded-md font-semibold transition-all duration-200 cursor-pointer ${
+              compact ? 'px-1.5 py-1 text-[9px]' : 'px-2 py-1.5 text-[10px]'
+            } ${palmTriggerEnabled ? 'scale-105' : 'hover:bg-white/5'}`}
+            style={{
+              backgroundColor: palmTriggerEnabled ? '#22c55e22' : THEME.panel,
+              color: palmTriggerEnabled ? '#4ade80' : THEME.muted,
+              border: `1px solid ${palmTriggerEnabled ? '#22c55e' : THEME.border}`,
+              boxShadow: palmTriggerEnabled ? '0 0 8px #22c55e22' : 'none',
+            }}
+            title="Trigger Telapak — tunjukkan telapak tangan ke kamera untuk memotret"
+          >
+            {palm.status === 'loading_scripts' || palm.status === 'loading_model' ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <Hand className="size-3" />
+            )}
+            <span>Trigger Telapak</span>
+            {palmTriggerEnabled && palm.isRunning && palm.fingersExtended > 0 && (
+              <span className="text-[8px] font-mono" style={{ color: palm.palmState === 'confirmed' ? '#4ade80' : THEME.gold }}>
+                {palm.fingersExtended}/5
+              </span>
+            )}
+          </button>
+        )}
       </div>
     )
   }
@@ -1307,16 +1307,16 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         </div>
       )}
 
-      {/* Finger detection indicator */}
-      {effectiveShutterMode === 'finger' && finger.isRunning && (
+      {/* Palm trigger indicator */}
+      {palmTriggerEnabled && palm.isRunning && (
         <div className="absolute top-2 right-2 flex items-center gap-1.5 pointer-events-none" style={{ zIndex: 10 }}>
           <div className="flex items-center gap-1 rounded-full px-2 py-1" style={{
-            backgroundColor: finger.fingerCount >= 5 ? '#22c55e88' : 'rgba(0,0,0,0.7)',
-            border: `1px solid ${finger.fingerCount >= 5 ? '#22c55e' : THEME.border}`,
+            backgroundColor: palm.palmState === 'confirmed' ? '#22c55e88' : palm.palmState === 'held' ? '#d4af3788' : 'rgba(0,0,0,0.7)',
+            border: `1px solid ${palm.palmState === 'confirmed' ? '#22c55e' : palm.palmState === 'held' ? THEME.gold : THEME.border}`,
           }}>
-            <Hand className="size-3" style={{ color: finger.fingerCount >= 5 ? '#4ade80' : THEME.gold }} />
-            <span className="text-[10px] font-bold" style={{ color: finger.fingerCount >= 5 ? '#4ade80' : THEME.muted }}>
-              {finger.fingerCount}/5
+            <Hand className={`size-3 ${palm.palmState === 'held' ? 'animate-pulse' : ''}`} style={{ color: palm.palmState === 'confirmed' ? '#4ade80' : THEME.gold }} />
+            <span className="text-[10px] font-bold" style={{ color: palm.palmState === 'confirmed' ? '#4ade80' : THEME.muted }}>
+              {palm.palmState === 'confirmed' ? 'OK' : palm.palmState === 'held' ? '...' : palm.fingersExtended > 0 ? `${palm.fingersExtended}/5` : 'Telapak'}
             </span>
           </div>
         </div>
@@ -1371,11 +1371,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             <Frame className="size-2.5 mr-0.5" />Frame
           </Badge>
         )}
-        {isFullscreen && (
-          <Badge className="text-[9px] px-1.5 py-0.5 border-0" style={{ backgroundColor: 'rgba(0,0,0,0.6)', color: THEME.gold }}>
-            <Maximize className="size-2.5 mr-0.5" />Layar Penuh
-          </Badge>
-        )}
       </div>
 
       {/* Mobile: Switch camera button */}
@@ -1395,47 +1390,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   )
 
   // ── Capture button (shared) ──────────────────────────────────────────────
-  // ── Keyboard shortcut hint (shown next to the shutter button) ──────────────
-  const renderKeyboardHint = (compact = false) => {
-    if (readOnly) return null
-    return (
-      <div
-        className={`flex items-center justify-center gap-2 ${compact ? 'text-[8px]' : 'text-[9px]'} uppercase tracking-wider opacity-60`}
-        style={{ color: THEME.muted }}
-      >
-        <span className="flex items-center gap-1">
-          <kbd
-            className="inline-flex items-center justify-center rounded border px-1 py-0.5 font-mono font-semibold leading-none"
-            style={{ backgroundColor: THEME.bg, borderColor: THEME.border, color: THEME.gold, minWidth: '1.4rem' }}
-          >
-            Spasi
-          </kbd>
-          <span>Foto</span>
-        </span>
-        <span className="opacity-40">·</span>
-        <span className="flex items-center gap-1">
-          <kbd
-            className="inline-flex items-center justify-center rounded border px-1 py-0.5 font-mono font-semibold leading-none"
-            style={{ backgroundColor: THEME.bg, borderColor: THEME.border, color: THEME.muted, minWidth: '1.4rem' }}
-          >
-            Esc
-          </kbd>
-          <span>Batal</span>
-        </span>
-        <span className="opacity-40">·</span>
-        <span className="flex items-center gap-1">
-          <kbd
-            className="inline-flex items-center justify-center rounded border px-1 py-0.5 font-mono font-semibold leading-none"
-            style={{ backgroundColor: THEME.bg, borderColor: THEME.border, color: THEME.muted, minWidth: '1.4rem' }}
-          >
-            F
-          </kbd>
-          <span>{isFullscreen ? 'Keluar Layar Penuh' : 'Layar Penuh'}</span>
-        </span>
-      </div>
-    )
-  }
-
   const renderCaptureButton = (size: 'normal' | 'large' | 'xl' = 'normal') => {
     const btnClass = size === 'xl'
       ? 'w-full h-16 sm:h-20 text-lg sm:text-xl font-bold cursor-pointer rounded-xl transition-all duration-200 active:scale-[0.97] shadow-lg'
@@ -1476,12 +1430,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
 
     if (capturePhase === 'ready-1') {
-      const isAutoMode = effectiveShutterMode === 'finger' || effectiveShutterMode === 'ai'
+      const isAutoMode = effectiveShutterMode === 'ai'
       const isTimer = isTimerMode(effectiveShutterMode)
 
       if (isAutoMode) {
-        // Auto-capture modes: show status button
-        const isDetecting = (effectiveShutterMode === 'finger' && finger.isRunning) || (effectiveShutterMode === 'ai' && ai.isRunning)
+        // AI auto-capture mode: show status button
+        const isDetecting = ai.isRunning
         return (
           <Button disabled className={`${btnClass} cursor-default`} style={{
             backgroundColor: isDetecting ? '#22c55e33' : THEME.panel,
@@ -1489,8 +1443,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             border: `2px solid ${isDetecting ? '#22c55e' : THEME.border}`,
           }}>
             {isDetecting ? <Loader2 className={`${iconCls} mr-2 animate-spin`} /> : <Aperture className={`${iconCls} mr-2`} />}
-            {effectiveShutterMode === 'finger' ? (isDetecting ? `Mendeteksi Jari (${finger.fingerCount}/5)` : 'Finger Detection Loading...') :
-              (isDetecting ? 'AI Mendeteksi Pose...' : 'AI Loading...')}
+            {isDetecting ? 'AI Mendeteksi Pose...' : 'AI Loading...'}
           </Button>
         )
       }
@@ -1521,11 +1474,11 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
 
     if (capturePhase === 'ready-2') {
-      const isAutoMode = effectiveShutterMode === 'finger' || effectiveShutterMode === 'ai'
+      const isAutoMode = effectiveShutterMode === 'ai'
       const isTimer = isTimerMode(effectiveShutterMode)
 
       if (isAutoMode) {
-        const isDetecting = (effectiveShutterMode === 'finger' && finger.isRunning) || (effectiveShutterMode === 'ai' && ai.isRunning)
+        const isDetecting = ai.isRunning
         return (
           <Button disabled className={`${btnClass} cursor-default`} style={{
             backgroundColor: isDetecting ? '#22c55e33' : THEME.panel,
@@ -1533,7 +1486,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             border: `2px solid ${isDetecting ? '#22c55e' : THEME.border}`,
           }}>
             {isDetecting ? <Loader2 className={`${iconCls} mr-2 animate-spin`} /> : <Aperture className={`${iconCls} mr-2`} />}
-            {effectiveShutterMode === 'finger' ? `Mendeteksi Jari (${finger.fingerCount}/5)` : 'AI Mendeteksi Ijazah...'}
+            AI Mendeteksi Ijazah...
           </Button>
         )
       }
@@ -1676,9 +1629,8 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             backdropFilter: 'blur(12px)',
           }}
         >
-          <div className="mx-auto w-full max-w-md space-y-1.5">
+          <div className="mx-auto w-full max-w-md">
             {renderCaptureButton('xl')}
-            {renderKeyboardHint(true)}
           </div>
         </div>
 
@@ -1826,9 +1778,8 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             backdropFilter: 'blur(12px)',
           }}
         >
-          <div className="mx-auto w-full max-w-xl space-y-1.5">
+          <div className="mx-auto w-full max-w-xl">
             {renderCaptureButton('xl')}
-            {renderKeyboardHint(false)}
           </div>
         </div>
       </div>
