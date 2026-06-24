@@ -39,6 +39,7 @@ import {
   Zap,
   Timer,
   Hand,
+  Maximize,
 } from 'lucide-react'
 import {
   useSaatirilStore,
@@ -973,6 +974,75 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
   }, [effectiveShutterMode, startTimer, cancelTimer, handleCapture])
 
+  // ── Keyboard shortcuts (physical shutter for camera operator) ──────────────
+  // Space / Enter → trigger capture (same as clicking the FOTO button)
+  // Esc           → cancel a running countdown timer
+  // F             → toggle browser fullscreen (hands-free operation)
+  // Refs keep the latest handlers so the window listener is attached only once.
+  const handleCaptureClickRef = useRef(handleCaptureButtonClick)
+  useEffect(() => { handleCaptureClickRef.current = handleCaptureButtonClick }, [handleCaptureButtonClick])
+  const cancelTimerRef = useRef(cancelTimer)
+  useEffect(() => { cancelTimerRef.current = cancelTimer }, [cancelTimer])
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  useEffect(() => {
+    if (readOnly) return // Monitor mode: no physical shutter
+
+    const isTypingTarget = (el: EventTarget | null): boolean => {
+      if (!(el instanceof HTMLElement)) return false
+      const tag = el.tagName
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable
+    }
+
+    const toggleFullscreen = () => {
+      const docEl = document.documentElement
+      if (!document.fullscreenElement) {
+        docEl.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {})
+      } else {
+        document.exitFullscreen?.().then(() => setIsFullscreen(false)).catch(() => {})
+      }
+    }
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      // Never hijack keys while the operator is typing in a field
+      if (isTypingTarget(e.target)) return
+
+      // Esc → cancel timer (only meaningful while a countdown is running)
+      if (e.key === 'Escape') {
+        if (timerActiveRef.current) {
+          e.preventDefault()
+          cancelTimerRef.current()
+        }
+        return
+      }
+
+      // Space / Enter → shutter
+      if (e.key === ' ' || e.key === 'Enter') {
+        e.preventDefault() // prevent page scroll on Space
+        handleCaptureClickRef.current()
+        return
+      }
+
+      // F → toggle fullscreen
+      if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault()
+        toggleFullscreen()
+        return
+      }
+    }
+
+    const onFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('fullscreenchange', onFullscreenChange)
+    }
+  }, [readOnly])
+
   // ── Progress badge text ──────────────────────────────────────────────────
   const progressText = useMemo(() => {
     if (!hasActiveTarget) return 'Menunggu Arahan MC...'
@@ -1264,6 +1334,11 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             <Frame className="size-2.5 mr-0.5" />Frame
           </Badge>
         )}
+        {isFullscreen && (
+          <Badge className="text-[9px] px-1.5 py-0.5 border-0" style={{ backgroundColor: 'rgba(0,0,0,0.6)', color: THEME.gold }}>
+            <Maximize className="size-2.5 mr-0.5" />Layar Penuh
+          </Badge>
+        )}
       </div>
 
       {/* Mobile: Switch camera button */}
@@ -1283,6 +1358,47 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   )
 
   // ── Capture button (shared) ──────────────────────────────────────────────
+  // ── Keyboard shortcut hint (shown next to the shutter button) ──────────────
+  const renderKeyboardHint = (compact = false) => {
+    if (readOnly) return null
+    return (
+      <div
+        className={`flex items-center justify-center gap-2 ${compact ? 'text-[8px]' : 'text-[9px]'} uppercase tracking-wider opacity-60`}
+        style={{ color: THEME.muted }}
+      >
+        <span className="flex items-center gap-1">
+          <kbd
+            className="inline-flex items-center justify-center rounded border px-1 py-0.5 font-mono font-semibold leading-none"
+            style={{ backgroundColor: THEME.bg, borderColor: THEME.border, color: THEME.gold, minWidth: '1.4rem' }}
+          >
+            Spasi
+          </kbd>
+          <span>Foto</span>
+        </span>
+        <span className="opacity-40">·</span>
+        <span className="flex items-center gap-1">
+          <kbd
+            className="inline-flex items-center justify-center rounded border px-1 py-0.5 font-mono font-semibold leading-none"
+            style={{ backgroundColor: THEME.bg, borderColor: THEME.border, color: THEME.muted, minWidth: '1.4rem' }}
+          >
+            Esc
+          </kbd>
+          <span>Batal</span>
+        </span>
+        <span className="opacity-40">·</span>
+        <span className="flex items-center gap-1">
+          <kbd
+            className="inline-flex items-center justify-center rounded border px-1 py-0.5 font-mono font-semibold leading-none"
+            style={{ backgroundColor: THEME.bg, borderColor: THEME.border, color: THEME.muted, minWidth: '1.4rem' }}
+          >
+            F
+          </kbd>
+          <span>{isFullscreen ? 'Keluar Layar Penuh' : 'Layar Penuh'}</span>
+        </span>
+      </div>
+    )
+  }
+
   const renderCaptureButton = (size: 'normal' | 'large' | 'xl' = 'normal') => {
     const btnClass = size === 'xl'
       ? 'w-full h-16 sm:h-20 text-lg sm:text-xl font-bold cursor-pointer rounded-xl transition-all duration-200 active:scale-[0.97] shadow-lg'
@@ -1523,8 +1639,9 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             backdropFilter: 'blur(12px)',
           }}
         >
-          <div className="mx-auto w-full max-w-md">
+          <div className="mx-auto w-full max-w-md space-y-1.5">
             {renderCaptureButton('xl')}
+            {renderKeyboardHint(true)}
           </div>
         </div>
 
@@ -1672,8 +1789,9 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             backdropFilter: 'blur(12px)',
           }}
         >
-          <div className="mx-auto w-full max-w-xl">
+          <div className="mx-auto w-full max-w-xl space-y-1.5">
             {renderCaptureButton('xl')}
+            {renderKeyboardHint(false)}
           </div>
         </div>
       </div>
