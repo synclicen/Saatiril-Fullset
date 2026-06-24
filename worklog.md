@@ -395,3 +395,42 @@ Stage Summary:
 - Dev server: running clean on port 3000
 - Git: 2 commits pushed to origin/main successfully
 - Deployment: dev server live (HTTP 200), code deployed to GitHub repo
+
+---
+Task ID: CRITICAL-CRASH-FIX
+Agent: main (Z.ai Code)
+Task: Fix white-screen crash "Cannot read properties of undefined (reading 'trim')" that occurred after repeated MC reset + operator retake cycles, making the project unopenable
+
+Work Log:
+- Analyzed error screenshots via VLM: confirmed "Cannot read properties of undefined (reading 'trim')" crash + MC panel showing RESET button before crash
+- Root cause found: sanitizeNama(nama) calls nama.trim() — if a photoHistory entry's student.nama became undefined (via corrupted sync/reset cycles), renderPhotoItem → buildPhotoshootFilename → sanitizeNama(undefined) crashed the entire app
+- Worse: corrupted data persisted in localStorage, so reopening the project crashed AGAIN (infinite loop)
+- Fix 1: Made sanitizeNama() defensive in both operator-panel.tsx + admin-dashboard.tsx — (nama ?? '').trim() handles undefined/null. Added sanitizeNim() companion.
+- Fix 2: Guarded renderPhotoItem() in admin-dashboard — skips corrupted photoHistory items (missing student/id) with console warning instead of crashing gallery
+- Fix 3: Added sanitizeProject() + sanitizeProjects() exports in use-saatiril-store.ts:
+  * Ensures every student has string nama/nim (undefined → '')
+  * Drops photoHistory entries with missing student OR phantom student.id (not in database)
+  * Ensures config.targetFolder is a string
+  * Called in loadProjectsFromStorage() (auto-cleans on load + persists cleaned version back) AND setCurrentProject()
+  * Last-resort: if JSON.parse fails, clears localStorage so app loads to hub
+- Fix 4: Enhanced ScreenErrorBoundary in page.tsx:
+  * Added 'Perbaiki Data & Buka Ulang' green button (shown when error message contains 'trim'/'undefined')
+  * Button sanitizes current project + all projects, then retries — breaks crash-on-reopen loop
+  * Tells user photos on disk are NOT affected
+  * Fixed naming collision: lucide-react Home icon import conflicted with function Home() — renamed to HomeIcon
+- Fix 5: Photo-not-saving-after-reset now visible:
+  * When opCurrentTarget is null (cleared by reset, not re-sent), capture shows destructive toast 'Foto Tidak Tersimpan — minta MC kirim ulang' instead of silently discarding
+  * Disk-save path logs filename + shows toast on failure (both photoshoot + standard modes)
+  * Browser-mode (no window.saatirilAPI) now warns: 'Mode Browser — Foto Tidak ke Disk'
+- Fix 6: hasActiveTarget now validates opCurrentTarget has id + nama/nim (not just !== null)
+- Browser verification: injected corrupted data (student.nama=undefined + phantom photoHistory entry with CORRUPT_1 id) → reloaded → app auto-sanitized on load, opened project with ZERO crash, admin dashboard rendered TOTAL/SELESAI/BELUM correctly
+- Verified localStorage after sanitize: photoHistory_count=0 (phantom dropped), all_have_valid_students=true, db_all_have_nama=true
+
+Stage Summary:
+- CRITICAL CRASH FIXED: App can no longer white-screen from corrupted photoHistory data
+- AUTO-RECOVERY: Corrupted localStorage data is auto-cleaned on every load — breaks the infinite crash loop
+- MANUAL RECOVERY: Error boundary now offers 'Perbaiki Data & Buka Ulang' button for explicit repair
+- PHOTO-SAVE VISIBILITY: Operators now get clear toasts when capture is aborted (null target) or disk save fails — no more silent failures
+- Lint: zero errors
+- Dev server: running clean (HTTP 200, no compile errors)
+- Git: pushed to origin/main (commit 316c730)
