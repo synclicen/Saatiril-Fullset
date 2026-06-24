@@ -1283,15 +1283,19 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   )
 
   // ── Capture button (shared) ──────────────────────────────────────────────
-  const renderCaptureButton = (size: 'normal' | 'large' = 'normal') => {
-    const btnClass = size === 'large'
-      ? 'w-full h-14 text-base font-bold cursor-pointer rounded-lg transition-all duration-200 active:scale-[0.97]'
-      : 'w-full h-12 text-sm font-bold cursor-pointer rounded-lg transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]'
+  const renderCaptureButton = (size: 'normal' | 'large' | 'xl' = 'normal') => {
+    const btnClass = size === 'xl'
+      ? 'w-full h-16 sm:h-20 text-lg sm:text-xl font-bold cursor-pointer rounded-xl transition-all duration-200 active:scale-[0.97] shadow-lg'
+      : size === 'large'
+        ? 'w-full h-14 text-base font-bold cursor-pointer rounded-lg transition-all duration-200 active:scale-[0.97]'
+        : 'w-full h-12 text-sm font-bold cursor-pointer rounded-lg transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]'
+    // Icon size scales with button size so the shutter is easy to hit
+    const iconCls = size === 'xl' ? 'size-6 sm:size-7' : 'size-4'
 
     if (readOnly) {
       return (
         <Button disabled className={`${btnClass} cursor-not-allowed`} style={{ backgroundColor: THEME.panel, color: THEME.muted, border: `2px solid ${THEME.border}`, opacity: 0.6 }}>
-          <Monitor className="size-4 mr-2" />MODE MONITOR
+          <Monitor className={`${iconCls} mr-2`} />MODE MONITOR
         </Button>
       )
     }
@@ -1299,7 +1303,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     if (capturePhase === 'standby') {
       return (
         <Button disabled className={`${btnClass} cursor-not-allowed`} style={{ backgroundColor: THEME.panel, color: THEME.muted, border: `2px solid ${THEME.border}`, opacity: 0.6 }}>
-          <Aperture className="size-4 mr-2" />STANDBY
+          <Aperture className={`${iconCls} mr-2`} />STANDBY
         </Button>
       )
     }
@@ -1313,7 +1317,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           border: '2px solid #ef4444',
           boxShadow: '0 0 30px #ef444444, 0 0 60px #ef444422',
         }}>
-          <X className="size-4 mr-2" />BATAL ({effectiveTimerCountdown}s)
+          <X className={`${iconCls} mr-2`} />BATAL ({effectiveTimerCountdown}s)
         </Button>
       )
     }
@@ -1331,7 +1335,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             color: isDetecting ? '#4ade80' : THEME.muted,
             border: `2px solid ${isDetecting ? '#22c55e' : THEME.border}`,
           }}>
-            {isDetecting ? <Loader2 className="size-4 mr-2 animate-spin" /> : <Aperture className="size-4 mr-2" />}
+            {isDetecting ? <Loader2 className={`${iconCls} mr-2 animate-spin`} /> : <Aperture className={`${iconCls} mr-2`} />}
             {effectiveShutterMode === 'finger' ? (isDetecting ? `Mendeteksi Jari (${finger.fingerCount}/5)` : 'Finger Detection Loading...') :
               (isDetecting ? 'AI Mendeteksi Pose...' : 'AI Loading...')}
           </Button>
@@ -1346,7 +1350,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             border: `2px solid ${THEME.gold}`,
             boxShadow: `0 0 30px ${THEME.gold}44, 0 0 60px ${THEME.gold}22`,
           }}>
-            <Timer className="size-4 mr-2" />
+            <Timer className={`${iconCls} mr-2`} />
             {photoshoot ? `FOTO (${getTimerDuration(effectiveShutterMode)}s)` : `FOTO 1 — TOGA (${getTimerDuration(effectiveShutterMode)}s)`}
           </Button>
         )
@@ -1358,7 +1362,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           ? { backgroundColor: '#4ade80', color: '#1a0b2e', border: '2px solid #4ade80', boxShadow: '0 0 30px #4ade8044, 0 0 60px #4ade8022' }
           : { backgroundColor: THEME.gold, color: THEME.bg, border: `2px solid ${THEME.gold}`, boxShadow: `0 0 30px ${THEME.gold}44, 0 0 60px ${THEME.gold}22` }
         }>
-          <Camera className="size-4 mr-2" />{photoshoot ? 'FOTO' : 'FOTO 1 — TOGA'}
+          <Camera className={`${iconCls} mr-2`} />{photoshoot ? 'FOTO' : 'FOTO 1 — TOGA'}
         </Button>
       )
     }
@@ -1375,7 +1379,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             color: isDetecting ? '#4ade80' : THEME.muted,
             border: `2px solid ${isDetecting ? '#22c55e' : THEME.border}`,
           }}>
-            {isDetecting ? <Loader2 className="size-4 mr-2 animate-spin" /> : <Aperture className="size-4 mr-2" />}
+            {isDetecting ? <Loader2 className={`${iconCls} mr-2 animate-spin`} /> : <Aperture className={`${iconCls} mr-2`} />}
             {effectiveShutterMode === 'finger' ? `Mendeteksi Jari (${finger.fingerCount}/5)` : 'AI Mendeteksi Ijazah...'}
           </Button>
         )
@@ -1389,7 +1393,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             border: `2px solid ${THEME.gold}`,
             boxShadow: `0 0 30px ${THEME.gold}44, 0 0 60px ${THEME.gold}22`,
           }}>
-            <Timer className="size-4 mr-2" />
+            <Timer className={`${iconCls} mr-2`} />
             FOTO 2 — IJAZAH ({getTimerDuration(effectiveShutterMode)}s)
           </Button>
         )
@@ -1397,7 +1401,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
       return (
         <Button onClick={handleCaptureButtonClick} className={btnClass} style={{ backgroundColor: '#22c55e', color: '#ffffff', border: '2px solid #22c55e', boxShadow: '0 0 30px #22c55e44, 0 0 60px #22c55e22' }}>
-          <Camera className="size-4 mr-2" />FOTO 2 — IJAZAH
+          <Camera className={`${iconCls} mr-2`} />FOTO 2 — IJAZAH
         </Button>
       )
     }
@@ -1405,7 +1409,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     if (capturePhase === 'sending') {
       return (
         <Button disabled className={`${btnClass} cursor-not-allowed`} style={{ backgroundColor: THEME.panel, color: THEME.muted, border: `2px solid ${THEME.border}` }}>
-          <Loader2 className="size-4 mr-2 animate-spin" />MENGIRIM...
+          <Loader2 className={`${iconCls} mr-2 animate-spin`} />MENGIRIM...
         </Button>
       )
     }
@@ -1508,6 +1512,20 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           className="flex-1 flex items-center justify-center min-h-0 p-1"
         >
           {renderCameraView()}
+        </div>
+
+        {/* ── Capture Button (centered, directly below camera view) ─────── */}
+        <div
+          className="shrink-0 w-full px-3 py-2 border-t"
+          style={{
+            backgroundColor: `${THEME.panel}ee`,
+            borderColor: THEME.border,
+            backdropFilter: 'blur(12px)',
+          }}
+        >
+          <div className="mx-auto w-full max-w-md">
+            {renderCaptureButton('xl')}
+          </div>
         </div>
 
         {/* ── Bottom Control Bar ──────────────────────────────────────────── */}
@@ -1625,11 +1643,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               {renderShutterModeSelector(true)}
             </div>
           </div>
-
-          {/* Capture button */}
-          <div className="px-3 pb-2 pt-1">
-            {renderCaptureButton('large')}
-          </div>
         </div>
       </div>
     )
@@ -1639,12 +1652,30 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   return (
     <div className="flex h-full overflow-hidden" style={{ backgroundColor: THEME.bg }}>
 
-      {/* CAMERA ZONE */}
-      <div
-        ref={cameraZoneRef}
-        className="flex-1 flex items-center justify-center h-full min-w-0 p-2"
-      >
-        {renderCameraView()}
+      {/* MAIN: Camera view + Capture button directly below it (centered) */}
+      <div className="flex flex-1 flex-col h-full min-w-0">
+
+        {/* CAMERA ZONE */}
+        <div
+          ref={cameraZoneRef}
+          className="flex-1 flex items-center justify-center min-h-0 p-2"
+        >
+          {renderCameraView()}
+        </div>
+
+        {/* Capture Button (centered, directly below camera view) */}
+        <div
+          className="shrink-0 w-full px-4 py-3 border-t"
+          style={{
+            backgroundColor: `${THEME.panel}ee`,
+            borderColor: THEME.border,
+            backdropFilter: 'blur(12px)',
+          }}
+        >
+          <div className="mx-auto w-full max-w-xl">
+            {renderCaptureButton('xl')}
+          </div>
+        </div>
       </div>
 
       {/* SIDEBAR */}
@@ -1730,11 +1761,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
         {/* Queue List */}
         {renderQueueList(false)}
-
-        {/* Capture Button */}
-        <div className="shrink-0">
-          {renderCaptureButton('normal')}
-        </div>
       </div>
     </div>
   )
