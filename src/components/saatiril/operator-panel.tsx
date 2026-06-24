@@ -58,7 +58,7 @@ import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
 import { useAIDetection, type AIMomentEvent } from '@/hooks/use-ai-detection'
-import { useFingerDetection } from '@/hooks/use-finger-detection'
+import { usePalmDetection } from '@/hooks/use-palm-detection'
 
 // ─── Theme tokens ───────────────────────────────────────────────────────────
 const THEME = {
@@ -71,14 +71,14 @@ const THEME = {
 } as const
 
 // ─── Shutter mode types ────────────────────────────────────────────────────
-type ShutterMode = 'manual' | 'timer-3' | 'timer-5' | 'timer-10' | 'finger' | 'ai'
+type ShutterMode = 'manual' | 'timer-3' | 'timer-5' | 'timer-10' | 'palm' | 'ai'
 
 const SHUTTER_MODES: { id: ShutterMode; label: string; shortLabel: string; icon: React.ReactNode; modesAllowed?: CameraMode[] }[] = [
   { id: 'manual', label: 'Manual', shortLabel: 'Manual', icon: <Camera className="size-3" /> },
   { id: 'timer-3', label: 'Timer 3 detik', shortLabel: '3s', icon: <Timer className="size-3" /> },
   { id: 'timer-5', label: 'Timer 5 detik', shortLabel: '5s', icon: <Timer className="size-3" /> },
   { id: 'timer-10', label: 'Timer 10 detik', shortLabel: '10s', icon: <Timer className="size-3" /> },
-  { id: 'finger', label: '5 Jari', shortLabel: '5 Jari', icon: <Hand className="size-3" /> },
+  { id: 'palm', label: 'Telapak', shortLabel: 'Telapak', icon: <Hand className="size-3" /> },
   { id: 'ai', label: 'AI Pintar', shortLabel: 'AI', icon: <Brain className="size-3" />, modesAllowed: ['single', 'dual'] },
 ]
 
@@ -94,6 +94,9 @@ function getTimerDuration(mode: ShutterMode): number {
 function isTimerMode(mode: ShutterMode): boolean {
   return mode === 'timer-3' || mode === 'timer-5' || mode === 'timer-10'
 }
+
+// Palm selfie mode: countdown duration (seconds) once an open palm is confirmed
+const PALM_COUNTDOWN_SECONDS = 3
 
 // ─── Filter preset map ──────────────────────────────────────────────────────
 const PRESET_FILTERS: Record<string, string> = {
@@ -234,8 +237,8 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   // ── AI auto-capture ──────────────────────────────────────────────────────
   const ai = useAIDetection()
 
-  // ── Finger detection ─────────────────────────────────────────────────────
-  const finger = useFingerDetection()
+  // ── Palm detection (selfie-style shutter) ────────────────────────────────
+  const palm = usePalmDetection()
 
   // ── Refs ─────────────────────────────────────────────────────────────────
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -927,34 +930,68 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
   }, [effectiveShutterMode, ai.modelLoaded, cameraAvailable, hasActiveTarget, capturePhase])
 
-  // ── Shutter: Finger detection ────────────────────────────────────────────
-  // Initialize finger detection when finger shutter mode is active
+  // ── Shutter: Palm detection (selfie-style) ───────────────────────────────
+  // Initialize palm detection when palm shutter mode is active
   useEffect(() => {
-    if (effectiveShutterMode === 'finger' && cameraAvailable && hasActiveTarget && finger.status === 'unloaded') {
-      finger.initialize().then((ok) => {
-        if (ok) console.log('[SAATIRIL OP] Finger detection initialized')
+    if (effectiveShutterMode === 'palm' && cameraAvailable && hasActiveTarget && palm.status === 'unloaded') {
+      palm.initialize().then((ok) => {
+        if (ok) console.log('[SAATIRIL OP] Palm detection initialized')
       })
     }
   }, [effectiveShutterMode, cameraAvailable, hasActiveTarget])
 
-  // Start/stop finger detection
-  useEffect(() => {
-    if (effectiveShutterMode === 'finger' && (finger.status === 'model_ready' || finger.status === 'stopped') && cameraAvailable && videoRef.current && hasActiveTarget) {
-      finger.startDetection(videoRef.current, () => {
-        console.log('[SAATIRIL OP] 5 fingers detected — auto-capturing')
+  // Palm countdown: a 3s countdown that reuses the shared timerCountdown state
+  // + overlay. Started when an open palm is confirmed, cancelled if the palm
+  // is removed before the countdown reaches zero.
+  const startPalmCountdown = useCallback(() => {
+    if (capturePhase !== 'ready-1' && capturePhase !== 'ready-2') return
+    if (timerActiveRef.current) return // already counting down (e.g. a timer mode)
+    let remaining = PALM_COUNTDOWN_SECONDS
+    timerActiveRef.current = true
+    setTimerCountdown(remaining)
+    timerIntervalRef.current = setInterval(() => {
+      remaining -= 1
+      if (remaining <= 0) {
+        if (timerIntervalRef.current) {
+          clearInterval(timerIntervalRef.current)
+          timerIntervalRef.current = null
+        }
+        timerActiveRef.current = false
+        setTimerCountdown(0)
         handleCaptureRef.current()
+      } else {
+        setTimerCountdown(remaining)
+      }
+    }, 1000)
+  }, [capturePhase])
+
+  const startPalmCountdownRef = useRef(startPalmCountdown)
+  useEffect(() => { startPalmCountdownRef.current = startPalmCountdown }, [startPalmCountdown])
+
+  // Start/stop palm detection with confirm/release callbacks
+  useEffect(() => {
+    if (effectiveShutterMode === 'palm' && (palm.status === 'model_ready' || palm.status === 'stopped') && cameraAvailable && videoRef.current && hasActiveTarget) {
+      palm.startDetection(videoRef.current, {
+        onPalmConfirmed: () => {
+          console.log('[SAATIRIL OP] Palm confirmed — starting 3s countdown')
+          startPalmCountdownRef.current()
+        },
+        onPalmReleased: () => {
+          console.log('[SAATIRIL OP] Palm released — cancelling countdown')
+          cancelTimerRef.current()
+        },
       })
-    } else if (effectiveShutterMode !== 'finger' && finger.isRunning) {
-      finger.stopDetection()
+    } else if (effectiveShutterMode !== 'palm' && palm.isRunning) {
+      palm.stopDetection()
     }
-  }, [effectiveShutterMode, finger.status, cameraAvailable, hasActiveTarget])
+  }, [effectiveShutterMode, palm.status, cameraAvailable, hasActiveTarget])
 
   // ── Cleanup on unmount ───────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       cancelTimer()
       if (ai.isRunning) ai.stopDetection()
-      if (finger.isRunning) finger.stopDetection()
+      if (palm.isRunning) palm.stopDetection()
     }
   }, [])
 

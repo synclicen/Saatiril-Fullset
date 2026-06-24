@@ -2,7 +2,22 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-export type FingerDetectionStatus =
+/**
+ * PALM DETECTION (selfie-style shutter)
+ *
+ * Behaves like a phone selfie palm timer:
+ *   1. Operator shows an OPEN PALM to the camera (all 5 fingers extended).
+ *   2. Palm must be held ~500ms to be "confirmed" (debounce against flicker).
+ *   3. onPalmConfirmed fires ONCE → operator-panel starts a 3s countdown.
+ *   4. If the palm is removed (hand closes, drops, or leaves frame) while the
+ *      countdown is still running, onPalmReleased fires → countdown cancels.
+ *   5. If the palm stays up through the whole countdown → photo is taken.
+ *
+ * This is NOT the old "count fingers 1→5" gesture. The only gesture is an
+ * open palm held up to the camera.
+ */
+
+export type PalmDetectionStatus =
   | 'unloaded'
   | 'loading_scripts'
   | 'loading_model'
@@ -11,22 +26,27 @@ export type FingerDetectionStatus =
   | 'stopped'
   | 'error'
 
-export interface FingerDetectionResult {
-  fingerCount: number
-  confidence: number
-  handsDetected: number
+/** Current palm state, for UI feedback */
+export type PalmState = 'none' | 'searching' | 'held' | 'confirmed'
+
+export interface PalmDetectionCallbacks {
+  /** Fires once when an open palm has been held long enough to confirm */
+  onPalmConfirmed: () => void
+  /** Fires when the confirmed palm is removed (hand closes / leaves frame) */
+  onPalmReleased: () => void
 }
 
-interface UseFingerDetectionReturn {
-  status: FingerDetectionStatus
-  fingerCount: number
-  handsDetected: number
+interface UsePalmDetectionReturn {
+  status: PalmDetectionStatus
+  palmState: PalmState
+  /** 0–5, how many fingers currently extended (for the small indicator) */
+  fingersExtended: number
   isRunning: boolean
   error: string | null
   initialize: () => Promise<boolean>
   startDetection: (
     videoElement: HTMLVideoElement,
-    onFiveFingers: () => void,
+    callbacks: PalmDetectionCallbacks,
   ) => Promise<void>
   stopDetection: () => void
   dispose: () => void
@@ -50,23 +70,22 @@ function loadScript(src: string): Promise<void> {
   })
 }
 
-async function loadFingerScripts(): Promise<boolean> {
+async function loadPalmScripts(): Promise<boolean> {
   if (scriptsLoadPromise) return scriptsLoadPromise
   scriptsLoadPromise = (async () => {
     try {
-      // Load MediaPipe Hands from CDN
+      // Load MediaPipe Hands from CDN (same model — detects hand landmarks)
       await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js')
       await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js')
       await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js')
       await new Promise((r) => setTimeout(r, 100))
 
-      // Verify globals
       if (typeof (window as any).Hands === 'undefined') {
         throw new Error('MediaPipe Hands global missing')
       }
       return true
     } catch (e: any) {
-      console.error('[SAATIRIL Finger] Script load failed:', e.message)
+      console.error('[SAATIRIL Palm] Script load failed:', e.message)
       scriptsLoadPromise = null
       return false
     }
@@ -74,23 +93,18 @@ async function loadFingerScripts(): Promise<boolean> {
   return scriptsLoadPromise
 }
 
-// ─── Count fingers from hand landmarks ────────────────────────────────────
-// Returns number of extended fingers (0-5) per hand
-function countFingers(landmarks: any[]): number {
-  // Landmark indices for each finger
-  // Thumb: 1,2,3,4 | Index: 5,6,7,8 | Middle: 9,10,11,12 | Ring: 13,14,15,16 | Pinky: 17,18,19,20
+// ─── Count extended fingers from hand landmarks ───────────────────────────
+// An OPEN PALM = all 5 fingers extended. Returns 0–5.
+function countExtendedFingers(landmarks: any[]): number {
   const tipIds = [4, 8, 12, 16, 20]
   const pipIds = [3, 6, 10, 14, 18] // Proximal interphalangeal joints
 
   let fingersUp = 0
 
-  // Thumb: compare x position (left hand vs right hand)
-  // If thumb tip is further from palm than thumb IP joint
+  // Thumb: compare x position relative to hand orientation
   const thumbTip = landmarks[tipIds[0]]
   const thumbIp = landmarks[pipIds[0]]
   const wrist = landmarks[0]
-
-  // Determine hand orientation based on wrist and middle finger MCP
   const middleMcp = landmarks[9]
   const isRightHand = wrist.x < middleMcp.x
 
@@ -100,8 +114,7 @@ function countFingers(landmarks: any[]): number {
     if (thumbTip.x > thumbIp.x) fingersUp++
   }
 
-  // Other 4 fingers: compare y position (tip vs PIP)
-  // If tip is above PIP (lower y = higher on screen), finger is extended
+  // Other 4 fingers: tip above PIP (lower y = higher) means extended
   for (let i = 1; i < 5; i++) {
     const tip = landmarks[tipIds[i]]
     const pip = landmarks[pipIds[i]]
@@ -111,66 +124,68 @@ function countFingers(landmarks: any[]): number {
   return fingersUp
 }
 
-export function useFingerDetection(): UseFingerDetectionReturn {
-  const [status, setStatus] = useState<FingerDetectionStatus>('unloaded')
-  const [fingerCount, setFingerCount] = useState(0)
-  const [handsDetected, setHandsDetected] = useState(0)
+// ─── Tuning constants ─────────────────────────────────────────────────────
+// Palm must be held this long before "confirmed" (debounce against flicker)
+const PALM_CONFIRM_SUSTAIN_MS = 500
+// How many fingers count as "an open palm". 5 = strict open palm.
+const PALM_FINGER_THRESHOLD = 5
+
+export function usePalmDetection(): UsePalmDetectionReturn {
+  const [status, setStatus] = useState<PalmDetectionStatus>('unloaded')
+  const [palmState, setPalmState] = useState<PalmState>('none')
+  const [fingersExtended, setFingersExtended] = useState(0)
   const [isRunning, setIsRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const handsRef = useRef<any>(null)
   const animFrameRef = useRef<number | null>(null)
-  const onFiveFingersRef = useRef<(() => void) | null>(null)
-  const sustainStartRef = useRef<number>(0)
-  const lastTriggerRef = useRef<number>(0)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const isDetectingRef = useRef(false)
 
-  // Sustain duration: 5 fingers must be held for this long (ms) before triggering
-  const SUSTAIN_DURATION = 800
-  // Cooldown: after triggering, wait this long before allowing another trigger
-  const TRIGGER_COOLDOWN = 3000
+  const callbacksRef = useRef<PalmDetectionCallbacks | null>(null)
+  // Track whether we've already fired onPalmConfirmed for the current hold
+  const confirmedRef = useRef<boolean>(false)
+  // Timestamp when palm first reached the threshold (0 = not currently held)
+  const palmSinceRef = useRef<number>(0)
 
   const processResults = useCallback((results: any) => {
     if (!isDetectingRef.current) return
 
     const multiHandLandmarks = results.multiHandLandmarks || []
-    const numHands = multiHandLandmarks.length
-    setHandsDetected(numHands)
 
-    if (numHands === 0) {
-      setFingerCount(0)
-      sustainStartRef.current = 0
-      return
-    }
-
-    // Check all hands for 5 fingers
+    // Find the hand with the most extended fingers
     let maxFingers = 0
     for (const landmarks of multiHandLandmarks) {
-      const count = countFingers(landmarks)
-      maxFingers = Math.max(maxFingers, count)
+      const count = countExtendedFingers(landmarks)
+      if (count > maxFingers) maxFingers = count
     }
-    setFingerCount(maxFingers)
+    setFingersExtended(maxFingers)
 
     const now = Date.now()
+    const palmCurrentlyUp = maxFingers >= PALM_FINGER_THRESHOLD
 
-    if (maxFingers >= 5) {
-      // 5 fingers detected
-      if (sustainStartRef.current === 0) {
-        // Start counting sustain duration
-        sustainStartRef.current = now
-      } else if (now - sustainStartRef.current >= SUSTAIN_DURATION) {
-        // Sustained for long enough — trigger capture
-        if (now - lastTriggerRef.current >= TRIGGER_COOLDOWN) {
-          lastTriggerRef.current = now
-          sustainStartRef.current = 0
-          console.log('[SAATIRIL Finger] 5 fingers detected — triggering capture')
-          onFiveFingersRef.current?.()
-        }
+    if (palmCurrentlyUp) {
+      if (palmSinceRef.current === 0) {
+        // Palm just appeared — start the sustain clock
+        palmSinceRef.current = now
+        setPalmState('held')
+      } else if (!confirmedRef.current && now - palmSinceRef.current >= PALM_CONFIRM_SUSTAIN_MS) {
+        // Sustained long enough → confirm (fires countdown start)
+        confirmedRef.current = true
+        setPalmState('confirmed')
+        console.log('[SAATIRIL Palm] Palm confirmed — starting countdown')
+        callbacksRef.current?.onPalmConfirmed?.()
       }
     } else {
-      // Not 5 fingers — reset sustain timer
-      sustainStartRef.current = 0
+      // No open palm right now
+      if (confirmedRef.current) {
+        // Was confirmed, now removed → release (cancels countdown)
+        console.log('[SAATIRIL Palm] Palm released — cancelling countdown')
+        callbacksRef.current?.onPalmReleased?.()
+      }
+      palmSinceRef.current = 0
+      confirmedRef.current = false
+      setPalmState(multiHandLandmarks.length > 0 ? 'searching' : 'none')
     }
   }, [])
 
@@ -190,14 +205,13 @@ export function useFingerDetection(): UseFingerDetectionReturn {
     }
   }, [])
 
-  // Keep ref in sync
   useEffect(() => { detectFrameRef.current = detectFrame }, [detectFrame])
 
   const initialize = useCallback(async (): Promise<boolean> => {
     setStatus('loading_scripts')
     setError(null)
 
-    const ok = await loadFingerScripts()
+    const ok = await loadPalmScripts()
     if (!ok) {
       setStatus('error')
       setError('Failed to load MediaPipe Hands scripts')
@@ -215,14 +229,14 @@ export function useFingerDetection(): UseFingerDetectionReturn {
 
       hands.setOptions({
         maxNumHands: 1,
-        modelComplexity: 0, // Use lite model for faster detection
+        modelComplexity: 0, // lite model for speed
         minDetectionConfidence: 0.6,
         minTrackingConfidence: 0.5,
       })
 
       hands.onResults(processResults)
 
-      // Initialize the model by sending a dummy frame
+      // Initialize the model with a dummy frame
       const tempCanvas = document.createElement('canvas')
       tempCanvas.width = 1
       tempCanvas.height = 1
@@ -232,7 +246,7 @@ export function useFingerDetection(): UseFingerDetectionReturn {
       setStatus('model_ready')
       return true
     } catch (e: any) {
-      console.error('[SAATIRIL Finger] Model initialization failed:', e)
+      console.error('[SAATIRIL Palm] Model initialization failed:', e)
       setStatus('error')
       setError(e.message || 'Model initialization failed')
       return false
@@ -240,22 +254,22 @@ export function useFingerDetection(): UseFingerDetectionReturn {
   }, [processResults])
 
   const startDetection = useCallback(
-    async (videoElement: HTMLVideoElement, onFiveFingers: () => void) => {
+    async (videoElement: HTMLVideoElement, callbacks: PalmDetectionCallbacks) => {
       if (!handsRef.current) {
         const ok = await initialize()
         if (!ok) return
       }
 
       videoRef.current = videoElement
-      onFiveFingersRef.current = onFiveFingers
+      callbacksRef.current = callbacks
       isDetectingRef.current = true
-      sustainStartRef.current = 0
-      lastTriggerRef.current = 0
+      confirmedRef.current = false
+      palmSinceRef.current = 0
 
       setIsRunning(true)
+      setPalmState('searching')
       setStatus('detecting')
 
-      // Start detection loop
       detectFrameRef.current()
     },
     [initialize, detectFrame],
@@ -268,10 +282,11 @@ export function useFingerDetection(): UseFingerDetectionReturn {
       animFrameRef.current = null
     }
     setIsRunning(false)
-    setFingerCount(0)
-    setHandsDetected(0)
+    setFingersExtended(0)
+    setPalmState('none')
     setStatus('model_ready')
-    sustainStartRef.current = 0
+    confirmedRef.current = false
+    palmSinceRef.current = 0
   }, [])
 
   const dispose = useCallback(() => {
@@ -295,8 +310,8 @@ export function useFingerDetection(): UseFingerDetectionReturn {
 
   return {
     status,
-    fingerCount,
-    handsDetected,
+    palmState,
+    fingersExtended,
     isRunning,
     error,
     initialize,
