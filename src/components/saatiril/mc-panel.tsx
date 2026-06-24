@@ -142,12 +142,14 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
   }, [])
 
   // ── Photoshoot: filtered search results ───────────────────────────────────
+  // Include 'done' status so MC can find participants who have already been
+  // photographed — this allows MC to reset them for a retake.
   const searchResults = useMemo<Student[]>(() => {
     if (!photoshoot || !searchQuery.trim()) return []
     const q = searchQuery.toLowerCase().trim()
     return channelStudents.filter(
       (s) =>
-        (s.status === 'pending' || s.status === 'sent') &&
+        (s.status === 'pending' || s.status === 'sent' || s.status === 'done') &&
         (s.nim.toLowerCase().includes(q) || s.nama.toLowerCase().includes(q))
     )
   }, [photoshoot, searchQuery, channelStudents])
@@ -242,15 +244,17 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
         newHistory = [...curProj.photoHistory, historyItem]
       }
 
-      // Check if all required channels have completed
-      const chCount = channelCount(curProj.config.mode)
+      // Check completion: in dual-photoshoot mode, EITHER camera is sufficient
+      // (the participant is considered done after 1 of the 2 cameras takes a photo).
+      // In single-photoshoot mode, the single channel is sufficient.
       let allChannelsDone = true
-      for (let ch = 1; ch <= chCount; ch++) {
-        const chDone = newHistory.some((h) => h.student.id === data.student.id && h.channel === ch)
-        if (!chDone) {
-          allChannelsDone = false
-          break
-        }
+      if (isDualPhotoshootMode(curProj.config.mode)) {
+        const ch1Done = newHistory.some((h) => h.student.id === data.student.id && h.channel === 1)
+        const ch2Done = newHistory.some((h) => h.student.id === data.student.id && h.channel === 2)
+        allChannelsDone = ch1Done || ch2Done
+      } else {
+        // Single-photoshoot: one channel is enough
+        allChannelsDone = true
       }
 
       const updatedProject = {
@@ -461,17 +465,37 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
 
     if (photoshoot) {
-      // Photoshoot mode: always allow sending — NO BLOCKING
+      // Photoshoot mode: always allow sending — NO BLOCKING.
+      // If the selected student is already 'done' (photographed), show a
+      // RESET & KIRIM ULANG button instead — this clears their photoHistory
+      // and resets status to 'pending' so the operator can retake.
+      if (selectedStudent && selectedStudent.status === 'done') {
+        return (
+          <Button
+            onClick={() => handleResetForRetake(selectedStudent)}
+            className={`w-full font-bold cursor-pointer transition-all duration-200 active:scale-[0.98] ${isMobile ? 'h-14 text-base' : 'h-14 text-lg hover:scale-[1.02]'}`}
+            style={{
+              backgroundColor: THEME.gold,
+              color: THEME.bg,
+              border: `2px solid ${THEME.gold}`,
+              boxShadow: `0 0 20px ${THEME.gold}44`,
+            }}
+          >
+            <RotateCcw className="size-5" />
+            RESET & KIRIM ULANG
+          </Button>
+        )
+      }
       return (
         <Button
-          disabled={!selectedStudent || selectedStudent.status === 'done'}
+          disabled={!selectedStudent}
           onClick={handleSendToOperator}
           className={`w-full font-bold cursor-pointer transition-all duration-200 active:scale-[0.98] ${isMobile ? 'h-14 text-base' : 'h-14 text-lg hover:scale-[1.02]'}`}
           style={{
-            backgroundColor: selectedStudent && selectedStudent.status !== 'done' ? THEME.emerald : THEME.panel,
-            color: selectedStudent && selectedStudent.status !== 'done' ? THEME.bg : THEME.muted,
-            border: `2px solid ${selectedStudent && selectedStudent.status !== 'done' ? THEME.emerald : THEME.border}`,
-            boxShadow: selectedStudent && selectedStudent.status !== 'done' ? `0 0 20px ${THEME.emerald}44` : 'none',
+            backgroundColor: selectedStudent ? THEME.emerald : THEME.panel,
+            color: selectedStudent ? THEME.bg : THEME.muted,
+            border: `2px solid ${selectedStudent ? THEME.emerald : THEME.border}`,
+            boxShadow: selectedStudent ? `0 0 20px ${THEME.emerald}44` : 'none',
           }}
         >
           <Send className="size-5" />
@@ -706,9 +730,18 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
 
         {/* Selected student preview */}
         {selectedStudent && (
-          <div className="rounded-lg p-2.5" style={{ backgroundColor: `${THEME.emerald}15`, border: `1px solid ${THEME.emerald}33` }}>
-            <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: THEME.emerald }}>
-              Peserta Dipilih
+          <div
+            className="rounded-lg p-2.5"
+            style={{
+              backgroundColor: selectedStudent.status === 'done' ? `${THEME.gold}15` : `${THEME.emerald}15`,
+              border: `1px solid ${selectedStudent.status === 'done' ? `${THEME.gold}55` : `${THEME.emerald}33`}`,
+            }}
+          >
+            <p
+              className="text-[10px] font-semibold uppercase tracking-wider"
+              style={{ color: selectedStudent.status === 'done' ? THEME.gold : THEME.emerald }}
+            >
+              {selectedStudent.status === 'done' ? '⚠ Peserta Sudah Difoto' : 'Peserta Dipilih'}
             </p>
             <p className="text-sm font-bold truncate" style={{ color: '#ffffff' }}>
               {selectedStudent.nama}
@@ -716,6 +749,11 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
             <p className="text-xs font-mono" style={{ color: THEME.muted }}>
               {selectedStudent.nim}
             </p>
+            {selectedStudent.status === 'done' && (
+              <p className="text-[10px] mt-1" style={{ color: THEME.gold }}>
+                Klik RESET & KIRIM ULANG untuk memfoto ulang.
+              </p>
+            )}
           </div>
         )}
 
@@ -924,7 +962,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
                       className="flex items-center gap-2 px-3 py-2 transition-colors duration-200 cursor-pointer"
                       style={getRowStyle(student)}
                       onClick={() => {
-                        if (photoshoot && student.status !== 'done') {
+                        if (photoshoot) {
                           setSelectedStudent(student)
                           setSearchQuery(student.nama)
                         }
@@ -1083,7 +1121,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
                     className="grid grid-cols-[36px_90px_1fr_80px] gap-2 items-center px-4 py-2 transition-colors duration-200 cursor-pointer"
                     style={getRowStyle(student)}
                     onClick={() => {
-                      if (photoshoot && student.status !== 'done') {
+                      if (photoshoot) {
                         setSelectedStudent(student)
                         setSearchQuery(student.nama)
                       }

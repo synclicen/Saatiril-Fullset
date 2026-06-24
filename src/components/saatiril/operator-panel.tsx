@@ -600,10 +600,20 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       if (doneIds.size > 0) {
         setMcCallBuffer((prev) => prev.filter((s) => !doneIds.has(s.id)))
       }
+
+      // Dual-photoshoot: when EITHER camera takes a photo, the participant is
+      // considered done. If our current target is now 'done' (because the OTHER
+      // operator took the photo), clear our target + captured photos so we don't
+      // take a redundant photo. This realizes the "1 camera is enough" rule.
+      const curTarget = useSaatirilStore.getState().opCurrentTarget
+      if (curTarget && doneIds.has(curTarget.id)) {
+        console.log('[SAATIRIL OP] SYNC_DB: current target is now done — clearing (other operator finished):', curTarget.nama)
+        resetOpState()
+      }
     }
     onLocal('SYNC_DB', handleSyncDb)
     return () => { offLocal('SYNC_DB', handleSyncDb) }
-  }, [setOpCurrentTarget, updateCurrentProject])
+  }, [setOpCurrentTarget, resetOpState, updateCurrentProject])
 
   // ── Finalize capture ────────────────────────────────────────────────────
   // OPTIMIZED: Removed 400ms of unnecessary delays, added STUDENT_DONE lightweight

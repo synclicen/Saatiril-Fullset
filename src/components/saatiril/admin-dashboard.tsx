@@ -6,14 +6,16 @@ import {
   CheckCircle2,
   Copy,
   Camera,
-  Monitor,
   Wifi,
   Image as ImageIcon,
   Clock,
-  Radio,
   Cable,
   Zap,
+  Download,
+  FileSpreadsheet,
+  XCircle,
 } from 'lucide-react'
+import * as XLSX from 'xlsx'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -49,17 +51,17 @@ function buildPhotoshootFilename(nim: string, nama: string, channel: number): st
     : `${nim}_${sanitizeNama(nama)}.jpg`
 }
 
+// ── Helper: human-readable status label for display/export ───────
+function statusToLabel(status: StudentStatus): string {
+  if (status === 'done') return 'Selesai'
+  if (status === 'sent') return 'Dikirim'
+  if (status === 'pending') return 'Belum'
+  // active_N
+  const ch = status.split('_')[1]
+  return ch ? `Aktif Ch.${ch}` : 'Aktif'
+}
+
 // ── Socket event data shapes ─────────────────────────────────────
-interface McCallData {
-  student: Student
-  channel: number
-}
-
-interface OpProgressData {
-  channel: number
-  status: string
-}
-
 interface PhotosSavedData {
   student: Student
   photos: string[]
@@ -90,13 +92,6 @@ export default function AdminDashboard() {
   const currentProject = useSaatirilStore((s) => s.currentProject)
   const updateCurrentProject = useSaatirilStore((s) => s.updateCurrentProject)
 
-  // Local UI state
-  const [liveTargets, setLiveTargets] = useState<Record<number, Student | null>>({})
-  const [cameraStatus, setCameraStatus] = useState<Record<number, string>>({
-    1: 'Menunggu target...',
-    2: 'Menunggu target...',
-  })
-
   // ── Computed values ──────────────────────────────────────────────
   const mode = currentProject?.config.mode ?? 'single'
   const database = currentProject?.database ?? []
@@ -107,6 +102,15 @@ export default function AdminDashboard() {
     () => database.filter((s) => s.status === 'done').length,
     [database],
   )
+  // "Belum" = belum selesai = total - selesai (includes pending, sent, active)
+  const belumCount = useMemo(
+    () => database.filter((s) => s.status !== 'done').length,
+    [database],
+  )
+  const sentCount = useMemo(
+    () => database.filter((s) => s.status === 'sent').length,
+    [database],
+  )
 
   // ── Refs for stable event handlers (avoid re-registering on every project change) ──
   const currentProjectRef = useRef(currentProject)
@@ -114,24 +118,6 @@ export default function AdminDashboard() {
 
   // ── Socket listeners ─────────────────────────────────────────────
   useEffect(() => {
-    const handleMcCall = (data: McCallData) => {
-      setLiveTargets((prev) => ({
-        ...prev,
-        [data.channel]: data.student,
-      }))
-      setCameraStatus((prev) => ({
-        ...prev,
-        [data.channel]: 'Target aktif — Siap foto',
-      }))
-    }
-
-    const handleOpProgress = (data: OpProgressData) => {
-      setCameraStatus((prev) => ({
-        ...prev,
-        [data.channel]: data.status,
-      }))
-    }
-
     const handlePhotosSaved = (data: PhotosSavedData) => {
       const proj = currentProjectRef.current
       if (!proj) return
@@ -201,12 +187,15 @@ export default function AdminDashboard() {
         newHistory = [...proj.photoHistory, historyItem]
       }
 
-      // Check if all required channels have completed for this student
+      // Check completion: in dual-photoshoot mode, EITHER camera is sufficient
+      // (the participant is considered done after 1 of the 2 cameras takes a photo).
+      // In single-photoshoot mode, the single channel is sufficient.
+      // In non-photoshoot modes, mark done immediately.
       let allChannelsDone = true
       if (isDualPhotoshootMode(proj.config.mode)) {
         const ch1Done = newHistory.some((h) => h.student.id === data.student.id && h.channel === 1)
         const ch2Done = newHistory.some((h) => h.student.id === data.student.id && h.channel === 2)
-        allChannelsDone = ch1Done && ch2Done
+        allChannelsDone = ch1Done || ch2Done
       } else if (photoshootMode) {
         // Single photoshoot: one channel is enough
         allChannelsDone = true
@@ -229,16 +218,6 @@ export default function AdminDashboard() {
         database: updatedDatabase,
         photoHistory: newHistory,
       })
-
-      // Clear the live target for this channel — photo session is complete
-      setLiveTargets((prev) => ({
-        ...prev,
-        [data.channel]: null,
-      }))
-      setCameraStatus((prev) => ({
-        ...prev,
-        [data.channel]: 'Selesai — Menunggu target...',
-      }))
     }
 
     const handleSyncDb = (data: SyncDbData) => {
@@ -260,23 +239,6 @@ export default function AdminDashboard() {
         photoHistory: mergedPhotoHistory,
         config: mergedConfig,
       })
-
-      // Check if any active student in the synced DB is now done — clear live targets
-      for (let ch = 1; ch <= 2; ch++) {
-        const hadActive = proj.database.some((s) => s.assignedChannel === ch && s.status.startsWith('active'))
-        const nowDone = data.project.database.some((s) => s.assignedChannel === ch && s.status === 'done')
-        if (hadActive && nowDone) {
-          setLiveTargets((prev) => ({ ...prev, [ch]: null }))
-          setCameraStatus((prev) => ({ ...prev, [ch]: 'Selesai — Menunggu target...' }))
-        }
-      }
-    }
-
-    // STUDENT_DONE: lightweight event for immediate live-target clearing
-    const handleStudentDone = (data: { studentId: string; channel: number }) => {
-      console.log('[SAATIRIL ADMIN] STUDENT_DONE received — immediate clear:', data.studentId, 'Ch.', data.channel)
-      setLiveTargets((prev) => ({ ...prev, [data.channel]: null }))
-      setCameraStatus((prev) => ({ ...prev, [data.channel]: 'Selesai — Menunggu target...' }))
     }
 
     // STUDENT_RESET: explicit reset/retake signal from MC.
@@ -292,33 +254,24 @@ export default function AdminDashboard() {
         s.id === data.studentId ? { ...s, status: 'pending' as StudentStatus } : s,
       )
       updateCurrentProject({ ...proj, database: cleanedDb, photoHistory: cleanedHistory })
-      // Clear any live target showing this student on the reset channel
-      setLiveTargets((prev) => (prev[data.channel]?.id === data.studentId ? { ...prev, [data.channel]: null } : prev))
     }
 
-    onLocal('MC_CALL', handleMcCall)
-    onLocal('OP_PROGRESS', handleOpProgress)
     onLocal('PHOTOS_SAVED', handlePhotosSaved)
     onLocal('SYNC_DB', handleSyncDb)
-    onLocal('STUDENT_DONE', handleStudentDone)
     onLocal('STUDENT_RESET', handleStudentReset)
 
     return () => {
-      offLocal('MC_CALL', handleMcCall)
-      offLocal('OP_PROGRESS', handleOpProgress)
       offLocal('PHOTOS_SAVED', handlePhotosSaved)
       offLocal('SYNC_DB', handleSyncDb)
-      offLocal('STUDENT_DONE', handleStudentDone)
       offLocal('STUDENT_RESET', handleStudentReset)
     }
   }, [updateCurrentProject])
 
   // ── Network quality state ──────────────────────────────────────
-  const [networkHealth, setNetworkHealth] = useState<ConnectionHealth>(getConnectionHealth())
+  const [networkHealth, setNetworkHealth] = useState<ConnectionHealth>(() => getConnectionHealth())
 
   useEffect(() => {
     const unsub = onLatencyUpdate((h) => setNetworkHealth({ ...h }))
-    setNetworkHealth(getConnectionHealth())
     return unsub
   }, [])
 
@@ -387,173 +340,258 @@ export default function AdminDashboard() {
     [toast, lanInfo],
   )
 
-  // ── Render: Status Panel ─────────────────────────────────────────
-  const renderStatusPanel = () => (
-    <Card className={`${PANEL} ${BORDER} shadow-lg`}>
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-sm font-semibold tracking-wide text-[#c4b5fd]">
-          <Monitor className="size-4" style={{ color: GOLD }} />
-          Status Panel
+  // ── Export participants to Excel ─────────────────────────────────
+  // Generates an .xlsx file with No, NIM, Nama, Status, Channel — used by
+  // admin as an offline control sheet to verify total/belum/sudah at the
+  // end of an event.
+  const exportToExcel = useCallback(() => {
+    if (!currentProject) {
+      toast({
+        title: 'Tidak ada proyek aktif',
+        description: 'Buka proyek terlebih dahulu sebelum mengekspor.',
+        variant: 'destructive',
+      })
+      return
+    }
+    if (database.length === 0) {
+      toast({
+        title: 'Daftar peserta kosong',
+        description: 'Belum ada peserta untuk diekspor.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    try {
+      const rows = database.map((s, idx) => ({
+        No: idx + 1,
+        NIM: s.nim,
+        Nama: s.nama,
+        Status: statusToLabel(s.status),
+        Channel: s.assignedChannel,
+      }))
+      const ws = XLSX.utils.json_to_sheet(rows)
+      // Column widths
+      ws['!cols'] = [
+        { wch: 5 },
+        { wch: 20 },
+        { wch: 36 },
+        { wch: 14 },
+        { wch: 10 },
+      ]
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'Daftar Peserta')
+
+      const dateStr = new Date().toISOString().slice(0, 10)
+      const safeName = currentProject.name.replace(/[^a-zA-Z0-9-_]/g, '_').slice(0, 40)
+      const filename = `Daftar_Peserta_${safeName}_${dateStr}.xlsx`
+      XLSX.writeFile(wb, filename)
+
+      toast({
+        title: 'Ekspor berhasil',
+        description: `${filename} — ${database.length} peserta (Selesai: ${doneCount}, Belum: ${belumCount}).`,
+      })
+    } catch (err) {
+      console.error('[SAATIRIL ADMIN] Excel export failed:', err)
+      toast({
+        title: 'Ekspor gagal',
+        description: 'Terjadi kesalahan saat membuat file Excel.',
+        variant: 'destructive',
+      })
+    }
+  }, [currentProject, database, doneCount, belumCount, toast])
+
+  // ── Render: Daftar Peserta (replaces Status Panel + Live Command Center) ──
+  // Shows: Total / Selesai / Belum stats + scrollable participant list +
+  // Excel export button. Gives admin a single control panel for monitoring
+  // participant progress and exporting data for offline verification.
+  const renderDaftarPeserta = () => (
+    <Card className={`${PANEL} ${BORDER} shadow-lg flex flex-col`}>
+      <CardHeader className="pb-2 shrink-0">
+        <CardTitle className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-sm font-semibold tracking-wide text-[#c4b5fd]">
+            <Users className="size-4" style={{ color: GOLD }} />
+            Daftar Peserta
+          </div>
+          <Button
+            onClick={exportToExcel}
+            disabled={database.length === 0}
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 border-emerald-400/30 bg-emerald-400/10 text-emerald-300 hover:bg-emerald-400/20 hover:text-emerald-200 disabled:opacity-40"
+            title="Ekspor daftar peserta & status ke Excel"
+          >
+            <FileSpreadsheet className="size-3.5" />
+            <span className="hidden sm:inline">Excel</span>
+            <Download className="size-3" />
+          </Button>
         </CardTitle>
       </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        <div className="flex items-center justify-between rounded-lg bg-[#1a0b2e]/60 px-4 py-3">
-          <div className="flex items-center gap-2">
-            <Users className="size-4 text-[#c4b5fd]" />
-            <span className="text-sm text-[#c4b5fd]">Total Peserta</span>
+      <CardContent className="flex flex-col gap-3 flex-1 min-h-0">
+        {/* ── Stats: Total / Selesai / Belum ── */}
+        <div className="grid grid-cols-3 gap-2 shrink-0">
+          <div className="rounded-lg bg-[#1a0b2e]/60 px-2.5 py-2.5 text-center">
+            <div className="flex items-center justify-center gap-1.5 mb-1">
+              <Users className="size-3 text-[#c4b5fd]" />
+              <span className="text-[10px] uppercase tracking-wider text-[#c4b5fd]/70">Total</span>
+            </div>
+            <span className="text-2xl font-bold" style={{ color: GOLD }}>
+              {totalPeserta}
+            </span>
           </div>
-          <span className="text-2xl font-bold" style={{ color: GOLD }}>
-            {totalPeserta}
-          </span>
+          <div className="rounded-lg bg-[#1a0b2e]/60 px-2.5 py-2.5 text-center">
+            <div className="flex items-center justify-center gap-1.5 mb-1">
+              <CheckCircle2 className="size-3 text-emerald-400" />
+              <span className="text-[10px] uppercase tracking-wider text-[#c4b5fd]/70">Selesai</span>
+            </div>
+            <span className="text-2xl font-bold text-emerald-400">{doneCount}</span>
+          </div>
+          <div className="rounded-lg bg-[#1a0b2e]/60 px-2.5 py-2.5 text-center">
+            <div className="flex items-center justify-center gap-1.5 mb-1">
+              <XCircle className="size-3 text-amber-400" />
+              <span className="text-[10px] uppercase tracking-wider text-[#c4b5fd]/70">Belum</span>
+            </div>
+            <span className="text-2xl font-bold text-amber-400">{belumCount}</span>
+          </div>
         </div>
-        <div className="flex items-center justify-between rounded-lg bg-[#1a0b2e]/60 px-4 py-3">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="size-4 text-emerald-400" />
-            <span className="text-sm text-[#c4b5fd]">Selesai Difoto</span>
+
+        {/* ── Progress bar ── */}
+        {totalPeserta > 0 && (
+          <div className="shrink-0">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] text-[#c4b5fd]/70">Progres</span>
+              <span className="text-[10px] font-mono text-[#c4b5fd]">
+                {doneCount}/{totalPeserta} ({Math.round((doneCount / totalPeserta) * 100)}%)
+              </span>
+            </div>
+            <div className="h-1.5 w-full rounded-full bg-[#1a0b2e]/80 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-emerald-400 transition-all duration-300"
+                style={{ width: `${(doneCount / totalPeserta) * 100}%` }}
+              />
+            </div>
           </div>
-          <span className="text-2xl font-bold text-emerald-400">{doneCount}</span>
+        )}
+
+        <Separator className="bg-[#533485]/40 shrink-0" />
+
+        {/* ── Participant list ── */}
+        <div className="flex flex-col min-h-0 flex-1">
+          <div className="flex items-center justify-between mb-1.5 shrink-0">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-[#c4b5fd]/70">
+              Detail Peserta
+            </span>
+            {sentCount > 0 && (
+              <span className="text-[10px] text-cyan-300/80">
+                {sentCount} sedang dipotret
+              </span>
+            )}
+          </div>
+
+          {/* Column header */}
+          <div
+            className="shrink-0 grid grid-cols-[28px_70px_1fr_70px] gap-1.5 px-2 py-1.5 text-[9px] font-semibold uppercase tracking-wider rounded-t-md"
+            style={{ backgroundColor: '#1a0b2e80', color: '#c4b5fd99' }}
+          >
+            <span>No</span>
+            <span>NIM</span>
+            <span>Nama</span>
+            <span className="text-right">Status</span>
+          </div>
+
+          <ScrollArea className="flex-1 min-h-0 max-h-72">
+            <div className="flex flex-col">
+              {database.length === 0 ? (
+                <div className="flex items-center justify-center py-8">
+                  <p className="text-xs text-[#c4b5fd]/50">Belum ada peserta</p>
+                </div>
+              ) : (
+                database.map((student, idx) => {
+                  const isDone = student.status === 'done'
+                  const isSent = student.status === 'sent'
+                  const isActive = student.status.startsWith('active')
+                  return (
+                    <div
+                      key={student.id}
+                      className="grid grid-cols-[28px_70px_1fr_70px] gap-1.5 items-center px-2 py-1.5 border-b border-[#533485]/20 transition-colors hover:bg-white/5"
+                      style={{
+                        backgroundColor: isDone
+                          ? 'rgba(34,197,94,0.05)'
+                          : isSent
+                            ? 'rgba(6,182,212,0.05)'
+                            : isActive
+                              ? 'rgba(212,175,55,0.05)'
+                              : 'transparent',
+                      }}
+                    >
+                      <span className="text-[10px] font-mono text-[#c4b5fd]/50">{idx + 1}</span>
+                      <span className="text-[10px] font-mono truncate text-[#c4b5fd]/80">{student.nim}</span>
+                      <span
+                        className={`text-xs font-medium truncate ${isDone ? 'line-through text-[#c4b5fd]/50' : 'text-[#e0e0ff]'}`}
+                      >
+                        {student.nama}
+                      </span>
+                      <div className="flex justify-end">
+                        {isDone ? (
+                          <Badge
+                            className="text-[9px] px-1 py-0"
+                            style={{
+                              backgroundColor: 'rgba(74,222,128,0.15)',
+                              color: '#4ade80',
+                              border: '1px solid rgba(74,222,128,0.3)',
+                            }}
+                          >
+                            <CheckCircle2 className="size-2.5 mr-0.5" />
+                            Selesai
+                          </Badge>
+                        ) : isSent ? (
+                          <Badge
+                            className="text-[9px] px-1 py-0 animate-pulse"
+                            style={{
+                              backgroundColor: 'rgba(6,182,212,0.15)',
+                              color: CYAN,
+                              border: '1px solid rgba(6,182,212,0.3)',
+                            }}
+                          >
+                            <Camera className="size-2.5 mr-0.5" />
+                            Proses
+                          </Badge>
+                        ) : isActive ? (
+                          <Badge
+                            className="text-[9px] px-1 py-0 animate-pulse"
+                            style={{
+                              backgroundColor: 'rgba(212,175,55,0.15)',
+                              color: GOLD,
+                              border: '1px solid rgba(212,175,55,0.3)',
+                            }}
+                          >
+                            <Camera className="size-2.5 mr-0.5" />
+                            Aktif
+                          </Badge>
+                        ) : (
+                          <Badge
+                            className="text-[9px] px-1 py-0"
+                            style={{
+                              backgroundColor: 'rgba(251,191,36,0.1)',
+                              color: '#fbbf24',
+                              border: '1px solid rgba(251,191,36,0.25)',
+                            }}
+                          >
+                            <Clock className="size-2.5 mr-0.5" />
+                            Belum
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </ScrollArea>
         </div>
       </CardContent>
     </Card>
   )
-
-  // ── Render: Live Command Center ──────────────────────────────────
-  const renderLiveCommandCenter = () => {
-    const target1 = liveTargets[1]
-    const target2 = liveTargets[2]
-    const status1 = cameraStatus[1] ?? 'Menunggu target...'
-    const status2 = cameraStatus[2] ?? 'Menunggu target...'
-    const photoshoot = isPhotoshootMode(mode)
-    const dualPhotoshoot = isDualPhotoshootMode(mode)
-
-    return (
-      <Card className={`${PANEL} ${BORDER} shadow-lg`}>
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-sm font-semibold tracking-wide text-[#c4b5fd]">
-            <Radio className="size-4" style={{ color: GOLD }} />
-            Live Command Center
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          {mode === 'single' ? (
-            <div className="rounded-lg bg-[#1a0b2e]/60 px-4 py-3">
-              <div className="mb-1 text-xs uppercase tracking-wider text-[#c4b5fd]/70">
-                Target Aktif
-              </div>
-              <div className="text-base font-semibold" style={{ color: GOLD }}>
-                {target1 ? target1.nama : '—'}
-              </div>
-              <Separator className="my-2 bg-[#533485]/50" />
-              <div className="flex items-center gap-2">
-                <Camera className="size-3.5 text-[#c4b5fd]/70" />
-                <span className="text-xs text-[#c4b5fd]">{status1}</span>
-              </div>
-            </div>
-          ) : photoshoot && !dualPhotoshoot ? (
-            /* Single Photoshoot */
-            <div className="rounded-lg bg-[#1a0b2e]/60 px-4 py-3">
-              <div className="mb-1 text-xs uppercase tracking-wider text-[#c4b5fd]/70">
-                Target Photoshoot
-              </div>
-              <div className="text-base font-semibold" style={{ color: '#4ade80' }}>
-                {target1 ? target1.nama : '—'}
-              </div>
-              <Separator className="my-2 bg-[#533485]/50" />
-              <div className="flex items-center gap-2">
-                <Camera className="size-3.5 text-[#c4b5fd]/70" />
-                <span className="text-xs text-[#c4b5fd]">{status1}</span>
-              </div>
-            </div>
-          ) : dualPhotoshoot ? (
-            /* Dual Photoshoot */
-            <div className="flex flex-col gap-3">
-              <div className="rounded-lg bg-[#1a0b2e]/60 px-4 py-3">
-                <div className="mb-1 flex items-center gap-2">
-                  <Badge
-                    className="border-emerald-400/40 text-[10px]"
-                    style={{ backgroundColor: 'rgba(74,222,128,0.15)', color: '#4ade80' }}
-                  >
-                    Camera 1
-                  </Badge>
-                </div>
-                <div className="text-sm font-semibold" style={{ color: '#4ade80' }}>
-                  {target1 ? target1.nama : '—'}
-                </div>
-                <Separator className="my-2 bg-[#533485]/50" />
-                <div className="flex items-center gap-2">
-                  <Camera className="size-3.5 text-[#c4b5fd]/70" />
-                  <span className="text-xs text-[#c4b5fd]">{status1}</span>
-                </div>
-              </div>
-              <div className="rounded-lg bg-[#1a0b2e]/60 px-4 py-3">
-                <div className="mb-1 flex items-center gap-2">
-                  <Badge
-                    className="border-cyan-400/40 text-[10px]"
-                    style={{ backgroundColor: 'rgba(6,182,212,0.15)', color: CYAN }}
-                  >
-                    Camera 2
-                  </Badge>
-                </div>
-                <div className="text-sm font-semibold" style={{ color: CYAN }}>
-                  {target2 ? target2.nama : '—'}
-                </div>
-                <Separator className="my-2 bg-[#533485]/50" />
-                <div className="flex items-center gap-2">
-                  <Camera className="size-3.5 text-[#c4b5fd]/70" />
-                  <span className="text-xs text-[#c4b5fd]">{status2}</span>
-                </div>
-              </div>
-            </div>
-          ) : (
-            /* Standard Dual Mode */
-            <div className="flex flex-col gap-3">
-              {/* Camera KIRI — Jalur 1 */}
-              <div className="rounded-lg bg-[#1a0b2e]/60 px-4 py-3">
-                <div className="mb-1 flex items-center gap-2">
-                  <Badge
-                    className="border-[#d4af37]/40 text-[10px]"
-                    style={{ backgroundColor: 'rgba(212,175,55,0.15)', color: GOLD }}
-                  >
-                    Camera KIRI
-                  </Badge>
-                  <span className="text-[10px] text-[#c4b5fd]/60">Jalur 1</span>
-                </div>
-                <div className="text-sm font-semibold" style={{ color: GOLD }}>
-                  {target1 ? target1.nama : '—'}
-                </div>
-                <Separator className="my-2 bg-[#533485]/50" />
-                <div className="flex items-center gap-2">
-                  <Camera className="size-3.5 text-[#c4b5fd]/70" />
-                  <span className="text-xs text-[#c4b5fd]">{status1}</span>
-                </div>
-              </div>
-
-              {/* Camera KANAN — Jalur 2 */}
-              <div className="rounded-lg bg-[#1a0b2e]/60 px-4 py-3">
-                <div className="mb-1 flex items-center gap-2">
-                  <Badge
-                    className="border-[#06b6d4]/40 text-[10px]"
-                    style={{ backgroundColor: 'rgba(6,182,212,0.15)', color: CYAN }}
-                  >
-                    Camera KANAN
-                  </Badge>
-                  <span className="text-[10px] text-[#c4b5fd]/60">Jalur 2</span>
-                </div>
-                <div className="text-sm font-semibold" style={{ color: CYAN }}>
-                  {target2 ? target2.nama : '—'}
-                </div>
-                <Separator className="my-2 bg-[#533485]/50" />
-                <div className="flex items-center gap-2">
-                  <Camera className="size-3.5 text-[#c4b5fd]/70" />
-                  <span className="text-xs text-[#c4b5fd]">{status2}</span>
-                </div>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    )
-  }
 
   // ── Render: LAN Access Distribution ──────────────────────────────
   const renderLanAccess = () => {
@@ -953,8 +991,7 @@ export default function AdminDashboard() {
       <div className="mx-auto flex h-full max-w-7xl flex-col gap-3 sm:gap-4 md:flex-row md:gap-6">
         {/* ── Left Column (1/3 on desktop, full width on mobile) ── */}
         <div className="flex w-full flex-col gap-3 sm:gap-4 md:w-1/3 shrink-0 overflow-y-auto custom-scroll max-h-[40vh] md:max-h-none">
-          {renderStatusPanel()}
-          {renderLiveCommandCenter()}
+          {renderDaftarPeserta()}
           {renderLanAccess()}
           {renderNetworkTips()}
         </div>

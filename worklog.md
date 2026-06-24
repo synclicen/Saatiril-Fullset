@@ -285,3 +285,56 @@ Stage Summary:
 - Keyboard shortcuts restored: Space/Enter=photo, Esc=cancel timer, F=fullscreen
 - ShutterMode type no longer includes 'palm'; SHUTTER_MODES array no longer has palm entry
 - ESLint passes with zero errors
+
+---
+Task ID: 6
+Agent: Main Agent
+Task: Fix reset/resend for photographed participants, dual-mode "either camera" completion, and replace Admin Live Command Center cameras with Daftar Peserta + Excel export
+
+Work Log:
+- Read worklog.md and analyzed the 3 user requirements with 2 uploaded screenshots
+- Explored mc-panel.tsx (1112 lines), admin-dashboard.tsx (969 lines), operator-panel.tsx (1875 lines), store (450 lines)
+- Identified root causes:
+  1. MC search filter excluded 'done' status → photographed participants unsearchable
+  2. MC row onClick blocked selecting 'done' students
+  3. MC renderCallButton disabled send when status==='done' (no reset path from search)
+  4. MC + Admin PHOTOS_SAVED handlers required BOTH channels (ch1Done && ch2Done) for dual-photoshoot completion
+  5. Operator SYNC_DB handler didn't clear opCurrentTarget when the OTHER operator finished (redundant photo risk)
+  6. Admin Live Command Center showed Camera 1/2 info instead of participant progress
+
+Fix #1 — MC can find & reset photographed participants (mc-panel.tsx):
+- searchResults filter: added 'done' to the status whitelist (was pending|sent only)
+- Row onClick (mobile + desktop): removed the `student.status !== 'done'` guard — 'done' students are now selectable
+- renderCallButton: when selectedStudent.status === 'done', renders a gold "RESET & KIRIM ULANG" button that calls handleResetForRetake (clears photoHistory + resets to 'pending' + emits STUDENT_RESET to operators)
+- selectedStudent preview: shows a gold "⚠ Peserta Sudah Difoto" warning + "Klik RESET & KIRIM ULANG untuk memfoto ulang." hint when status is 'done'
+
+Fix #2 — Dual-photoshoot: EITHER camera is sufficient (3 files):
+- mc-panel.tsx PHOTOS_SAVED handler: replaced the `for ch=1..chCount` ALL-channels loop with `allChannelsDone = ch1Done || ch2Done` for dual-photoshoot mode (single-photoshoot stays single-channel)
+- admin-dashboard.tsx PHOTOS_SAVED handler: changed `allChannelsDone = ch1Done && ch2Done` → `ch1Done || ch2Done` for dual-photoshoot
+- operator-panel.tsx SYNC_DB handler: added logic — if our current opCurrentTarget is now in doneIds (because the OTHER operator took the photo), call resetOpState() to clear our target + captured photos, preventing a redundant capture
+
+Fix #3 — Replace Admin Live Command Center cameras with Daftar Peserta (admin-dashboard.tsx):
+- Added imports: Download, FileSpreadsheet, XCircle icons + `* as XLSX from 'xlsx'` (xlsx already in package.json)
+- Added statusToLabel() helper: done→Selesai, sent→Dikirim, pending→Belum, active_N→Aktif Ch.N
+- Added belumCount + sentCount useMemo computed values
+- Added exportToExcel() callback: builds rows (No, NIM, Nama, Status, Channel), creates worksheet with column widths, writes .xlsx file named `Daftar_Peserta_{project}_{date}.xlsx`, shows success toast with counts
+- Removed liveTargets + cameraStatus state (only used by the old camera display)
+- Removed MC_CALL, OP_PROGRESS, STUDENT_DONE socket handlers (they only set the removed state)
+- Removed McCallData + OpProgressData interfaces
+- Cleaned up handlePhotosSaved, handleSyncDb, handleStudentReset: removed all setLiveTargets/setCameraStatus calls
+- Removed Monitor + Radio icon imports (no longer used)
+- Replaced renderStatusPanel + renderLiveCommandCenter with a single renderDaftarPeserta:
+  - Header: "Daftar Peserta" title + green Excel export button (disabled when empty)
+  - 3 stat boxes in a row: Total (gold) / Selesai (emerald) / Belum (amber)
+  - Progress bar: doneCount/totalPeserta with percentage
+  - Scrollable participant list (max-h-72) with No/NIM/Nama/Status columns
+  - Color-coded status badges: Selesai (green ✓), Proses (cyan, pulsing), Aktif (gold, pulsing), Belum (amber clock)
+  - Done rows have line-through nama + green tint; sent rows have cyan tint
+- Fixed pre-existing lint error: removed redundant `setNetworkHealth(getConnectionHealth())` in effect (used lazy useState initializer instead)
+
+Stage Summary:
+- MC can now search for and select photographed ('done') participants, then reset them for retake via the "RESET & KIRIM ULANG" button
+- Dual-photoshoot mode now considers a participant complete when EITHER camera takes a photo (not both); the other operator's target is auto-cleared via SYNC_DB
+- Admin Live Command Center camera panels replaced with a comprehensive Daftar Peserta panel showing Total/Selesai/Belum stats, progress bar, scrollable participant list, and one-click Excel export
+- Lint passes with zero errors
+- Dev server compiles cleanly (HTTP 200)
