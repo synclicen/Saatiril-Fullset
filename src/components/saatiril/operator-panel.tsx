@@ -58,6 +58,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
 import { useAIDetection, type AIMomentEvent } from '@/hooks/use-ai-detection'
 import { usePalmDetection } from '@/hooks/use-palm-detection'
+import { useToast } from '@/hooks/use-toast'
 
 // ─── Theme tokens ───────────────────────────────────────────────────────────
 const THEME = {
@@ -118,18 +119,23 @@ function parseRatio(ratioStr: string): number {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-function sanitizeNama(nama: string): string {
-  return nama.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '')
+// DEFENSIVE: nama/nim can be undefined if a photoHistory entry got corrupted
+// during reset+retake cycles. Never let .trim() crash the whole app.
+function sanitizeNama(nama: string | undefined | null): string {
+  return (nama ?? '').trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '')
 }
 
-function buildFilename(nim: string, nama: string, suffix: number, type: string): string {
-  return `${nim}_${sanitizeNama(nama)}_${suffix}_${type}.jpg`
+function sanitizeNim(nim: string | undefined | null): string {
+  return (nim ?? '').toString().trim().replace(/[^a-zA-Z0-9_-]/g, '')
 }
 
-function buildPhotoshootFilename(nim: string, nama: string, channel: number): string {
-  return channel > 1
-    ? `${nim}_${sanitizeNama(nama)}_Ch${channel}.jpg`
-    : `${nim}_${sanitizeNama(nama)}.jpg`
+function buildFilename(nim: string | undefined, nama: string | undefined, suffix: number, type: string): string {
+  return `${sanitizeNim(nim)}_${sanitizeNama(nama)}_${suffix}_${type}.jpg`
+}
+
+function buildPhotoshootFilename(nim: string | undefined, nama: string | undefined, channel: number): string {
+  const base = `${sanitizeNim(nim)}_${sanitizeNama(nama)}`
+  return channel > 1 ? `${base}_Ch${channel}.jpg` : `${base}.jpg`
 }
 
 function isActiveStatus(status: StudentStatus): boolean {
@@ -197,6 +203,7 @@ interface SyncDbData {
 // ─── Component ──────────────────────────────────────────────────────────────
 export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const isMobile = useIsMobile()
+  const { toast } = useToast()
 
   // ── Store ────────────────────────────────────────────────────────────────
   const currentProject = useSaatirilStore((s) => s.currentProject)
@@ -356,7 +363,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     return channelStudents.filter((s) => s.status === 'pending').length
   }, [channelStudents])
 
-  const hasActiveTarget = opCurrentTarget !== null
+  const hasActiveTarget = opCurrentTarget !== null && !!opCurrentTarget.id && (opCurrentTarget.nama !== undefined || opCurrentTarget.nim !== undefined)
 
   const capturePhase = useMemo<CapturePhase>(() => {
     if (sending) return 'sending'
@@ -661,7 +668,15 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       // Photoshoot mode: save after 1 photo
       if (isPhotoshoot && photoCount >= 1) {
         if (!currentTarget) {
-          console.warn('[SAATIRIL OP] finalizeCapture: opCurrentTarget is null — aborting')
+          console.warn('[SAATIRIL OP] finalizeCapture: opCurrentTarget is null — aborting save')
+          // CRITICAL: tell the operator WHY the photo wasn't saved, so they
+          // don't think it was captured successfully. This happens when MC
+          // resets a student but hasn't re-sent them yet.
+          toast({
+            title: 'Foto Tidak Tersimpan',
+            description: 'Tidak ada peserta aktif. Minta MC mengirim ulang peserta, lalu foto kembali.',
+            variant: 'destructive',
+          })
           setSending(false)
           isCapturingRef.current = false
           resetOpState()
@@ -695,15 +710,34 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           if (api?.savePhoto) {
             const targetFolder = projConfig.targetFolder
             const filename = buildPhotoshootFilename(student.nim, student.nama, myChannel)
+            console.log(`[SAATIRIL OP] Saving photo to disk: ${targetFolder}/${filename}`)
 
             api.savePhoto({ base64Data: allPhotos[0], filename, targetFolder }).then((path: string | null) => {
               if (path) {
-                console.log(`[SAATIRIL OP] Photo saved to disk: → ${path}`)
+                console.log(`[SAATIRIL OP] ✓ Photo saved to disk: → ${path}`)
               } else {
-                console.warn('[SAATIRIL OP] Photo failed to save to disk')
+                console.warn(`[SAATIRIL OP] ✗ Photo FAILED to save to disk: ${targetFolder}/${filename}`)
+                toast({
+                  title: 'Gagal Simpan ke Disk',
+                  description: `Foto ${filename} tidak tersimpan. Cek ruang disk & folder target.`,
+                  variant: 'destructive',
+                })
               }
             }).catch((err: Error) => {
               console.error('[SAATIRIL OP] Error saving photo to disk:', err)
+              toast({
+                title: 'Error Simpan Foto',
+                description: err.message || 'Terjadi kesalahan saat menyimpan ke disk.',
+                variant: 'destructive',
+              })
+            })
+          } else {
+            // Browser mode (not Electron) — photos only live in memory.
+            console.warn('[SAATIRIL OP] window.saatirilAPI.savePhoto not available — running in browser mode. Photo NOT saved to disk.')
+            toast({
+              title: 'Mode Browser — Foto Tidak ke Disk',
+              description: 'Jalankan aplikasi via Electron desktop agar foto tersimpan permanen ke disk.',
+              variant: 'destructive',
             })
           }
         }
@@ -719,7 +753,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Pose 1 OK — Siap Foto 2' })
       } else if (photoCount >= 2) {
         if (!currentTarget) {
-          console.warn('[SAATIRIL OP] finalizeCapture: opCurrentTarget is null — aborting')
+          console.warn('[SAATIRIL OP] finalizeCapture: opCurrentTarget is null — aborting save')
+          toast({
+            title: 'Foto Tidak Tersimpan',
+            description: 'Tidak ada peserta aktif. Minta MC mengirim ulang peserta, lalu foto kembali.',
+            variant: 'destructive',
+          })
           setSending(false)
           isCapturingRef.current = false
           resetOpState()
@@ -761,21 +800,37 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             const targetFolder = projConfig.targetFolder
             const togaFilename = buildFilename(student.nim, student.nama, 1, 'Toga')
             const ijazahFilename = buildFilename(student.nim, student.nama, 2, 'Ijazah')
+            console.log(`[SAATIRIL OP] Saving 2 photos to disk: ${targetFolder}/`)
 
             Promise.all([
               api.savePhoto({ base64Data: allPhotos[0], filename: togaFilename, targetFolder }),
               api.savePhoto({ base64Data: allPhotos[1], filename: ijazahFilename, targetFolder }),
             ]).then(([path1, path2]) => {
               if (path1 && path2) {
-                console.log(`[SAATIRIL OP] Photos saved to disk:\n  → ${path1}\n  → ${path2}`)
+                console.log(`[SAATIRIL OP] ✓ Photos saved to disk:\n  → ${path1}\n  → ${path2}`)
               } else {
-                console.warn('[SAATIRIL OP] Some photos failed to save to disk')
+                console.warn(`[SAATIRIL OP] ✗ Some photos FAILED to save: toga=${!!path1} ijazah=${!!path2}`)
+                toast({
+                  title: 'Gagal Simpan ke Disk',
+                  description: 'Sebagian foto tidak tersimpan. Cek ruang disk & folder target.',
+                  variant: 'destructive',
+                })
               }
             }).catch((err) => {
               console.error('[SAATIRIL OP] Error saving photos to disk:', err)
+              toast({
+                title: 'Error Simpan Foto',
+                description: err.message || 'Terjadi kesalahan saat menyimpan ke disk.',
+                variant: 'destructive',
+              })
             })
           } else {
-            console.log('[SAATIRIL OP] Not running in Electron — photos not saved to disk')
+            console.warn('[SAATIRIL OP] Not running in Electron — photos not saved to disk')
+            toast({
+              title: 'Mode Browser — Foto Tidak ke Disk',
+              description: 'Jalankan aplikasi via Electron desktop agar foto tersimpan permanen ke disk.',
+              variant: 'destructive',
+            })
           }
         }
 
@@ -783,7 +838,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         finishCapture(student, historyItem)
       }
     },
-    [myChannel, addOpCapturedPhoto, updateStudentStatus, saveProjectsToStorageNow, resetOpState],
+    [myChannel, addOpCapturedPhoto, updateStudentStatus, saveProjectsToStorageNow, resetOpState, toast],
   )
 
   // ── Photo capture logic ──────────────────────────────────────────────────

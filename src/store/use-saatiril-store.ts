@@ -284,6 +284,76 @@ function trimPhotoHistory(history: PhotoHistoryItem[]): PhotoHistoryItem[] {
   return history.slice(history.length - MAX_PHOTO_HISTORY_IN_MEMORY)
 }
 
+/**
+ * CRITICAL: Sanitize a project's data to prevent render crashes.
+ *
+ * During reset+retake cycles or cross-client sync, photoHistory entries can
+ * become corrupted (missing student object, missing nama/nim fields). If such
+ * an entry is rendered, sanitizeNama(undefined) would crash the whole app to
+ * a white screen — and because the corrupted data is persisted in localStorage,
+ * reopening the project crashes AGAIN (infinite loop).
+ *
+ * This function:
+ * 1. Removes photoHistory entries with missing/invalid student objects
+ * 2. Ensures every student in `database` has required string fields (nama, nim)
+ * 3. Returns a clean project that is safe to render
+ *
+ * Called on load and whenever a project is set as current.
+ */
+export function sanitizeProject(project: Project): Project {
+  if (!project || typeof project !== 'object') return project
+
+  // Sanitize database: ensure every student has string nama/nim/id
+  const cleanDatabase: Student[] = (project.database || []).map((s) => ({
+    id: s?.id ?? `unknown_${Math.random().toString(36).slice(2)}`,
+    nim: (s?.nim ?? '').toString(),
+    nama: (s?.nama ?? '').toString(),
+    status: (s?.status ?? 'pending') as StudentStatus,
+    assignedChannel: s?.assignedChannel ?? 1,
+  })).filter((s) => s.nim || s.nama) // drop fully-empty rows
+
+  // Sanitize photoHistory: drop entries with missing student or student.id,
+  // AND drop phantom entries (student not in database — can happen if a
+  // corrupted SYNC_DB created an orphan history item).
+  const validStudentIds = new Set(cleanDatabase.map((s) => s.id))
+  const cleanPhotoHistory: PhotoHistoryItem[] = (project.photoHistory || [])
+    .filter((h) => h && h.student && h.student.id && validStudentIds.has(h.student.id))
+    .map((h) => ({
+      student: {
+        id: h.student.id,
+        nim: (h.student.nim ?? '').toString(),
+        nama: (h.student.nama ?? '').toString(),
+        status: (h.student.status ?? 'done') as StudentStatus,
+        assignedChannel: h.student.assignedChannel ?? 1,
+      },
+      photos: Array.isArray(h.photos) ? h.photos : [],
+      channel: h.channel ?? 1,
+    }))
+
+  // Sanitize config: ensure targetFolder is a string
+  const cleanConfig: ProjectConfig = {
+    mode: project.config?.mode ?? 'single',
+    ratio: project.config?.ratio ?? '4:3',
+    preset: project.config?.preset ?? 'original',
+    targetFolder: (project.config?.targetFolder ?? '').toString(),
+    frame: project.config?.frame ?? null,
+  }
+
+  return {
+    id: project.id,
+    name: (project.name ?? 'Tanpa Nama').toString(),
+    config: cleanConfig,
+    database: cleanDatabase,
+    photoHistory: cleanPhotoHistory,
+  }
+}
+
+/** Sanitize an array of projects (used on load from localStorage). */
+export function sanitizeProjects(projects: Project[]): Project[] {
+  if (!Array.isArray(projects)) return []
+  return projects.map(sanitizeProject)
+}
+
 export const useSaatirilStore = create<SaatirilState>((set, get) => ({
   projects: [],
   currentProject: null,
@@ -313,6 +383,8 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
   setCurrentProject: (project) => {
     // Ensure frame data is in separate storage when setting current project
     if (project) {
+      // CRITICAL: sanitize to prevent render crashes from corrupted data
+      project = sanitizeProject(project)
       // If frame is the marker, try to restore from separate storage
       if (project.config.frame === '__FRAME_SAVED__') {
         const savedFrame = loadFrameFromStorage(project.id)
@@ -371,7 +443,15 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
       // Load saved projects
       const saved = localStorage.getItem('saatiril_projects')
       if (saved) {
-        const projects = JSON.parse(saved)
+        const rawProjects = JSON.parse(saved)
+        // CRITICAL: sanitize every project to remove corrupted photoHistory
+        // entries (missing student/nama/nim) that would crash the render.
+        // This is the recovery path for the "Cannot read properties of
+        // undefined (reading 'trim')" white-screen loop.
+        const projects = sanitizeProjects(rawProjects)
+        if (projects.length !== rawProjects.length) {
+          console.warn(`[SAATIRIL] Sanitized projects: ${rawProjects.length} → ${projects.length} (dropped invalid entries)`)
+        }
         // Restore frame data from separate localStorage keys
         // (frames are saved separately because they're too large for the main JSON)
         const restoredProjects = projects.map((p: Project) => {
@@ -383,9 +463,27 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
           return p
         })
         set({ projects: restoredProjects })
+        // Persist the cleaned version back to localStorage so future loads
+        // are also clean (and so we don't re-trigger the corruption).
+        try {
+          const safeProjects = restoredProjects.map(p => ({
+            ...p,
+            photoHistory: p.photoHistory.map(h => ({ ...h, photos: [] })),
+            config: { ...p.config, frame: p.config.frame ? '__FRAME_SAVED__' : null },
+          }))
+          localStorage.setItem('saatiril_projects', JSON.stringify(safeProjects))
+        } catch (e2) {
+          console.warn('[SAATIRIL] Could not persist sanitized projects:', e2)
+        }
       }
     } catch (e) {
       console.error('Failed to load projects from storage', e)
+      // LAST RESORT: if localStorage is so corrupted that JSON.parse fails,
+      // clear it so the app at least loads to the hub instead of crashing.
+      try {
+        localStorage.removeItem('saatiril_projects')
+        console.warn('[SAATIRIL] Cleared corrupted saatiril_projects from localStorage')
+      } catch { /* ignore */ }
     }
   },
 

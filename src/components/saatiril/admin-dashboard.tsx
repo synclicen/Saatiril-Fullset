@@ -34,21 +34,26 @@ const MUTED = 'text-[#c4b5fd]'
 const CYAN = '#06b6d4'
 
 // ── Helper: sanitize nama for filenames ──────────────────────────
-function sanitizeNama(nama: string): string {
-  return nama
+// DEFENSIVE: nama/nim can be undefined if a photoHistory entry got corrupted
+// during reset+retake cycles. Never let .trim() crash the whole app.
+function sanitizeNama(nama: string | undefined | null): string {
+  return (nama ?? '')
     .trim()
     .replace(/\s+/g, '_')
     .replace(/[^a-zA-Z0-9_]/g, '')
 }
 
-function buildFilename(nim: string, nama: string, suffix: number, type: string): string {
-  return `${nim}_${sanitizeNama(nama)}_${suffix}_${type}.jpg`
+function sanitizeNim(nim: string | undefined | null): string {
+  return (nim ?? '').toString().trim().replace(/[^a-zA-Z0-9_-]/g, '')
 }
 
-function buildPhotoshootFilename(nim: string, nama: string, channel: number): string {
-  return channel > 1
-    ? `${nim}_${sanitizeNama(nama)}_Ch${channel}.jpg`
-    : `${nim}_${sanitizeNama(nama)}.jpg`
+function buildFilename(nim: string | undefined, nama: string | undefined, suffix: number, type: string): string {
+  return `${sanitizeNim(nim)}_${sanitizeNama(nama)}_${suffix}_${type}.jpg`
+}
+
+function buildPhotoshootFilename(nim: string | undefined, nama: string | undefined, channel: number): string {
+  const base = `${sanitizeNim(nim)}_${sanitizeNama(nama)}`
+  return channel > 1 ? `${base}_Ch${channel}.jpg` : `${base}.jpg`
 }
 
 // ── Helper: human-readable status label for display/export ───────
@@ -823,6 +828,13 @@ export default function AdminDashboard() {
 
   // ── Render: Photo History Item ───────────────────────────────────
   const renderPhotoItem = (item: PhotoHistoryItem, index: number) => {
+    // GUARD: skip corrupted entries (missing student object) instead of
+    // crashing the entire gallery render. This can happen if a photoHistory
+    // entry got malformed during reset+retake cycles or cross-client sync.
+    if (!item || !item.student || !item.student.id) {
+      console.warn('[SAATIRIL ADMIN] Skipping corrupted photoHistory item at index', index, item)
+      return null
+    }
     const { student, channel, photos } = item
     const photoshoot = isPhotoshootMode(mode)
 
