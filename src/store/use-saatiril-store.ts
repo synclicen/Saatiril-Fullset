@@ -57,6 +57,19 @@ export interface Project {
   config: ProjectConfig
   database: Student[]
   photoHistory: PhotoHistoryItem[]
+  /**
+   * Per-student+channel capture counter, used to generate VERSIONED filenames
+   * so each retake (after MC reset) creates a NEW file on disk instead of
+   * overwriting the previous one.
+   *
+   * Key: `${studentId}_${channel}`  →  value: capture count (1 = first, 2 = first retake, …)
+   *
+   * IMPORTANT: this map is NOT cleared on RESET — it persists across resets so
+   * retakes keep incrementing the version. This is the only way to guarantee
+   * that every retake produces a distinct file on disk (e.g. `NIM_Nama.jpg`,
+   * `NIM_Nama_v2.jpg`, `NIM_Nama_v3.jpg`, …).
+   */
+  captureVersions?: Record<string, number>
 }
 
 export type Role = 'admin' | 'mc' | 'operator'
@@ -232,6 +245,31 @@ export function preservePhotoHistoryOnSync(
   return result
 }
 
+/**
+ * Merge two captureVersions maps, keeping the MAX version per key.
+ *
+ * captureVersions tracks how many times a student+channel has been
+ * photographed (1 = first, 2+ = retake). It must NEVER regress — if the
+ * operator has v3 locally and an incoming SYNC_DB has v2, we keep v3.
+ * Taking the max guarantees the version number only goes up, so every
+ * retake produces a distinct filename on disk (v1, v2, v3, …).
+ */
+export function mergeCaptureVersions(
+  local: Record<string, number> | undefined,
+  incoming: Record<string, number> | undefined,
+): Record<string, number> {
+  const result: Record<string, number> = { ...(local ?? {}) }
+  if (incoming) {
+    for (const [k, v] of Object.entries(incoming)) {
+      const n = Number(v)
+      if (!Number.isNaN(n) && n > 0) {
+        result[k] = Math.max(result[k] ?? 0, n)
+      }
+    }
+  }
+  return result
+}
+
 // ─── Debounced save ───────────────────────────────────────────────────────
 let saveTimeout: ReturnType<typeof setTimeout> | null = null
 const SAVE_DEBOUNCE_MS = 500 // Debounce saves to avoid thrashing localStorage
@@ -339,12 +377,25 @@ export function sanitizeProject(project: Project): Project {
     frame: project.config?.frame ?? null,
   }
 
+  // Sanitize captureVersions: ensure it's a plain object of numbers.
+  // This map PERSISTS across resets — never cleared here — so retakes keep
+  // incrementing the version number (each retake → new file on disk).
+  const rawVersions = (project as Project).captureVersions
+  const cleanCaptureVersions: Record<string, number> = {}
+  if (rawVersions && typeof rawVersions === 'object') {
+    for (const [k, v] of Object.entries(rawVersions)) {
+      const n = Number(v)
+      if (!Number.isNaN(n) && n > 0) cleanCaptureVersions[k] = n
+    }
+  }
+
   return {
     id: project.id,
     name: (project.name ?? 'Tanpa Nama').toString(),
     config: cleanConfig,
     database: cleanDatabase,
     photoHistory: cleanPhotoHistory,
+    captureVersions: cleanCaptureVersions,
   }
 }
 

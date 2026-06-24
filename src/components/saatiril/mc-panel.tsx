@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Megaphone, Users, Clock, CheckCircle2, Loader2, Camera, Monitor, Search, Send, RotateCcw } from 'lucide-react'
-import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, type CameraMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync, preservePhotoHistoryOnSync, isPhotoshootMode, isDualPhotoshootMode, channelCount } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, type CameraMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync, preservePhotoHistoryOnSync, mergeCaptureVersions, isPhotoshootMode, isDualPhotoshootMode, channelCount } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
@@ -200,11 +200,19 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
           proj.photoHistory ?? [],
           curProj.photoHistory,
         )
+        // Merge captureVersions (MAX per key) so MC sees the same version
+        // numbers as the operator/admin (needed for RESET & KIRIM ULANG flow
+        // where the MC needs to know the current version to display correctly).
+        const mergedVersions = mergeCaptureVersions(
+          curProj.captureVersions,
+          (proj as any).captureVersions,
+        )
         updateCurrentProject({
           ...curProj,
           database: mergedDb,
           photoHistory: mergedPhotoHistory,
           config: mergedConfig,
+          captureVersions: mergedVersions,
         })
       }
     }

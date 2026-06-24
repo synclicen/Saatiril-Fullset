@@ -434,3 +434,51 @@ Stage Summary:
 - Lint: zero errors
 - Dev server: running clean (HTTP 200, no compile errors)
 - Git: pushed to origin/main (commit 316c730)
+
+---
+Task ID: BROWSER-SAVE-VERSIONING
+Agent: main (Z.ai Code)
+Task: Fix Bug C (browser mode photos not saved to disk) + Bug A (photos not saved as new version after reset+retake). User opens operator panel via Chrome intentionally to enable Chrome flags.
+
+Work Log:
+- Read existing code: use-saatiril-store.ts, electron/main.ts, electron/preload.ts, operator-panel.tsx, admin-dashboard.tsx, mc-panel.tsx
+- Analyzed root causes:
+  * Bug C: In browser mode (Chrome, no Electron), window.saatirilAPI is undefined → code showed toast "Mode Browser — Foto Tidak ke Disk" and discarded photo. User needs Chrome for flags.
+  * Bug A: buildPhotoshootFilename() is deterministic — same student+channel always produces same filename. Retakes would overwrite (Electron) or fail (browser). No version tracking.
+- Created src/lib/browser-photo-save.ts (NEW):
+  * File System Access API wrapper (Chrome/Edge/Opera only)
+  * requestBrowserSaveDirectory() → showDirectoryPicker, persist handle in IndexedDB
+  * getBrowserSaveDirectory() → retrieve handle + requestPermission
+  * savePhotoInBrowser() → write JPEG to picked folder via createWritable
+  * downloadPhotoFallback() → last-resort browser download
+  * isBrowserSaveSupported() / isElectronSaveAvailable() detection helpers
+- Updated use-saatiril-store.ts:
+  * Added `captureVersions: Record<string, number>` to Project interface (key: `${studentId}_${channel}`, value: capture count)
+  * Updated sanitizeProject() to ensure captureVersions exists + is clean
+  * Added mergeCaptureVersions() export — MAX merge per key so versions never regress across clients
+- Updated operator-panel.tsx:
+  * buildPhotoshootFilename + buildFilename now accept `version` param (v1 = no suffix, v2+ = _v2.jpg)
+  * finalizeCapture: computeVersionedFilename() reads captureVersions, increments, uses in filename
+  * PHOTOS_SAVED event now includes version + filename for admin
+  * finishCapture() accepts + persists newVersions map
+  * Replaced "Mode Browser" toast with actual savePhotoInBrowser() call
+  * Added "Pilih Folder Simpan" UI card (desktop sidebar + mobile bottom bar) with status indicator
+  * Added Electron "Simpan ke Disk" indicator card for Electron mode
+  * SYNC_DB handler now merges captureVersions via mergeCaptureVersions()
+- Updated admin-dashboard.tsx:
+  * buildPhotoshootFilename + buildFilename accept version param
+  * PhotosSavedData interface includes version + filename
+  * handlePhotosSaved: uses operator's version/filename, saves to disk via Electron OR Browser FS API
+  * renderPhotoItem: shows version from captureVersions, displays "FOTO ULANG v2" badge when version > 1
+  * SYNC_DB handler merges captureVersions
+- Updated mc-panel.tsx:
+  * SYNC_DB handler merges captureVersions (MC sees same version numbers as operator/admin)
+  * handleResetForRetake preserves captureVersions via ...latestProject spread (no change needed — already correct)
+- Lint: zero errors
+- Dev server: compiling cleanly (HTTP 200)
+
+Stage Summary:
+- Bug C FIXED: Photos now save to disk in browser mode (Chrome) via File System Access API. Operator picks a folder once; handle cached in IndexedDB. Fallback to download if API unavailable.
+- Bug A FIXED: Each capture (incl. retakes after reset) gets a versioned filename: v1 = `NIM_Nama.jpg`, v2 = `NIM_Nama_v2.jpg`, v3 = `NIM_Nama_v3.jpg`. Retakes create NEW files, never overwrite. Version counter persists across resets (NOT cleared by handleResetForRetake).
+- Version sync: captureVersions map synced via SYNC_DB with MAX merge — all clients (admin/MC/operator) see the same version numbers.
+- Gallery: admin dashboard shows "FOTO ULANG v2" badge on retaken photos.

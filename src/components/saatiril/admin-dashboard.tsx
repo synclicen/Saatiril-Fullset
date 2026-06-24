@@ -21,9 +21,16 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
-import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, type CameraMode, mergeDatabases, preserveFrameOnSync, preservePhotoHistoryOnSync, isPhotoshootMode, isDualPhotoshootMode } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, type CameraMode, mergeDatabases, preserveFrameOnSync, preservePhotoHistoryOnSync, mergeCaptureVersions, isPhotoshootMode, isDualPhotoshootMode } from '@/store/use-saatiril-store'
 import { onLocal, offLocal, getConnectionHealth, onLatencyUpdate, type ConnectionHealth } from '@/lib/socket'
 import { useToast } from '@/hooks/use-toast'
+import {
+  isElectronSaveAvailable,
+  isBrowserSaveSupported,
+  savePhotoInBrowser,
+  downloadPhotoFallback,
+  browserSaveStorageKey,
+} from '@/lib/browser-photo-save'
 
 // ── Theme constants ──────────────────────────────────────────────
 const BG = 'bg-[#1a0b2e]'
@@ -47,13 +54,23 @@ function sanitizeNim(nim: string | undefined | null): string {
   return (nim ?? '').toString().trim().replace(/[^a-zA-Z0-9_-]/g, '')
 }
 
-function buildFilename(nim: string | undefined, nama: string | undefined, suffix: number, type: string): string {
-  return `${sanitizeNim(nim)}_${sanitizeNama(nama)}_${suffix}_${type}.jpg`
+/**
+ * Build a versioned filename for standard mode (Toga + Ijazah).
+ * version: 1 = first capture, 2+ = retake after MC reset.
+ */
+function buildFilename(nim: string | undefined, nama: string | undefined, suffix: number, type: string, version: number = 1): string {
+  const base = `${sanitizeNim(nim)}_${sanitizeNama(nama)}_${suffix}_${type}`
+  return version > 1 ? `${base}_v${version}.jpg` : `${base}.jpg`
 }
 
-function buildPhotoshootFilename(nim: string | undefined, nama: string | undefined, channel: number): string {
+/**
+ * Build a versioned filename for photoshoot mode.
+ * version: 1 = first capture, 2+ = retake after MC reset.
+ */
+function buildPhotoshootFilename(nim: string | undefined, nama: string | undefined, channel: number, version: number = 1): string {
   const base = `${sanitizeNim(nim)}_${sanitizeNama(nama)}`
-  return channel > 1 ? `${base}_Ch${channel}.jpg` : `${base}.jpg`
+  const withCh = channel > 1 ? `${base}_Ch${channel}` : base
+  return version > 1 ? `${withCh}_v${version}.jpg` : `${withCh}.jpg`
 }
 
 // ── Helper: human-readable status label for display/export ───────
@@ -71,6 +88,10 @@ interface PhotosSavedData {
   student: Student
   photos: string[]
   channel: number
+  /** Version number (1 = first capture, 2+ = retake). Sent by operator. */
+  version?: number
+  /** Filename chosen by the operator (includes version suffix). */
+  filename?: string
 }
 
 interface SyncDbData {
@@ -127,48 +148,80 @@ export default function AdminDashboard() {
       const proj = currentProjectRef.current
       if (!proj) return
 
-      // ── Save photos to disk (Admin is always in Electron) ──────────────
-      // This is the ONLY reliable place to save — Operator on LAN browser
-      // doesn't have filesystem access, so Admin must do it.
-      const api = window.saatirilAPI
-      const targetFolder = proj.config?.targetFolder
+      // ── Determine version + filenames ──────────────────────────────────
+      // The operator sends `version` (1 = first capture, 2+ = retake) and the
+      // chosen `filename` in the PHOTOS_SAVED event. We prefer the operator's
+      // filename to guarantee the admin saves under the EXACT same name (so
+      // there is no mismatch between operator's disk and admin's disk).
       const photoshootMode = isPhotoshootMode(proj.config.mode)
+      const version = data.version ?? 1
 
-      if (api?.savePhoto && targetFolder && data.photos?.length >= (photoshootMode ? 1 : 2)) {
-        if (photoshootMode) {
-          // Photoshoot mode: 1 photo with data-based naming
-          const filename = buildPhotoshootFilename(data.student.nim, data.student.nama, data.channel)
-          api.savePhoto({ base64Data: data.photos[0], filename, targetFolder }).then((path: string | null) => {
-            if (path) {
-              console.log(`[SAATIRIL ADMIN] Photo saved to disk: → ${path}`)
-            } else {
-              console.warn('[SAATIRIL ADMIN] Photo failed to save to disk')
-            }
-          }).catch((err: Error) => {
-            console.error('[SAATIRIL ADMIN] Error saving photo to disk:', err)
-          })
-        } else {
-          // Standard mode: 2 photos (Toga + Ijazah)
-          const togaFilename = buildFilename(data.student.nim, data.student.nama, 1, 'Toga')
-          const ijazahFilename = buildFilename(data.student.nim, data.student.nama, 2, 'Ijazah')
+      // ── Save photos to disk ─────────────────────────────────────────────
+      // Two paths: Electron (window.saatirilAPI.savePhoto) or Browser
+      // (File System Access API → Chrome folder). The admin may also be
+      // running in Chrome (e.g. testing), so we handle both.
+      const targetFolder = proj.config?.targetFolder
+      const hasEnoughPhotos = data.photos?.length >= (photoshootMode ? 1 : 2)
 
-          Promise.all([
-            api.savePhoto({ base64Data: data.photos[0], filename: togaFilename, targetFolder }),
-            api.savePhoto({ base64Data: data.photos[1], filename: ijazahFilename, targetFolder }),
-          ]).then(([path1, path2]) => {
-            if (path1 && path2) {
-              console.log(`[SAATIRIL ADMIN] Photos saved to disk:\n  → ${path1}\n  → ${path2}`)
-            } else {
-              console.warn('[SAATIRIL ADMIN] Some photos failed to save to disk')
-            }
-          }).catch((err) => {
-            console.error('[SAATIRIL ADMIN] Error saving photos to disk:', err)
-          })
+      if (hasEnoughPhotos) {
+        if (isElectronSaveAvailable() && targetFolder) {
+          // ── Electron path ──
+          const api = (window as any).saatirilAPI
+          if (photoshootMode) {
+            const filename = data.filename ?? buildPhotoshootFilename(data.student.nim, data.student.nama, data.channel, version)
+            api.savePhoto({ base64Data: data.photos[0], filename, targetFolder }).then((path: string | null) => {
+              if (path) {
+                console.log(`[SAATIRIL ADMIN] Photo saved to disk (v${version}): → ${path}`)
+              } else {
+                console.warn('[SAATIRIL ADMIN] Photo failed to save to disk')
+              }
+            }).catch((err: Error) => {
+              console.error('[SAATIRIL ADMIN] Error saving photo to disk:', err)
+            })
+          } else {
+            const togaFilename = buildFilename(data.student.nim, data.student.nama, 1, 'Toga', version)
+            const ijazahFilename = buildFilename(data.student.nim, data.student.nama, 2, 'Ijazah', version)
+            Promise.all([
+              api.savePhoto({ base64Data: data.photos[0], filename: togaFilename, targetFolder }),
+              api.savePhoto({ base64Data: data.photos[1], filename: ijazahFilename, targetFolder }),
+            ]).then(([path1, path2]) => {
+              if (path1 && path2) {
+                console.log(`[SAATIRIL ADMIN] Photos saved to disk (v${version}):\n  → ${path1}\n  → ${path2}`)
+              } else {
+                console.warn('[SAATIRIL ADMIN] Some photos failed to save to disk')
+              }
+            }).catch((err) => {
+              console.error('[SAATIRIL ADMIN] Error saving photos to disk:', err)
+            })
+          }
+        } else if (!isElectronSaveAvailable()) {
+          // ── Browser path: File System Access API ──
+          // The admin can also pick a Chrome folder (same as operator). This is
+          // a backup save path — if the operator already saved via their own
+          // Chrome folder, this is redundant but harmless (same filename →
+          // same file in admin's folder). If the operator DIDN'T save (no
+          // folder picked), the admin's save here is the ONLY disk copy.
+          const storageKey = browserSaveStorageKey(proj.id)
+          if (photoshootMode) {
+            const filename = data.filename ?? buildPhotoshootFilename(data.student.nim, data.student.nama, data.channel, version)
+            savePhotoInBrowser(storageKey, data.photos[0], filename).then((ok) => {
+              if (ok) console.log(`[SAATIRIL ADMIN] Photo saved to browser folder (v${version}): ${filename}`)
+              else console.warn(`[SAATIRIL ADMIN] Browser folder not available — photo only in memory: ${filename}`)
+            }).catch((err) => console.error('[SAATIRIL ADMIN] Browser save error:', err))
+          } else {
+            const togaFilename = buildFilename(data.student.nim, data.student.nama, 1, 'Toga', version)
+            const ijazahFilename = buildFilename(data.student.nim, data.student.nama, 2, 'Ijazah', version)
+            Promise.all([
+              savePhotoInBrowser(storageKey, data.photos[0], togaFilename),
+              savePhotoInBrowser(storageKey, data.photos[1], ijazahFilename),
+            ]).then(([r1, r2]) => {
+              if (r1 && r2) console.log(`[SAATIRIL ADMIN] Photos saved to browser folder (v${version})`)
+              else console.warn('[SAATIRIL ADMIN] Browser folder not available — photos only in memory')
+            }).catch((err) => console.error('[SAATIRIL ADMIN] Browser save error:', err))
+          }
+        } else if (!targetFolder) {
+          console.warn('[SAATIRIL ADMIN] No targetFolder in project config — photos not saved to disk')
         }
-      } else if (!api?.savePhoto) {
-        console.warn('[SAATIRIL ADMIN] savePhoto API not available — not running in Electron?')
-      } else if (!targetFolder) {
-        console.warn('[SAATIRIL ADMIN] No targetFolder in project config — photos not saved to disk')
       }
 
       // Build the history item from the data
@@ -238,11 +291,18 @@ export default function AdminDashboard() {
         data.project.photoHistory ?? [],
         proj.photoHistory,
       )
+      // Merge captureVersions (MAX per key) so retake version numbers sync
+      // across admin/operator/MC without regressing.
+      const mergedVersions = mergeCaptureVersions(
+        proj.captureVersions,
+        (data.project as any).captureVersions,
+      )
       updateCurrentProject({
         ...proj,
         database: mergedDb,
         photoHistory: mergedPhotoHistory,
         config: mergedConfig,
+        captureVersions: mergedVersions,
       })
     }
 
@@ -838,6 +898,13 @@ export default function AdminDashboard() {
     const { student, channel, photos } = item
     const photoshoot = isPhotoshootMode(mode)
 
+    // Look up the version from captureVersions (synced via SYNC_DB).
+    // version 1 = first capture, 2+ = retake after MC reset. This makes the
+    // gallery show the versioned filename (e.g. `NIM_Nama_v2.jpg`) matching
+    // the actual file on disk.
+    const versionKey = `${student.id}_${channel}`
+    const version = currentProject?.captureVersions?.[versionKey] ?? 1
+
     const channelLabel = mode === 'dual' ? (channel === 1 ? 'Kiri' : 'Kanan')
       : mode === 'dual-photoshoot' ? (channel === 1 ? 'Cam 1' : 'Cam 2')
       : 'Ch.1'
@@ -847,7 +914,7 @@ export default function AdminDashboard() {
 
     // Photoshoot: 1 photo with data-based name
     if (photoshoot) {
-      const filename = buildPhotoshootFilename(student.nim, student.nama, channel)
+      const filename = buildPhotoshootFilename(student.nim, student.nama, channel, version)
       return (
         <div
           key={`${student.id}-${channel}-${index}`}
@@ -859,7 +926,7 @@ export default function AdminDashboard() {
               {student.nama}
             </span>
           </div>
-          <div className="mb-2">
+          <div className="mb-2 flex items-center gap-1.5">
             <Badge
               className="text-[10px]"
               style={{
@@ -870,6 +937,11 @@ export default function AdminDashboard() {
             >
               {channelLabel}
             </Badge>
+            {version > 1 && (
+              <Badge className="text-[10px]" style={{ backgroundColor: 'rgba(212,175,55,0.2)', color: GOLD, borderColor: 'rgba(212,175,55,0.4)' }}>
+                FOTO ULANG v{version}
+              </Badge>
+            )}
           </div>
           <div className="flex gap-2">
             <div className="flex flex-1 flex-col gap-1">
@@ -890,8 +962,8 @@ export default function AdminDashboard() {
     }
 
     // Standard mode: 2 photos (Toga + Ijazah)
-    const togaFilename = buildFilename(student.nim, student.nama, 1, 'Toga')
-    const ijazahFilename = buildFilename(student.nim, student.nama, 2, 'Ijazah')
+    const togaFilename = buildFilename(student.nim, student.nama, 1, 'Toga', version)
+    const ijazahFilename = buildFilename(student.nim, student.nama, 2, 'Ijazah', version)
 
     return (
       <div
@@ -906,8 +978,8 @@ export default function AdminDashboard() {
           </span>
         </div>
 
-        {/* Channel badge */}
-        <div className="mb-2">
+        {/* Channel badge + version badge */}
+        <div className="mb-2 flex items-center gap-1.5">
           <Badge
             className="text-[10px]"
             style={{
@@ -920,6 +992,11 @@ export default function AdminDashboard() {
           >
             {channelLabel}
           </Badge>
+          {version > 1 && (
+            <Badge className="text-[10px]" style={{ backgroundColor: 'rgba(212,175,55,0.2)', color: GOLD, borderColor: 'rgba(212,175,55,0.4)' }}>
+              FOTO ULANG v{version}
+            </Badge>
+          )}
         </div>
 
         {/* Photo thumbnails */}

@@ -39,6 +39,10 @@ import {
   Zap,
   Timer,
   Hand,
+  FolderOpen,
+  HardDrive,
+  CheckCircle,
+  AlertTriangle,
 } from 'lucide-react'
 import {
   useSaatirilStore,
@@ -50,6 +54,7 @@ import {
   stripFrameForSync,
   preserveFrameOnSync,
   preservePhotoHistoryOnSync,
+  mergeCaptureVersions,
   isPhotoshootMode,
   isDualPhotoshootMode,
 } from '@/store/use-saatiril-store'
@@ -59,6 +64,16 @@ import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge
 import { useAIDetection, type AIMomentEvent } from '@/hooks/use-ai-detection'
 import { usePalmDetection } from '@/hooks/use-palm-detection'
 import { useToast } from '@/hooks/use-toast'
+import {
+  isElectronSaveAvailable,
+  isBrowserSaveSupported,
+  savePhotoInBrowser,
+  downloadPhotoFallback,
+  requestBrowserSaveDirectory,
+  getBrowserSaveDirectory,
+  hasBrowserSaveDirectory,
+  browserSaveStorageKey,
+} from '@/lib/browser-photo-save'
 
 // ─── Theme tokens ───────────────────────────────────────────────────────────
 const THEME = {
@@ -129,13 +144,36 @@ function sanitizeNim(nim: string | undefined | null): string {
   return (nim ?? '').toString().trim().replace(/[^a-zA-Z0-9_-]/g, '')
 }
 
-function buildFilename(nim: string | undefined, nama: string | undefined, suffix: number, type: string): string {
-  return `${sanitizeNim(nim)}_${sanitizeNama(nama)}_${suffix}_${type}.jpg`
+/**
+ * Build a versioned filename for standard mode (Toga + Ijazah).
+ * version: 1 = first capture, 2+ = retake after MC reset.
+ * v1 → `NIM_Nama_1_Toga.jpg` (no version suffix for backwards compat)
+ * v2 → `NIM_Nama_1_Toga_v2.jpg`, v3 → `..._v3.jpg`, …
+ */
+function buildFilename(nim: string | undefined, nama: string | undefined, suffix: number, type: string, version: number = 1): string {
+  const base = `${sanitizeNim(nim)}_${sanitizeNama(nama)}_${suffix}_${type}`
+  return version > 1 ? `${base}_v${version}.jpg` : `${base}.jpg`
 }
 
-function buildPhotoshootFilename(nim: string | undefined, nama: string | undefined, channel: number): string {
+/**
+ * Build a versioned filename for photoshoot mode.
+ * version: 1 = first capture, 2+ = retake after MC reset.
+ * v1 → `NIM_Nama.jpg` or `NIM_Nama_Ch2.jpg` (no version suffix)
+ * v2 → `NIM_Nama_v2.jpg` or `NIM_Nama_Ch2_v2.jpg`, …
+ */
+function buildPhotoshootFilename(nim: string | undefined, nama: string | undefined, channel: number, version: number = 1): string {
   const base = `${sanitizeNim(nim)}_${sanitizeNama(nama)}`
-  return channel > 1 ? `${base}_Ch${channel}.jpg` : `${base}.jpg`
+  const withCh = channel > 1 ? `${base}_Ch${channel}` : base
+  return version > 1 ? `${withCh}_v${version}.jpg` : `${withCh}.jpg`
+}
+
+/**
+ * Storage key for the per-project browser save directory handle.
+ * In browser mode (no Electron), the operator picks a folder once via the
+ * File System Access API; the handle is cached in IndexedDB under this key.
+ */
+function photoSaveStorageKey(projectId: string | undefined): string {
+  return projectId ? browserSaveStorageKey(projectId) : 'saatiril_default'
 }
 
 function isActiveStatus(status: StudentStatus): boolean {
@@ -229,6 +267,10 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   // Buffer for MC_CALL events that arrive before the database updates via SYNC_DB
   const [mcCallBuffer, setMcCallBuffer] = useState<Student[]>([])
   const isCapturingRef = useRef(false)
+  // Browser-mode save folder status: whether the operator has picked a Chrome
+  // folder via the File System Access API. null = checking, true = ready,
+  // false = not picked (photos will prompt to pick).
+  const [rawBrowserFolderReady, setRawBrowserFolderReady] = useState<boolean | null>(null)
 
   // ── Shutter mode state ───────────────────────────────────────────────────
   const [shutterMode, setShutterMode] = useState<ShutterMode>('manual')
@@ -499,6 +541,48 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     selectedDeviceRef.current = nextDeviceId
   }, [videoDevices, selectedDeviceId])
 
+  // ── Browser save folder (File System Access API) ─────────────────────────
+  // When the operator opens the app in Chrome (NOT Electron), photos can't
+  // use the IPC save path. Instead we let them pick a real folder on disk via
+  // the File System Access API — the handle is cached in IndexedDB so they
+  // only pick once (and re-grant permission with a single click after reload).
+  const inBrowserMode = !isElectronSaveAvailable()
+  const fsSupported = isBrowserSaveSupported()
+  const browserStorageKey = currentProject?.id ?? 'saatiril_default'
+
+  // Effective status (computed inline — no setState in effect body):
+  // - Not in browser mode → null (UI hides the folder picker entirely)
+  // - Browser mode but no File System Access API → false (fallback to download)
+  // - Browser mode + FS API → async-checked value from state
+  const browserFolderReady: boolean | null = !inBrowserMode
+    ? null
+    : !fsSupported
+      ? false
+      : rawBrowserFolderReady
+
+  // Async check: does a saved directory handle exist + have permission?
+  // Only runs in browser mode with FS API support. setState is called only
+  // in the async callback (never synchronously in the effect body).
+  useEffect(() => {
+    if (!inBrowserMode || !fsSupported) return
+    let cancelled = false
+    getBrowserSaveDirectory(browserStorageKey).then((handle) => {
+      if (!cancelled) setRawBrowserFolderReady(!!handle)
+    })
+    return () => { cancelled = true }
+  }, [inBrowserMode, fsSupported, browserStorageKey])
+
+  const handlePickBrowserFolder = useCallback(async () => {
+    const handle = await requestBrowserSaveDirectory(browserStorageKey)
+    if (handle) {
+      setRawBrowserFolderReady(true)
+      toast({
+        title: 'Folder Simpan Aktif',
+        description: 'Foto akan tersimpan ke folder Chrome yang dipilih.',
+      })
+    }
+  }, [browserStorageKey, toast])
+
   // ── Refs for stable handlers ─────────────────────────────────────────────
   const myChannelRef = useRef(myChannel)
   const currentProjectRef = useRef(currentProject)
@@ -591,7 +675,14 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         data.project.photoHistory ?? [],
         proj.photoHistory,
       )
-      updateCurrentProject({ ...proj, database: mergedDb, photoHistory: mergedPhotoHistory, config: mergedConfig })
+      // Merge captureVersions (MAX per key) so retake version numbers never
+      // regress across clients. The operator who just captured has the
+      // highest version; other clients adopt it via this merge.
+      const mergedVersions = mergeCaptureVersions(
+        proj.captureVersions,
+        (data.project as any).captureVersions,
+      )
+      updateCurrentProject({ ...proj, database: mergedDb, photoHistory: mergedPhotoHistory, config: mergedConfig, captureVersions: mergedVersions })
 
       if (!isPhotoshootMode(data.project.config.mode)) {
         const ch = myChannelRef.current
@@ -641,8 +732,14 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
       console.log('[SAATIRIL OP] finalizeCapture: photoCount =', photoCount, 'mode =', currentMode)
 
-      // Helper: update local photoHistory and emit lightweight SYNC_DB
-      const finishCapture = (student: Student, historyItem: PhotoHistoryItem) => {
+      // Helper: update local photoHistory + captureVersions, emit lightweight SYNC_DB.
+      // `newVersions` is the updated captureVersions map (with the just-captured
+      // student+channel incremented) so version numbers persist across resets.
+      const finishCapture = (
+        student: Student,
+        historyItem: PhotoHistoryItem,
+        newVersions?: Record<string, number>,
+      ) => {
         const store = useSaatirilStore.getState()
         if (store.currentProject) {
           const existingIdx = store.currentProject.photoHistory.findIndex(
@@ -655,14 +752,40 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           } else {
             newHistory = [...store.currentProject.photoHistory, historyItem]
           }
-          const updatedProject = { ...store.currentProject, photoHistory: newHistory }
+          const updatedProject = {
+            ...store.currentProject,
+            photoHistory: newHistory,
+            captureVersions: newVersions ?? store.currentProject.captureVersions,
+          }
           store.updateCurrentProject(updatedProject)
           // SYNC_DB is now lightweight — photos stripped, only metadata sent
+          // (captureVersions IS included so admin/MC see the same version numbers)
           emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
         }
         setSending(false)
         isCapturingRef.current = false
         resetOpState()
+      }
+
+      // ── Compute versioned filename helper ──────────────────────────────────
+      // Reads the per-student+channel capture counter from the project, increments
+      // it, and returns { version, newVersions, filename } so the caller can
+      // (a) use the filename for the disk save, and (b) pass newVersions to
+      // finishCapture so the counter persists.
+      const proj0 = useSaatirilStore.getState().currentProject
+      const computeVersionedFilename = (
+        student: Student,
+        isPhotoshootModeFlag: boolean,
+      ): { version: number; newVersions: Record<string, number>; filename: string } => {
+        const versionKey = `${student.id}_${myChannel}`
+        const currentVersions = proj0?.captureVersions ?? {}
+        const prevVersion = currentVersions[versionKey] ?? 0
+        const version = prevVersion + 1
+        const newVersions = { ...currentVersions, [versionKey]: version }
+        const filename = isPhotoshootModeFlag
+          ? buildPhotoshootFilename(student.nim, student.nama, myChannel, version)
+          : buildFilename(student.nim, student.nama, 1, 'Toga', version) // placeholder; standard mode overrides below
+        return { version, newVersions, filename }
       }
 
       // Photoshoot mode: save after 1 photo
@@ -693,33 +816,46 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         saveProjectsToStorageNow()
         setMcCallBuffer((prev) => prev.filter((s) => s.id !== student.id))
 
-        console.log('[SAATIRIL OP] Emitting PHOTOS_SAVED for student:', student.nama, 'channel:', myChannel)
+        // ── VERSIONED FILENAME ────────────────────────────────────────────────
+        // Each capture (incl. retakes after MC reset) gets a unique version so
+        // retakes create NEW files on disk instead of overwriting.
+        // v1 → `NIM_Nama.jpg`, v2 → `NIM_Nama_v2.jpg`, …
+        const { version, newVersions, filename: vFilename } = computeVersionedFilename(student, true)
+        console.log(`[SAATIRIL OP] Photoshoot capture v${version} for ${student.nama}: ${vFilename}`)
 
-        // PHOTOS_SAVED for Admin/gallery (contains photos for display)
+        console.log('[SAATIRIL OP] Emitting PHOTOS_SAVED for student:', student.nama, 'channel:', myChannel, 'version:', version)
+
+        // PHOTOS_SAVED for Admin/gallery (contains photos for display + version)
         emitLocal('PHOTOS_SAVED', {
           student: { ...student, status: student.status },
           photos: allPhotos,
           channel: myChannel,
+          version,
+          filename: vFilename,
         })
         emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Selesai — Menunggu target...' })
 
-        // Save to disk asynchronously (non-blocking)
+        // ── SAVE TO DISK ──────────────────────────────────────────────────────
+        // Two paths: Electron (window.saatirilAPI.savePhoto) or Browser
+        // (File System Access API → real folder on disk). Browser mode is the
+        // common case for operators who open the app in Chrome to enable
+        // Chrome flags for camera / MediaPipe performance.
         const projConfig = useSaatirilStore.getState().currentProject?.config
+        const projId = useSaatirilStore.getState().currentProject?.id
         if (projConfig) {
-          const api = window.saatirilAPI
-          if (api?.savePhoto) {
+          if (isElectronSaveAvailable()) {
+            // ── Electron path: IPC → fs.writeFileSync ──
+            const api = (window as any).saatirilAPI
             const targetFolder = projConfig.targetFolder
-            const filename = buildPhotoshootFilename(student.nim, student.nama, myChannel)
-            console.log(`[SAATIRIL OP] Saving photo to disk: ${targetFolder}/${filename}`)
-
-            api.savePhoto({ base64Data: allPhotos[0], filename, targetFolder }).then((path: string | null) => {
+            console.log(`[SAATIRIL OP] Saving photo to disk (Electron): ${targetFolder}/${vFilename}`)
+            api.savePhoto({ base64Data: allPhotos[0], filename: vFilename, targetFolder }).then((path: string | null) => {
               if (path) {
                 console.log(`[SAATIRIL OP] ✓ Photo saved to disk: → ${path}`)
               } else {
-                console.warn(`[SAATIRIL OP] ✗ Photo FAILED to save to disk: ${targetFolder}/${filename}`)
+                console.warn(`[SAATIRIL OP] ✗ Photo FAILED to save to disk: ${targetFolder}/${vFilename}`)
                 toast({
                   title: 'Gagal Simpan ke Disk',
-                  description: `Foto ${filename} tidak tersimpan. Cek ruang disk & folder target.`,
+                  description: `Foto ${vFilename} tidak tersimpan. Cek ruang disk & folder target.`,
                   variant: 'destructive',
                 })
               }
@@ -732,18 +868,45 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               })
             })
           } else {
-            // Browser mode (not Electron) — photos only live in memory.
-            console.warn('[SAATIRIL OP] window.saatirilAPI.savePhoto not available — running in browser mode. Photo NOT saved to disk.')
-            toast({
-              title: 'Mode Browser — Foto Tidak ke Disk',
-              description: 'Jalankan aplikasi via Electron desktop agar foto tersimpan permanen ke disk.',
-              variant: 'destructive',
+            // ── Browser path: File System Access API (Chrome/Edge) ──
+            // The operator picks a folder once; the handle is cached in
+            // IndexedDB so subsequent saves are silent. If no folder picked
+            // yet, we prompt them to pick one.
+            const storageKey = photoSaveStorageKey(projId)
+            console.log(`[SAATIRIL OP] Saving photo to disk (Browser FS Access): ${vFilename}`)
+            savePhotoInBrowser(storageKey, allPhotos[0], vFilename).then((savedName: string | null) => {
+              if (savedName) {
+                console.log(`[SAATIRIL OP] ✓ Photo saved to browser folder: ${savedName}`)
+                toast({
+                  title: `Foto Tersimpan (v${version})`,
+                  description: `${savedName} — tersimpan ke folder Chrome.`,
+                })
+              } else {
+                // No directory picked yet, or permission denied — prompt user.
+                console.warn(`[SAATIRIL OP] Browser folder not available — prompting user to pick one`)
+                toast({
+                  title: 'Pilih Folder Simpan',
+                  description: 'Klik tombol "Pilih Folder" lalu foto ulang untuk menyimpan ke disk Chrome.',
+                  variant: 'destructive',
+                })
+              }
+            }).catch((err: Error) => {
+              console.error('[SAATIRIL OP] Error saving photo to browser folder:', err)
+              // Last-resort: download so the photo is at least not lost
+              if (isBrowserSaveSupported()) {
+                downloadPhotoFallback(allPhotos[0], vFilename)
+              }
+              toast({
+                title: 'Error Simpan Foto',
+                description: err.message || 'Terjadi kesalahan saat menyimpan ke folder Chrome.',
+                variant: 'destructive',
+              })
             })
           }
         }
 
         // IMMEDIATE: update local state + emit lightweight SYNC_DB (no delays!)
-        finishCapture(student, historyItem)
+        finishCapture(student, historyItem, newVersions)
         return
       }
 
@@ -775,7 +938,16 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         updateStudentStatus(student.id, 'done')
         saveProjectsToStorageNow()
 
-        console.log('[SAATIRIL OP] Emitting STUDENT_DONE + PHOTOS_SAVED for student:', student.nama, 'channel:', myChannel)
+        // ── VERSIONED FILENAMES ───────────────────────────────────────────────
+        // Standard mode: 2 photos (Toga + Ijazah), both share the same version.
+        // v1 → `NIM_Nama_1_Toga.jpg` + `NIM_Nama_2_Ijazah.jpg`
+        // v2 → `NIM_Nama_1_Toga_v2.jpg` + `NIM_Nama_2_Ijazah_v2.jpg`
+        const { version, newVersions } = computeVersionedFilename(student, false)
+        const togaFilename = buildFilename(student.nim, student.nama, 1, 'Toga', version)
+        const ijazahFilename = buildFilename(student.nim, student.nama, 2, 'Ijazah', version)
+        console.log(`[SAATIRIL OP] Standard capture v${version} for ${student.nama}: ${togaFilename}, ${ijazahFilename}`)
+
+        console.log('[SAATIRIL OP] Emitting STUDENT_DONE + PHOTOS_SAVED for student:', student.nama, 'channel:', myChannel, 'version:', version)
 
         // PRIORITY 1: STUDENT_DONE — lightweight event for IMMEDIATE MC unblocking
         // This fires BEFORE the heavy PHOTOS_SAVED so MC can call next student instantly
@@ -784,24 +956,26 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           channel: myChannel,
         })
 
-        // PRIORITY 2: PHOTOS_SAVED — contains photos for Admin gallery
+        // PRIORITY 2: PHOTOS_SAVED — contains photos for Admin gallery + version
         emitLocal('PHOTOS_SAVED', {
           student: { ...student, status: 'done' },
           photos: allPhotos,
           channel: myChannel,
+          version,
+          filename: togaFilename,
         })
         emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Selesai — Menunggu target...' })
 
-        // Save to disk asynchronously (non-blocking)
+        // ── SAVE TO DISK ──────────────────────────────────────────────────────
+        // Electron (IPC) or Browser (File System Access API) paths.
         const projConfig = useSaatirilStore.getState().currentProject?.config
+        const projId = useSaatirilStore.getState().currentProject?.id
         if (projConfig) {
-          const api = window.saatirilAPI
-          if (api?.savePhoto) {
+          if (isElectronSaveAvailable()) {
+            // ── Electron path ──
+            const api = (window as any).saatirilAPI
             const targetFolder = projConfig.targetFolder
-            const togaFilename = buildFilename(student.nim, student.nama, 1, 'Toga')
-            const ijazahFilename = buildFilename(student.nim, student.nama, 2, 'Ijazah')
-            console.log(`[SAATIRIL OP] Saving 2 photos to disk: ${targetFolder}/`)
-
+            console.log(`[SAATIRIL OP] Saving 2 photos to disk (Electron): ${targetFolder}/`)
             Promise.all([
               api.savePhoto({ base64Data: allPhotos[0], filename: togaFilename, targetFolder }),
               api.savePhoto({ base64Data: allPhotos[1], filename: ijazahFilename, targetFolder }),
@@ -825,17 +999,44 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               })
             })
           } else {
-            console.warn('[SAATIRIL OP] Not running in Electron — photos not saved to disk')
-            toast({
-              title: 'Mode Browser — Foto Tidak ke Disk',
-              description: 'Jalankan aplikasi via Electron desktop agar foto tersimpan permanen ke disk.',
-              variant: 'destructive',
+            // ── Browser path: File System Access API ──
+            const storageKey = photoSaveStorageKey(projId)
+            console.log(`[SAATIRIL OP] Saving 2 photos to disk (Browser FS Access): ${togaFilename}, ${ijazahFilename}`)
+            Promise.all([
+              savePhotoInBrowser(storageKey, allPhotos[0], togaFilename),
+              savePhotoInBrowser(storageKey, allPhotos[1], ijazahFilename),
+            ]).then(([r1, r2]) => {
+              if (r1 && r2) {
+                console.log(`[SAATIRIL OP] ✓ Photos saved to browser folder (v${version})`)
+                toast({
+                  title: `Foto Tersimpan (v${version})`,
+                  description: `${togaFilename} + ${ijazahFilename} — tersimpan ke folder Chrome.`,
+                })
+              } else {
+                console.warn(`[SAATIRIL OP] Browser folder not available — prompting user to pick one`)
+                toast({
+                  title: 'Pilih Folder Simpan',
+                  description: 'Klik tombol "Pilih Folder" lalu foto ulang untuk menyimpan ke disk Chrome.',
+                  variant: 'destructive',
+                })
+              }
+            }).catch((err: Error) => {
+              console.error('[SAATIRIL OP] Error saving photos to browser folder:', err)
+              if (isBrowserSaveSupported()) {
+                downloadPhotoFallback(allPhotos[0], togaFilename)
+                downloadPhotoFallback(allPhotos[1], ijazahFilename)
+              }
+              toast({
+                title: 'Error Simpan Foto',
+                description: err.message || 'Terjadi kesalahan saat menyimpan ke folder Chrome.',
+                variant: 'destructive',
+              })
             })
           }
         }
 
         // IMMEDIATE: update local state + emit lightweight SYNC_DB (no delays!)
-        finishCapture(student, historyItem)
+        finishCapture(student, historyItem, newVersions)
       }
     },
     [myChannel, addOpCapturedPhoto, updateStudentStatus, saveProjectsToStorageNow, resetOpState, toast],
@@ -1814,6 +2015,39 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               {renderShutterModeSelector(true)}
             </div>
           </div>
+
+          {/* Browser save folder status (mobile — only in browser mode) */}
+          {inBrowserMode && !readOnly && (
+            <div className="px-3 py-1.5 border-t flex items-center gap-2" style={{ borderColor: THEME.border }}>
+              {browserFolderReady ? (
+                <CheckCircle className="size-3 shrink-0" style={{ color: '#4ade80' }} />
+              ) : (
+                <AlertTriangle className="size-3 shrink-0" style={{ color: THEME.gold }} />
+              )}
+              <span className="text-[9px] flex-1 truncate" style={{ color: browserFolderReady ? '#4ade80' : THEME.gold }}>
+                {browserFolderReady
+                  ? 'Folder Chrome aktif — foto tersimpan ke disk'
+                  : isBrowserSaveSupported()
+                    ? 'Pilih folder simpan agar foto tersimpan ke disk'
+                    : 'Foto akan di-download (browser tdk dukung FS API)'}
+              </span>
+              {isBrowserSaveSupported() && (
+                <Button
+                  onClick={handlePickBrowserFolder}
+                  size="sm"
+                  className="h-6 px-2 text-[9px] font-bold shrink-0"
+                  style={{
+                    backgroundColor: browserFolderReady ? THEME.panel : THEME.gold,
+                    color: browserFolderReady ? THEME.muted : THEME.bg,
+                    border: `1px solid ${browserFolderReady ? THEME.border : THEME.gold}`,
+                  }}
+                >
+                  <FolderOpen className="size-2.5 mr-0.5" />
+                  {browserFolderReady ? 'Ganti' : 'Pilih'}
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     )
@@ -1923,6 +2157,64 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           <Card className="shrink-0 border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: THEME.border }}>
             <CardContent className="p-2.5">
               {renderShutterModeSelector(false)}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Browser Save Folder (only in browser mode — Chrome/Edge) */}
+        {inBrowserMode && !readOnly && (
+          <Card
+            className="shrink-0 border rounded-lg"
+            style={{
+              backgroundColor: THEME.card,
+              borderColor: browserFolderReady ? '#22c55e66' : `${THEME.gold}66`,
+            }}
+          >
+            <CardContent className="p-2.5">
+              <div className="flex items-center gap-2 mb-1.5">
+                {browserFolderReady ? (
+                  <CheckCircle className="size-3.5 shrink-0" style={{ color: '#4ade80' }} />
+                ) : (
+                  <AlertTriangle className="size-3.5 shrink-0" style={{ color: THEME.gold }} />
+                )}
+                <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: browserFolderReady ? '#4ade80' : THEME.gold }}>
+                  {browserFolderReady ? 'Folder Chrome Aktif' : 'Pilih Folder Simpan'}
+                </span>
+              </div>
+              <p className="text-[10px] leading-tight mb-2" style={{ color: THEME.muted }}>
+                {browserFolderReady
+                  ? 'Foto tersimpan ke folder Chrome yang dipilih. Klik untuk ganti folder.'
+                  : isBrowserSaveSupported()
+                    ? 'Mode Chrome — pilih folder agar foto tersimpan ke disk. Tanpa folder, foto hanya di memori.'
+                    : 'Browser tidak mendukung File System API. Foto akan di-download satu per satu.'}
+              </p>
+              {isBrowserSaveSupported() && (
+                <Button
+                  onClick={handlePickBrowserFolder}
+                  size="sm"
+                  className="w-full h-7 text-[11px] font-bold"
+                  style={{
+                    backgroundColor: browserFolderReady ? THEME.panel : THEME.gold,
+                    color: browserFolderReady ? THEME.muted : THEME.bg,
+                    border: `1px solid ${browserFolderReady ? THEME.border : THEME.gold}`,
+                  }}
+                >
+                  <FolderOpen className="size-3 mr-1" />
+                  {browserFolderReady ? 'Ganti Folder' : 'Pilih Folder'}
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Electron save indicator (only in Electron mode) */}
+        {!inBrowserMode && !readOnly && (
+          <Card className="shrink-0 border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: `${THEME.border}66` }}>
+            <CardContent className="p-2 flex items-center gap-2">
+              <HardDrive className="size-3.5 shrink-0" style={{ color: '#4ade80' }} />
+              <span className="text-[10px] font-bold" style={{ color: THEME.muted }}>
+                Simpan ke Disk (Electron)
+              </span>
             </CardContent>
           </Card>
         )}
