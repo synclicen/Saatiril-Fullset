@@ -550,3 +550,34 @@ Stage Summary:
 - Bug A (versioned retake filenames) PRESERVED: retakes after MC reset still create new versioned files (v1=NIM_Nama.jpg, v2=NIM_Nama_v2.jpg) on Electron disk, and the admin gallery still shows "FOTO ULANG v2" badge.
 - Dead code (browser-photo-save.ts) deleted.
 - Lint clean, dev server clean, browser-verified.
+
+---
+Task ID: FIX-MISLEADING-BROWSER-TOAST
+Agent: main (Z.ai Code)
+Task: User reported: notification "Mode Browser - Foto Tidak ke Disk" still appears on the right side of the operator camera panel, even though the photo IS successfully saved to the local drive. Why? Fix it.
+
+Work Log:
+- Analyzed uploaded screenshot (upload/1000638197.jpeg) via VLM skill → toast text confirmed: "Mode Browser - Foto Tidak ke Disk / Jalankan aplikasi pada Electron desktop agar foto tersimpan permanen ke disk".
+- Investigated root cause by tracing the save architecture:
+  * Operator panel (opened in Chrome for camera flags) captures photo → emits PHOTOS_SAVED socket event.
+  * Admin dashboard (running in Electron) listens for PHOTOS_SAVED → calls window.saatirilAPI.savePhoto → saves to config.targetFolder.
+  * So the photo IS saved to disk — by the Admin's Electron instance, NOT the operator.
+  * But the operator's finalizeCapture() else-branch (fires when window.saatirilAPI?.savePhoto is undefined in browser mode) showed the misleading "Mode Browser — Foto Tidak ke Disk" destructive toast, alarming the operator even though the save succeeded via admin.
+- Fixed operator-panel.tsx (both save blocks — photoshoot + standard mode):
+  * Replaced the misleading destructive toast with a silent console.log: "[SAATIRIL OP] Browser mode — operator disk save skipped. Admin (Electron) will save via PHOTOS_SAVED event."
+  * Added explanatory comment: the operator does NOT save to its own disk in browser mode; the Admin panel (Electron) receives PHOTOS_SAVED and saves to config.targetFolder via its own IPC. So the photo IS saved to disk; the operator just skips its local save silently.
+  * KEPT the Electron save path (api?.savePhoto) for when operator runs in Electron.
+  * KEPT the error toasts for actual Electron save failures (Gagal Simpan ke Disk / Error Simpan Foto) — those are real failures worth surfacing.
+  * KEPT the "Foto Tidak Tersimpan" toast for the null-target case (no active participant) — that's a real problem the operator must know about.
+- Lint: zero errors.
+- Dev server: HTTP 200, compiling cleanly.
+- Browser verification (Agent Browser):
+  * Injected test project, opened operator panel in browser mode (window.saatirilAPI undefined → confirmed true).
+  * Panel renders cleanly. No "Mode Browser" toast. No console/runtime errors from the save path.
+  * Grep confirmed: zero remaining "Mode Browser" / "Tidak ke Disk" strings in operator-panel.tsx.
+
+Stage Summary:
+- ROOT CAUSE: The operator's "Mode Browser — Foto Tidak ke Disk" toast was misleading. In the user's setup, the operator opens in Chrome (for camera flags) but the Admin panel runs in Electron and saves the photo to disk via the PHOTOS_SAVED socket event. So the photo WAS saved — the operator's toast incorrectly claimed it wasn't.
+- FIX: Removed the misleading destructive toast. In browser mode, the operator now silently skips its own disk save (console.log only) because the Admin (Electron) handles persistence. The operator's job is purely to capture + emit PHOTOS_SAVED.
+- Real failures (Electron save error, null target) still surface toasts — only the false-alarm browser-mode toast was removed.
+- Lint clean, dev server clean, browser-verified.

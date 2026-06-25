@@ -798,13 +798,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               })
             })
           } else {
-            // Browser mode (not Electron) — photos only live in memory/gallery.
-            console.warn('[SAATIRIL OP] window.saatirilAPI.savePhoto not available — running in browser mode. Photo NOT saved to disk.')
-            toast({
-              title: 'Mode Browser — Foto Tidak ke Disk',
-              description: 'Jalankan aplikasi via Electron desktop agar foto tersimpan permanen ke disk.',
-              variant: 'destructive',
-            })
+            // Browser mode (operator opened in Chrome for camera flags, etc.).
+            // The operator does NOT save to its own disk here — the Admin panel
+            // (running in Electron) receives the PHOTOS_SAVED socket event and
+            // saves to config.targetFolder via its own IPC. So the photo IS
+            // saved to disk; we just skip the operator's local save silently.
+            console.log('[SAATIRIL OP] Browser mode — operator disk save skipped. Admin (Electron) will save via PHOTOS_SAVED event.')
           }
         }
 
@@ -902,12 +901,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               })
             })
           } else {
-            console.warn('[SAATIRIL OP] Not running in Electron — photos not saved to disk')
-            toast({
-              title: 'Mode Browser — Foto Tidak ke Disk',
-              description: 'Jalankan aplikasi via Electron desktop agar foto tersimpan permanen ke disk.',
-              variant: 'destructive',
-            })
+            // Browser mode (operator opened in Chrome for camera flags, etc.).
+            // The operator does NOT save to its own disk here — the Admin panel
+            // (running in Electron) receives the PHOTOS_SAVED socket event and
+            // saves to config.targetFolder via its own IPC. So the photo IS
+            // saved to disk; we just skip the operator's local save silently.
+            console.log('[SAATIRIL OP] Browser mode — operator disk save skipped. Admin (Electron) will save via PHOTOS_SAVED event.')
           }
         }
 
