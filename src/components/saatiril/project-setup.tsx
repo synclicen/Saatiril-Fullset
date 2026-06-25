@@ -675,6 +675,9 @@ export default function ProjectSetup() {
                         <SelectItem value="16:9" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
                           16:9 — Widescreen
                         </SelectItem>
+                        <SelectItem value="9:16" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+                          9:16 — 16:9 Portrait
+                        </SelectItem>
                         <SelectItem value="3:4" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
                           3:4 — Portrait
                         </SelectItem>
@@ -696,7 +699,7 @@ export default function ProjectSetup() {
                     <p className="text-xs text-white/50">
                       Klik preset untuk melihat contoh hasil foto. Preview menggunakan foto contoh yang sama agar perbedaan terlihat jelas.
                     </p>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-5">
                       {PRESET_OPTIONS.map((opt) => {
                         const selected = preset === opt.value
                         return (
@@ -706,7 +709,7 @@ export default function ProjectSetup() {
                             onClick={() => setPreset(opt.value)}
                             aria-pressed={selected}
                             className={`
-                              group relative flex flex-col overflow-hidden rounded-lg border text-left
+                              group relative flex flex-col overflow-hidden rounded-md border text-left
                               transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-[#d4af37]/40
                               ${selected
                                 ? 'border-[#d4af37] bg-[#d4af37]/10 ring-1 ring-[#d4af37]/50'
@@ -715,8 +718,8 @@ export default function ProjectSetup() {
                           >
                             {/* Selected check badge */}
                             {selected && (
-                              <span className="absolute right-1.5 top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-[#d4af37] text-[#2a164a] shadow">
-                                <Check className="h-3 w-3" strokeWidth={3} />
+                              <span className="absolute right-1 top-1 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-[#d4af37] text-[#2a164a] shadow">
+                                <Check className="h-2.5 w-2.5" strokeWidth={3} />
                               </span>
                             )}
 
@@ -732,15 +735,15 @@ export default function ProjectSetup() {
                             </div>
 
                             {/* Label + description */}
-                            <div className="flex flex-col gap-0.5 px-2 py-1.5">
+                            <div className="flex flex-col gap-0 px-1.5 py-1">
                               <span
-                                className={`truncate text-xs font-semibold leading-tight ${
+                                className={`truncate text-[10px] font-semibold leading-tight ${
                                   selected ? 'text-[#d4af37]' : 'text-white'
                                 }`}
                               >
                                 {opt.label}
                               </span>
-                              <span className="truncate text-[10px] leading-tight text-white/50">
+                              <span className="truncate text-[8px] leading-tight text-white/50">
                                 {opt.desc}
                               </span>
                             </div>

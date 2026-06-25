@@ -582,8 +582,8 @@ export function MainApp() {
           borderColor: `${THEME.border}44`,
         }}
       >
-        <div className="space-y-1 px-4 py-2 sm:px-6 sm:py-3">
-          <SaatirilFooterLines style={{ color: THEME.muted }} />
+        <div className="space-y-0.5 px-4 py-1.5 sm:px-6 sm:py-2">
+          <SaatirilFooterLines />
         </div>
       </footer>
       )}

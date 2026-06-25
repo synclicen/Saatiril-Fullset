@@ -581,3 +581,21 @@ Stage Summary:
 - FIX: Removed the misleading destructive toast. In browser mode, the operator now silently skips its own disk save (console.log only) because the Admin (Electron) handles persistence. The operator's job is purely to capture + emit PHOTOS_SAVED.
 - Real failures (Electron save error, null target) still surface toasts — only the false-alarm browser-mode toast was removed.
 - Lint clean, dev server clean, browser-verified.
+
+---
+Task ID: FOOTER-COLORS-RATIO-PRESET-SIZE
+Agent: main (Z.ai Code)
+Task: Three UI tweaks: (1) Footer 4 lines → different theme colors + smaller overall; (2) Add 16:9 Portrait ratio option; (3) Reduce filter preset preview to ~30% of current size.
+
+Work Log:
+- Change 1 — Footer (saatiril-footer.tsx): Added COLORS palette (gold #d4af37, muted #c4b5fd, cyan #06b6d4, goldSoft #a88b2d). Each of the 4 lines now has an explicit different theme color + different font family/style: Line 1 gold mono, Line 2 muted serif italic, Line 3 cyan sans bold uppercase, Line 4 soft gold mono wide-tracked. Reduced font sizes (11/12/11/10px from 12/14/12/11px) and leading (relaxed→tight). Reduced footer container padding in main-app.tsx (py-2→py-1.5) and project-hub.tsx (py-3→py-2).
+- Change 2 — Ratio (project-setup.tsx): Added "9:16 — 16:9 Portrait" SelectItem. parseRatio() handles any W:H generically.
+- Change 3 — Filter preset preview (project-setup.tsx): Grid 2/3 cols → 3/5 cols, gap-2→gap-1.5, tighter label padding/fonts, smaller check badge. Each thumbnail ~97×129px (was ~167×223px), area ~35% of original.
+- Lint: zero errors.
+- Browser verified: footer 4 colors confirmed via getComputedStyle (gold/lavender/cyan/soft-gold), ratio "9:16 — 16:9 Portrait" in dropdown, preset grid 5 columns with compact thumbnails.
+
+Stage Summary:
+- Footer: 4 distinctly colored lines (gold/lavender/cyan/soft-gold) matching app theme + smaller overall.
+- Ratio: "9:16 — 16:9 Portrait" added for tall portrait photos.
+- Filter preset previews: ~35% of original area (5-column grid, smaller thumbnails).
+- All browser-verified, lint clean, dev server HTTP 200.

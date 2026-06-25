@@ -264,8 +264,8 @@ export function ProjectHub() {
 
       {/* Footer */}
       <footer className="mt-auto border-t border-[#533485]/50 bg-[#2a164a]/60 backdrop-blur-sm">
-        <div className="mx-auto max-w-4xl space-y-1 px-4 py-3 sm:px-6 sm:py-4">
-          <SaatirilFooterLines className="text-[#c4b5fd]" />
+        <div className="mx-auto max-w-4xl space-y-0.5 px-4 py-2 sm:px-6 sm:py-2.5">
+          <SaatirilFooterLines />
         </div>
       </footer>
     </div>
