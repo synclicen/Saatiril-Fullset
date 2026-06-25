@@ -1,0 +1,1113 @@
+     1→'use client'
+     2→
+     3→import { useEffect, useMemo, useRef, useCallback, useState } from 'react'
+     4→import { Card, CardContent } from '@/components/ui/card'
+     5→import { Button } from '@/components/ui/button'
+     6→import { Badge } from '@/components/ui/badge'
+     7→import { Input } from '@/components/ui/input'
+     8→import { ScrollArea } from '@/components/ui/scroll-area'
+     9→import { Megaphone, Users, Clock, CheckCircle2, Loader2, Camera, Monitor, Search, Send, RotateCcw } from 'lucide-react'
+    10→import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, type CameraMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync, preservePhotoHistoryOnSync, isPhotoshootMode, isDualPhotoshootMode, channelCount } from '@/store/use-saatiril-store'
+    11→import { emitLocal, onLocal, offLocal } from '@/lib/socket'
+    12→import { useIsMobile } from '@/hooks/use-mobile'
+    13→import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
+    14→
+    15→// ─── Theme tokens ───────────────────────────────────────────────────────────
+    16→const THEME = {
+    17→  bg: '#1a0b2e',
+    18→  panel: '#2a164a',
+    19→  card: '#3b2263',
+    20→  border: '#533485',
+    21→  gold: '#d4af37',
+    22→  muted: '#c4b5fd',
+    23→  emerald: '#4ade80',
+    24→  cyan: '#06b6d4',
+    25→} as const
+    26→
+    27→// ─── Helpers ────────────────────────────────────────────────────────────────
+    28→function isActiveStatus(status: StudentStatus): boolean {
+    29→  return status.startsWith('active')
+    30→}
+    31→
+    32→function getActiveChannel(status: StudentStatus): number | null {
+    33→  if (!isActiveStatus(status)) return null
+    34→  const ch = status.split('_')[1]
+    35→  return ch ? parseInt(ch, 10) : null
+    36→}
+    37→
+    38→function statusLabel(status: StudentStatus): string {
+    39→  if (status === 'pending') return 'Menunggu'
+    40→  if (status === 'sent') return 'Dikirim'
+    41→  if (status === 'done') return 'Selesai'
+    42→  const ch = getActiveChannel(status)
+    43→  return ch != null ? `Foto Ch.${ch}` : 'Aktif'
+    44→}
+    45→
+    46→// ─── Socket event data shapes ───────────────────────────────────────────────
+    47→interface SyncDbData {
+    48→  project: {
+    49→    id: string
+    50→    name: string
+    51→    config: {
+    52→      mode: CameraMode
+    53→      ratio: string
+    54→      preset: string
+    55→      targetFolder: string
+    56→      frame: string | null
+    57→    }
+    58→    database: Student[]
+    59→    photoHistory: PhotoHistoryItem[]
+    60→  }
+    61→}
+    62→
+    63→interface PhotosSavedData {
+    64→  student: Student
+    65→  photos: string[]
+    66→  channel: number
+    67→}
+    68→
+    69→interface OpProgressData {
+    70→  channel: number
+    71→  status: string
+    72→}
+    73→
+    74→// ─── Component ──────────────────────────────────────────────────────────────
+    75→export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
+    76→  const isMobile = useIsMobile()
+    77→
+    78→  const currentProject = useSaatirilStore((s) => s.currentProject)
+    79→  const myChannel = useSaatirilStore((s) => s.myChannel)
+    80→  const updateStudentStatus = useSaatirilStore((s) => s.updateStudentStatus)
+    81→  const updateCurrentProject = useSaatirilStore((s) => s.updateCurrentProject)
+    82→  const saveProjectsToStorageNow = useSaatirilStore((s) => s.saveProjectsToStorageNow)
+    83→
+    84→  const [opProgressText, setOpProgressText] = useState<string>('')
+    85→  const [opProgressChannel, setOpProgressChannel] = useState<number>(0)
+    86→  // ── Photoshoot mode: search state ─────────────────────────────────────────
+    87→  const [searchQuery, setSearchQuery] = useState('')
+    88→  const [selectedStudent, setSelectedStudent] = useState<Student | null>(null)
+    89→
+    90→  const myChannelRef = useRef(myChannel)
+    91→  const currentProjectRef = useRef(currentProject)
+    92→  useEffect(() => { myChannelRef.current = myChannel }, [myChannel])
+    93→  useEffect(() => { currentProjectRef.current = currentProject }, [currentProject])
+    94→
+    95→  const mode = currentProject?.config.mode ?? 'single'
+    96→  const photoshoot = isPhotoshootMode(mode)
+    97→  const dualPhotoshoot = isDualPhotoshootMode(mode)
+    98→
+    99→  // ── For non-photoshoot modes: channel-filtered students ──────────────────
+   100→  const channelStudents = useMemo<Student[]>(() => {
+   101→    if (!currentProject) return []
+   102→    if (photoshoot) {
+   103→      // In photoshoot modes, all students are in one pool
+   104→      return currentProject.database
+   105→    }
+   106→    return currentProject.database.filter((s) => s.assignedChannel === myChannel)
+   107→  }, [currentProject, myChannel, photoshoot])
+   108→
+   109→  // Non-photoshoot: currently active student for our channel
+   110→  const currentlyActive = useMemo<Student | null>(() => {
+   111→    if (photoshoot) return null // Not used in photoshoot mode
+   112→    const targetStatus: StudentStatus = `active_${myChannel}`
+   113→    return channelStudents.find((s) => s.status === targetStatus) ?? null
+   114→  }, [channelStudents, myChannel, photoshoot])
+   115→
+   116→  const nextPending = useMemo<Student | null>(() => {
+   117→    return channelStudents.find((s) => s.status === 'pending') ?? null
+   118→  }, [channelStudents])
+   119→
+   120→  const remainingCount = useMemo<number>(() => {
+   121→    return channelStudents.filter((s) => s.status === 'pending').length
+   122→  }, [channelStudents])
+   123→
+   124→  const isPhotographing = !photoshoot && currentlyActive !== null
+   125→
+   126→  // ── Photoshoot: students sent to operators ──────────────────────────────
+   127→  const sentStudents = useMemo<Student[]>(() => {
+   128→    if (!photoshoot) return []
+   129→    return channelStudents.filter((s) => s.status === 'sent')
+   130→  }, [photoshoot, channelStudents])
+   131→
+   132→  // ── Photoshoot: check per-channel completion from photoHistory ──────────
+   133→  const getStudentChannelCompletion = useCallback((studentId: string): Record<number, boolean> => {
+   134→    const proj = currentProjectRef.current
+   135→    if (!proj) return {}
+   136→    const result: Record<number, boolean> = {}
+   137→    const chCount = channelCount(proj.config.mode)
+   138→    for (let ch = 1; ch <= chCount; ch++) {
+   139→      result[ch] = proj.photoHistory.some((h) => h.student.id === studentId && h.channel === ch)
+   140→    }
+   141→    return result
+   142→  }, [])
+   143→
+   144→  // ── Photoshoot: filtered search results ───────────────────────────────────
+   145→  const searchResults = useMemo<Student[]>(() => {
+   146→    if (!photoshoot || !searchQuery.trim()) return []
+   147→    const q = searchQuery.toLowerCase().trim()
+   148→    return channelStudents.filter(
+   149→      (s) =>
+   150→        (s.status === 'pending' || s.status === 'sent') &&
+   151→        (s.nim.toLowerCase().includes(q) || s.nama.toLowerCase().includes(q))
+   152→    )
+   153→  }, [photoshoot, searchQuery, channelStudents])
+   154→
+   155→  const activeRowRef = useRef<HTMLDivElement>(null)
+   156→  const nextRowRef = useRef<HTMLDivElement>(null)
+   157→
+   158→  useEffect(() => {
+   159→    const target = activeRowRef.current ?? nextRowRef.current
+   160→    if (target) {
+   161→      target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+   162→    }
+   163→  }, [currentlyActive, nextPending])
+   164→
+   165→  // ── Socket: STUDENT_DONE — lightweight event for immediate MC unblocking
+   166→  // In non-photoshoot mode, MC only needs to know the student is done.
+   167→  // This event fires BEFORE the heavy PHOTOS_SAVED payload arrives, so MC
+   168→  // can immediately call the next student without waiting for photo transfer.
+   169→  useEffect(() => {
+   170→    const handleStudentDone = (data: { studentId: string; channel: number }) => {
+   171→      if (photoshoot) return // photoshoot mode uses PHOTOS_SAVED for channel completion
+   172→      if (data.channel !== myChannelRef.current) return
+   173→      console.log('[SAATIRIL MC] STUDENT_DONE received — immediate unblock:', data.studentId, 'Ch.', data.channel)
+   174→      updateStudentStatus(data.studentId, 'done')
+   175→      setOpProgressText('')
+   176→      saveProjectsToStorageNow()
+   177→    }
+   178→
+   179→    onLocal('STUDENT_DONE', handleStudentDone)
+   180→    return () => { offLocal('STUDENT_DONE', handleStudentDone) }
+   181→  }, [updateStudentStatus, saveProjectsToStorageNow, photoshoot])
+   182→
+   183→  // ── Socket: SYNC_DB
+   184→  useEffect(() => {
+   185→    const handleSyncDb = (data: SyncDbData) => {
+   186→      if (!data.project) return
+   187→      const proj = data.project
+   188→      // Read latest state synchronously (avoids stale currentProjectRef race).
+   189→      // CRITICAL: the MC receives its OWN SYNC_DB echo from the socket server.
+   190→      // If we used currentProjectRef.current (updated only after render), the
+   191→      // echo would see the PRE-reset photoHistory and preservePhotoHistoryOnSync
+   192→      // would RE-ADD entries that STUDENT_RESET just cleared — defeating the reset.
+   193→      const curProj = useSaatirilStore.getState().currentProject
+   194→      if (curProj && proj.id === curProj.id) {
+   195→        const mergedDb = mergeDatabases(curProj.database, proj.database)
+   196→        const mergedConfig = preserveFrameOnSync(proj.config, curProj.config)
+   197→        const mergedPhotoHistory = preservePhotoHistoryOnSync(
+   198→          proj.photoHistory ?? [],
+   199→          curProj.photoHistory,
+   200→        )
+   201→        updateCurrentProject({
+   202→          ...curProj,
+   203→          database: mergedDb,
+   204→          photoHistory: mergedPhotoHistory,
+   205→          config: mergedConfig,
+   206→        })
+   207→      }
+   208→    }
+   209→
+   210→    onLocal('SYNC_DB', handleSyncDb)
+   211→    return () => { offLocal('SYNC_DB', handleSyncDb) }
+   212→  }, [updateCurrentProject])
+   213→
+   214→  // ── Socket: PHOTOS_SAVED
+   215→  // In non-photoshoot mode: STUDENT_DONE already unblocked MC, this is a no-op.
+   216→  // In photoshoot mode: adds photo to history and checks per-channel completion.
+   217→  useEffect(() => {
+   218→    const handlePhotosSaved = (data: PhotosSavedData) => {
+   219→      console.log('[SAATIRIL MC] PHOTOS_SAVED received:', data.student?.nama, 'channel:', data.channel)
+   220→
+   221→      // Non-photoshoot: already handled by STUDENT_DONE event — skip here
+   222→      if (!photoshoot) return
+   223→
+   224→      // For photoshoot: add to photoHistory and check per-channel completion
+   225→      const curProj = currentProjectRef.current
+   226→      if (!curProj) return
+   227→
+   228→      const historyItem: PhotoHistoryItem = {
+   229→        student: data.student,
+   230→        photos: data.photos,
+   231→        channel: data.channel,
+   232→      }
+   233→
+   234→      const existing = curProj.photoHistory.findIndex(
+   235→        (h) => h.student.id === data.student.id && h.channel === data.channel,
+   236→      )
+   237→      let newHistory: PhotoHistoryItem[]
+   238→      if (existing !== -1) {
+   239→        newHistory = [...curProj.photoHistory]
+   240→        newHistory[existing] = historyItem
+   241→      } else {
+   242→        newHistory = [...curProj.photoHistory, historyItem]
+   243→      }
+   244→
+   245→      // Check if all required channels have completed
+   246→      const chCount = channelCount(curProj.config.mode)
+   247→      let allChannelsDone = true
+   248→      for (let ch = 1; ch <= chCount; ch++) {
+   249→        const chDone = newHistory.some((h) => h.student.id === data.student.id && h.channel === ch)
+   250→        if (!chDone) {
+   251→          allChannelsDone = false
+   252→          break
+   253→        }
+   254→      }
+   255→
+   256→      const updatedProject = {
+   257→        ...curProj,
+   258→        database: curProj.database.map((s) =>
+   259→          s.id === data.student.id && allChannelsDone ? { ...s, status: 'done' as StudentStatus } : s
+   260→        ),
+   261→        photoHistory: newHistory,
+   262→      }
+   263→      updateCurrentProject(updatedProject)
+   264→      saveProjectsToStorageNow()
+   265→
+   266→      console.log('[SAATIRIL MC] PHOTOS_SAVED: allChannelsDone =', allChannelsDone, 'for', data.student.nama)
+   267→    }
+   268→
+   269→    onLocal('PHOTOS_SAVED', handlePhotosSaved)
+   270→    return () => { offLocal('PHOTOS_SAVED', handlePhotosSaved) }
+   271→  }, [updateStudentStatus, updateCurrentProject, saveProjectsToStorageNow, photoshoot])
+   272→
+   273→  // ── Socket: OP_PROGRESS
+   274→  useEffect(() => {
+   275→    const handleOpProgress = (data: OpProgressData) => {
+   276→      if (!photoshoot && data.channel !== myChannelRef.current) return
+   277→      console.log('[SAATIRIL MC] OP_PROGRESS:', data.status, 'channel:', data.channel)
+   278→      setOpProgressText(data.status)
+   279→      setOpProgressChannel(data.channel)
+   280→    }
+   281→
+   282→    onLocal('OP_PROGRESS', handleOpProgress)
+   283→    return () => { offLocal('OP_PROGRESS', handleOpProgress) }
+   284→  }, [photoshoot])
+   285→
+   286→  // ── Socket: MC_CALL
+   287→  useEffect(() => {
+   288→    const handleMcCall = (data: { student: Student; channel: number }) => {
+   289→      if (!photoshoot && data.channel !== myChannelRef.current) return
+   290→      updateStudentStatus(data.student.id, data.student.status)
+   291→    }
+   292→
+   293→    onLocal('MC_CALL', handleMcCall)
+   294→    return () => { offLocal('MC_CALL', handleMcCall) }
+   295→  }, [updateStudentStatus, photoshoot])
+   296→
+   297→  // ── Call action (non-photoshoot: sequential call)
+   298→  const handleCallNow = useCallback(() => {
+   299→    if (!nextPending || !currentProject) return
+   300→
+   301→    const newStatus: StudentStatus = `active_${myChannel}`
+   302→    updateStudentStatus(nextPending.id, newStatus)
+   303→    saveProjectsToStorageNow()
+   304→
+   305→    const latestProject = useSaatirilStore.getState().currentProject
+   306→    if (!latestProject) return
+   307→
+   308→    const updatedProject = {
+   309→      ...latestProject,
+   310→      database: latestProject.database.map((s) =>
+   311→        s.id === nextPending.id ? { ...s, status: newStatus } : s
+   312→      ),
+   313→    }
+   314→    updateCurrentProject(updatedProject)
+   315→    setOpProgressText('')
+   316→
+   317→    // PRIORITY: MC_CALL first (lightweight, operator gets student immediately)
+   318→    emitLocal('MC_CALL', {
+   319→      student: { ...nextPending, status: newStatus },
+   320→      channel: myChannel,
+   321→    })
+   322→    // Then SYNC_DB for consistency (now lightweight — photos stripped)
+   323→    emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
+   324→  }, [
+   325→    nextPending,
+   326→    currentProject,
+   327→    myChannel,
+   328→    updateStudentStatus,
+   329→    updateCurrentProject,
+   330→    saveProjectsToStorageNow,
+   331→  ])
+   332→
+   333→  // ── Photoshoot: send selected student to operator(s)
+   334→  const handleSendToOperator = useCallback(() => {
+   335→    if (!selectedStudent || !currentProject) return
+   336→
+   337→    if (dualPhotoshoot) {
+   338→      // Send to BOTH channels
+   339→      const newStatus: StudentStatus = 'sent'
+   340→
+   341→      const latestProject = useSaatirilStore.getState().currentProject
+   342→      if (!latestProject) return
+   343→
+   344→      // Update student status to 'sent' in database
+   345→      const updatedProject = {
+   346→        ...latestProject,
+   347→        database: latestProject.database.map((s) =>
+   348→          s.id === selectedStudent.id ? { ...s, status: newStatus } : s
+   349→        ),
+   350→      }
+   351→
+   352→      updateStudentStatus(selectedStudent.id, newStatus)
+   353→      updateCurrentProject(updatedProject)
+   354→      saveProjectsToStorageNow()
+   355→
+   356→      // Send MC_CALL to both channels FIRST (operators get student immediately)
+   357→      emitLocal('MC_CALL', {
+   358→        student: { ...selectedStudent, status: newStatus, assignedChannel: 1 },
+   359→        channel: 1,
+   360→      })
+   361→      emitLocal('MC_CALL', {
+   362→        student: { ...selectedStudent, status: newStatus, assignedChannel: 2 },
+   363→        channel: 2,
+   364→      })
+   365→      // Then SYNC_DB for consistency (now lightweight — photos stripped)
+   366→      emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
+   367→    } else {
+   368→      // Single photoshoot: send to channel 1
+   369→      const newStatus: StudentStatus = 'sent'
+   370→
+   371→      const latestProject = useSaatirilStore.getState().currentProject
+   372→      if (!latestProject) return
+   373→
+   374→      const updatedProject = {
+   375→        ...latestProject,
+   376→        database: latestProject.database.map((s) =>
+   377→          s.id === selectedStudent.id ? { ...s, status: newStatus } : s
+   378→        ),
+   379→      }
+   380→
+   381→      updateStudentStatus(selectedStudent.id, newStatus)
+   382→      updateCurrentProject(updatedProject)
+   383→      saveProjectsToStorageNow()
+   384→
+   385→      emitLocal('MC_CALL', {
+   386→        student: { ...selectedStudent, status: newStatus },
+   387→        channel: 1,
+   388→      })
+   389→      emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
+   390→    }
+   391→
+   392→    setSearchQuery('')
+   393→    setSelectedStudent(null)
+   394→  }, [selectedStudent, currentProject, dualPhotoshoot, updateStudentStatus, updateCurrentProject, saveProjectsToStorageNow])
+   395→
+   396→  // ── Photoshoot: reset (for retake)
+   397→  // Clears the student's photoHistory + resets status to 'pending' + emits a
+   398→  // dedicated STUDENT_RESET event so operators (and admin) explicitly clear
+   399→  // their buffer / active target / photoHistory. This is necessary because
+   400→  // the normal SYNC_DB merge (mergeDatabases) BLOCKS status regression
+   401→  // (pending priority 0 < sent/done), and preservePhotoHistoryOnSync does
+   402→  // not propagate photoHistory deletions — so a reset via SYNC_DB alone would
+   403→  // be silently dropped on the receiver side.
+   404→  const handleResetForRetake = useCallback((student: Student) => {
+   405→    const latestProject = useSaatirilStore.getState().currentProject
+   406→    if (!latestProject) return
+   407→
+   408→    // Remove ALL photoHistory entries for this student (every channel) so the
+   409→    // operator queue (which filters via `alreadyPhotographed`) will re-show
+   410→    // the student after re-send.
+   411→    const cleanedPhotoHistory = latestProject.photoHistory.filter(
+   412→      (h) => h.student.id !== student.id,
+   413→    )
+   414→
+   415→    const updatedProject: typeof latestProject = {
+   416→      ...latestProject,
+   417→      database: latestProject.database.map((s) =>
+   418→        s.id === student.id ? { ...s, status: 'pending' as StudentStatus } : s,
+   419→      ),
+   420→      photoHistory: cleanedPhotoHistory,
+   421→    }
+   422→
+   423→    updateStudentStatus(student.id, 'pending')
+   424→    updateCurrentProject(updatedProject)
+   425→    saveProjectsToStorageNow()
+   426→
+   427→    // Emit STUDENT_RESET to every relevant channel — this bypasses the merge
+   428→    // priority logic and tells each operator to: clear mcCallBuffer entry,
+   429→    // clear opCurrentTarget if it matches, remove their photoHistory entry,
+   430→    // and set the student status to 'pending' locally.
+   431→    const channels = dualPhotoshoot ? [1, 2] : [1]
+   432→    for (const ch of channels) {
+   433→      emitLocal('STUDENT_RESET', { studentId: student.id, channel: ch })
+   434→    }
+   435→    // Also emit SYNC_DB for consistency (photoHistory + status now cleaned)
+   436→    emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
+   437→
+   438→    // Pre-select the student for easy re-send
+   439→    setSelectedStudent({ ...student, status: 'pending' })
+   440→    setSearchQuery(student.nama)
+   441→  }, [dualPhotoshoot, updateStudentStatus, updateCurrentProject, saveProjectsToStorageNow])
+   442→
+   443→  // ── Render helpers
+   444→  const renderCallButton = () => {
+   445→    if (readOnly) {
+   446→      return (
+   447→        <Button
+   448→          disabled
+   449→          className={`w-full font-bold cursor-not-allowed ${isMobile ? 'h-12 text-sm' : 'h-14 text-lg'}`}
+   450→          style={{
+   451→            backgroundColor: THEME.panel,
+   452→            color: THEME.muted,
+   453→            border: `2px solid ${THEME.border}`,
+   454→            opacity: 0.6,
+   455→          }}
+   456→        >
+   457→          <Monitor className="size-5" />
+   458→          MONITOR — HANYA LIHAT
+   459→        </Button>
+   460→      )
+   461→    }
+   462→
+   463→    if (photoshoot) {
+   464→      // Photoshoot mode: always allow sending — NO BLOCKING
+   465→      return (
+   466→        <Button
+   467→          disabled={!selectedStudent || selectedStudent.status === 'done'}
+   468→          onClick={handleSendToOperator}
+   469→          className={`w-full font-bold cursor-pointer transition-all duration-200 active:scale-[0.98] ${isMobile ? 'h-14 text-base' : 'h-14 text-lg hover:scale-[1.02]'}`}
+   470→          style={{
+   471→            backgroundColor: selectedStudent && selectedStudent.status !== 'done' ? THEME.emerald : THEME.panel,
+   472→            color: selectedStudent && selectedStudent.status !== 'done' ? THEME.bg : THEME.muted,
+   473→            border: `2px solid ${selectedStudent && selectedStudent.status !== 'done' ? THEME.emerald : THEME.border}`,
+   474→            boxShadow: selectedStudent && selectedStudent.status !== 'done' ? `0 0 20px ${THEME.emerald}44` : 'none',
+   475→          }}
+   476→        >
+   477→          <Send className="size-5" />
+   478→          {dualPhotoshoot ? 'KIRIM KE 2 KAMERA' : 'KIRIM KE OPERATOR'}
+   479→        </Button>
+   480→      )
+   481→    }
+   482→
+   483→    // Non-photoshoot: existing blocking flow
+   484→    if (isPhotographing) {
+   485→      return (
+   486→        <div className="space-y-2">
+   487→          <Button
+   488→            disabled
+   489→            className={`w-full font-bold cursor-not-allowed ${isMobile ? 'h-12 text-sm' : 'h-14 text-lg'}`}
+   490→            style={{
+   491→              backgroundColor: THEME.panel,
+   492→              color: THEME.muted,
+   493→              border: `2px solid ${THEME.border}`,
+   494→            }}
+   495→          >
+   496→            <Loader2 className="size-5 animate-spin" />
+   497→            {opProgressText || 'TUNGGU KAMERA...'}
+   498→          </Button>
+   499→        </div>
+   500→      )
+   501→    }
+   502→
+   503→    if (nextPending) {
+   504→      return (
+   505→        <Button
+   506→          onClick={handleCallNow}
+   507→          className={`w-full font-bold cursor-pointer transition-all duration-200 active:scale-[0.98] ${isMobile ? 'h-14 text-base' : 'h-14 text-lg hover:scale-[1.02]'}`}
+   508→          style={{
+   509→            backgroundColor: THEME.gold,
+   510→            color: THEME.bg,
+   511→            border: `2px solid ${THEME.gold}`,
+   512→            boxShadow: `0 0 20px ${THEME.gold}44`,
+   513→          }}
+   514→        >
+   515→          <Megaphone className="size-5" />
+   516→          PANGGIL SEKARANG
+   517→        </Button>
+   518→      )
+   519→    }
+   520→
+   521→    return (
+   522→      <Button
+   523→        disabled
+   524→        className={`w-full font-bold cursor-not-allowed ${isMobile ? 'h-12 text-sm' : 'h-14 text-lg'}`}
+   525→        style={{
+   526→          backgroundColor: THEME.panel,
+   527→          color: THEME.muted,
+   528→          border: `2px solid ${THEME.border}`,
+   529→          opacity: 0.6,
+   530→        }}
+   531→      >
+   532→        <Users className="size-5" />
+   533→        ANTREAN HABIS
+   534→      </Button>
+   535→    )
+   536→  }
+   537→
+   538→  const getRowStyle = (student: Student): React.CSSProperties => {
+   539→    const isActive = isActiveStatus(student.status)
+   540→    const isNext = !photoshoot && student.id === nextPending?.id && student.status === 'pending'
+   541→    const isDone = student.status === 'done'
+   542→    const isSent = student.status === 'sent'
+   543→    const isSelected = photoshoot && selectedStudent?.id === student.id
+   544→
+   545→    if (isActive) {
+   546→      return {
+   547→        backgroundColor: `${THEME.gold}22`,
+   548→        borderLeft: `4px solid ${THEME.gold}`,
+   549→        boxShadow: `0 0 12px ${THEME.gold}44`,
+   550→      }
+   551→    }
+   552→
+   553→    if (isSelected) {
+   554→      return {
+   555→        backgroundColor: `${THEME.emerald}22`,
+   556→        borderLeft: `4px solid ${THEME.emerald}`,
+   557→        boxShadow: `0 0 12px ${THEME.emerald}44`,
+   558→      }
+   559→    }
+   560→
+   561→    if (isSent) {
+   562→      return {
+   563→        backgroundColor: `${THEME.cyan}11`,
+   564→        borderLeft: `4px solid ${THEME.cyan}`,
+   565→      }
+   566→    }
+   567→
+   568→    if (isNext) {
+   569→      return {
+   570→        backgroundColor: THEME.panel,
+   571→        borderLeft: `4px solid ${THEME.gold}`,
+   572→      }
+   573→    }
+   574→
+   575→    if (isDone) {
+   576→      return {
+   577→        backgroundColor: '#22c55e0d',
+   578→        opacity: 0.55,
+   579→        borderLeft: `4px solid #22c55e66`,
+   580→      }
+   581→    }
+   582→
+   583→    return {
+   584→      backgroundColor: THEME.panel,
+   585→      borderLeft: `4px solid ${THEME.border}`,
+   586→    }
+   587→  }
+   588→
+   589→  const renderStatusBadge = (status: StudentStatus) => {
+   590→    if (status === 'done') {
+   591→      return (
+   592→        <Badge
+   593→          className="text-[10px] px-1.5 py-0"
+   594→          style={{ backgroundColor: '#22c55e33', color: '#4ade80', border: '1px solid #22c55e55' }}
+   595→        >
+   596→          <CheckCircle2 className="size-3 mr-0.5" />
+   597→          Selesai
+   598→        </Badge>
+   599→      )
+   600→    }
+   601→
+   602→    if (status === 'sent') {
+   603→      return (
+   604→        <Badge
+   605→          className="text-[10px] px-1.5 py-0"
+   606→          style={{ backgroundColor: `${THEME.cyan}33`, color: THEME.cyan, border: `1px solid ${THEME.cyan}66` }}
+   607→        >
+   608→          <Camera className="size-3 mr-0.5" />
+   609→          Dikirim
+   610→        </Badge>
+   611→      )
+   612→    }
+   613→
+   614→    if (isActiveStatus(status)) {
+   615→      return (
+   616→        <Badge
+   617→          className="text-[10px] px-1.5 py-0 animate-pulse"
+   618→          style={{
+   619→            backgroundColor: `${THEME.gold}33`,
+   620→            color: THEME.gold,
+   621→            border: `1px solid ${THEME.gold}66`,
+   622→          }}
+   623→        >
+   624→          <Camera className="size-3 mr-0.5" />
+   625→          {statusLabel(status)}
+   626→        </Badge>
+   627→      )
+   628→    }
+   629→
+   630→    return (
+   631→      <Badge
+   632→        className="text-[10px] px-1.5 py-0"
+   633→        style={{
+   634→          backgroundColor: `${THEME.border}44`,
+   635→          color: THEME.muted,
+   636→          border: `1px solid ${THEME.border}`,
+   637→        }}
+   638→      >
+   639→        <Clock className="size-3 mr-0.5" />
+   640→        Menunggu
+   641→      </Badge>
+   642→    )
+   643→  }
+   644→
+   645→  // ── Photoshoot: search input + results
+   646→  const renderPhotoshootSearch = () => (
+   647→    <Card
+   648→      className="shrink-0 border-2 rounded-xl"
+   649→      style={{
+   650→        backgroundColor: THEME.card,
+   651→        borderColor: THEME.emerald,
+   652→        boxShadow: `0 0 20px ${THEME.emerald}22`,
+   653→      }}
+   654→    >
+   655→      <CardContent className="p-3 space-y-2">
+   656→        <p
+   657→          className="text-[10px] font-semibold uppercase tracking-widest"
+   658→          style={{ color: THEME.emerald }}
+   659→        >
+   660→          Cari Peserta — Urutan Bebas
+   661→        </p>
+   662→
+   663→        <div className="relative">
+   664→          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4" style={{ color: THEME.muted }} />
+   665→          <Input
+   666→            placeholder="Cari NIM atau Nama..."
+   667→            value={searchQuery}
+   668→            onChange={(e) => {
+   669→              setSearchQuery(e.target.value)
+   670→              setSelectedStudent(null)
+   671→            }}
+   672→            className="pl-8 border-[#533485] bg-[#3b2263] text-white placeholder:text-[#533485] focus-visible:border-[#4ade80] focus-visible:ring-[#4ade80]/30"
+   673→          />
+   674→        </div>
+   675→
+   676→        {/* Search results */}
+   677→        {searchQuery.trim() && (
+   678→          <div className="max-h-32 overflow-y-auto rounded-lg border" style={{ borderColor: THEME.border }}>
+   679→            {searchResults.length === 0 ? (
+   680→              <p className="p-2 text-xs text-center" style={{ color: THEME.muted }}>
+   681→                Tidak ditemukan
+   682→              </p>
+   683→            ) : (
+   684→              searchResults.slice(0, 10).map((student) => (
+   685→                <button
+   686→                  key={student.id}
+   687→                  onClick={() => setSelectedStudent(student)}
+   688→                  className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/5 cursor-pointer"
+   689→                  style={{
+   690→                    backgroundColor: selectedStudent?.id === student.id ? `${THEME.emerald}22` : 'transparent',
+   691→                    borderLeft: selectedStudent?.id === student.id ? `3px solid ${THEME.emerald}` : `3px solid transparent`,
+   692→                  }}
+   693→                >
+   694→                  <span className="text-xs font-mono truncate w-16 shrink-0" style={{ color: THEME.muted }}>
+   695→                    {student.nim}
+   696→                  </span>
+   697→                  <span className="text-xs font-medium truncate flex-1" style={{ color: '#ffffff' }}>
+   698→                    {student.nama}
+   699→                  </span>
+   700→                  {renderStatusBadge(student.status)}
+   701→                </button>
+   702→              ))
+   703→            )}
+   704→          </div>
+   705→        )}
+   706→
+   707→        {/* Selected student preview */}
+   708→        {selectedStudent && (
+   709→          <div className="rounded-lg p-2.5" style={{ backgroundColor: `${THEME.emerald}15`, border: `1px solid ${THEME.emerald}33` }}>
+   710→            <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: THEME.emerald }}>
+   711→              Peserta Dipilih
+   712→            </p>
+   713→            <p className="text-sm font-bold truncate" style={{ color: '#ffffff' }}>
+   714→              {selectedStudent.nama}
+   715→            </p>
+   716→            <p className="text-xs font-mono" style={{ color: THEME.muted }}>
+   717→              {selectedStudent.nim}
+   718→            </p>
+   719→          </div>
+   720→        )}
+   721→
+   722→        {renderCallButton()}
+   723→      </CardContent>
+   724→    </Card>
+   725→  )
+   726→
+   727→  // ── Photoshoot: sent students panel (per-channel progress)
+   728→  const renderSentStudents = () => {
+   729→    if (!photoshoot || sentStudents.length === 0) return null
+   730→
+   731→    return (
+   732→      <Card
+   733→        className="shrink-0 border rounded-xl"
+   734→        style={{ backgroundColor: THEME.card, borderColor: THEME.cyan }}
+   735→      >
+   736→        <CardContent className="p-3 space-y-2">
+   737→          <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: THEME.cyan }}>
+   738→            <Camera className="size-3 inline mr-1" />
+   739→            Dikirim ke Operator ({sentStudents.length})
+   740→          </p>
+   741→          <div className="max-h-48 overflow-y-auto space-y-1.5">
+   742→            {sentStudents.map((student) => {
+   743→              const completion = getStudentChannelCompletion(student.id)
+   744→              return (
+   745→                <div
+   746→                  key={student.id}
+   747→                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
+   748→                  style={{ backgroundColor: `${THEME.cyan}0a`, border: `1px solid ${THEME.cyan}22` }}
+   749→                >
+   750→                  <span className="text-xs font-medium truncate flex-1" style={{ color: '#ffffff' }}>
+   751→                    {student.nama}
+   752→                  </span>
+   753→                  {dualPhotoshoot ? (
+   754→                    <div className="flex items-center gap-1 shrink-0">
+   755→                      <Badge
+   756→                        className="text-[9px] px-1 py-0"
+   757→                        style={{
+   758→                          backgroundColor: completion[1] ? '#22c55e33' : `${THEME.gold}22`,
+   759→                          color: completion[1] ? '#4ade80' : THEME.gold,
+   760→                          border: `1px solid ${completion[1] ? '#22c55e55' : `${THEME.gold}44`}`,
+   761→                        }}
+   762→                      >
+   763→                        Ch.1 {completion[1] ? '✓' : '...'}
+   764→                      </Badge>
+   765→                      <Badge
+   766→                        className="text-[9px] px-1 py-0"
+   767→                        style={{
+   768→                          backgroundColor: completion[2] ? '#22c55e33' : `${THEME.cyan}22`,
+   769→                          color: completion[2] ? '#4ade80' : THEME.cyan,
+   770→                          border: `1px solid ${completion[2] ? '#22c55e55' : `${THEME.cyan}44`}`,
+   771→                        }}
+   772→                      >
+   773→                        Ch.2 {completion[2] ? '✓' : '...'}
+   774→                      </Badge>
+   775→                    </div>
+   776→                  ) : (
+   777→                    <Badge
+   778→                      className="text-[9px] px-1 py-0"
+   779→                      style={{
+   780→                        backgroundColor: completion[1] ? '#22c55e33' : `${THEME.gold}22`,
+   781→                        color: completion[1] ? '#4ade80' : THEME.gold,
+   782→                        border: `1px solid ${completion[1] ? '#22c55e55' : `${THEME.gold}44`}`,
+   783→                      }}
+   784→                    >
+   785→                      {completion[1] ? '✓ Selesai' : 'Memotret...'}
+   786→                    </Badge>
+   787→                  )}
+   788→                  <Button
+   789→                    variant="ghost"
+   790→                    size="icon"
+   791→                    className="size-6 shrink-0 cursor-pointer"
+   792→                    style={{ color: THEME.gold }}
+   793→                    onClick={() => handleResetForRetake(student)}
+   794→                    title="Reset & Kirim Ulang"
+   795→                  >
+   796→                    <RotateCcw className="size-3" />
+   797→                  </Button>
+   798→                </div>
+   799→              )
+   800→            })}
+   801→          </div>
+   802→          {opProgressText && (
+   803→            <div className="flex items-center gap-1.5 mt-1">
+   804→              <Loader2 className="size-3 animate-spin" style={{ color: THEME.cyan }} />
+   805→              <span className="text-[10px]" style={{ color: THEME.cyan }}>
+   806→                Ch.{opProgressChannel}: {opProgressText}
+   807→              </span>
+   808→            </div>
+   809→          )}
+   810→        </CardContent>
+   811→      </Card>
+   812→    )
+   813→  }
+   814→
+   815→  // ── Main render
+   816→  if (!currentProject) {
+   817→    return (
+   818→      <div
+   819→        className="flex items-center justify-center h-full"
+   820→        style={{ backgroundColor: THEME.bg, color: THEME.muted }}
+   821→      >
+   822→        <p className="text-sm opacity-60">Belum ada proyek aktif</p>
+   823→      </div>
+   824→    )
+   825→  }
+   826→
+   827→  // ── MOBILE LAYOUT ────────────────────────────────────────────────────────
+   828→  if (isMobile) {
+   829→    return (
+   830→      <div className="flex flex-col gap-2 h-full p-2 touch-no-select" style={{ backgroundColor: THEME.bg }}>
+   831→        {/* Call Panel */}
+   832→        {photoshoot ? renderPhotoshootSearch() : (
+   833→          <Card
+   834→            className="shrink-0 border-2 rounded-xl"
+   835→            style={{
+   836→              backgroundColor: THEME.card,
+   837→              borderColor: THEME.gold,
+   838→              boxShadow: `0 0 20px ${THEME.gold}22`,
+   839→            }}
+   840→          >
+   841→            <CardContent className="p-3 space-y-2">
+   842→              <p
+   843→                className="text-[10px] font-semibold uppercase tracking-widest"
+   844→                style={{ color: THEME.gold }}
+   845→              >
+   846→                Target Selanjutnya
+   847→              </p>
+   848→
+   849→              {nextPending ? (
+   850→                <div className="space-y-0.5">
+   851→                  <p className="text-xl font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
+   852→                    {nextPending.nama}
+   853→                  </p>
+   854→                  <p className="text-sm font-mono" style={{ color: THEME.muted }}>
+   855→                    {nextPending.nim}
+   856→                  </p>
+   857→                </div>
+   858→              ) : currentlyActive ? (
+   859→                <div className="space-y-0.5">
+   860→                  <p className="text-sm font-semibold leading-tight" style={{ color: THEME.gold }}>
+   861→                    Sedang difoto:
+   862→                  </p>
+   863→                  <p className="text-xl font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
+   864→                    {currentlyActive.nama}
+   865→                  </p>
+   866→                  <p className="text-sm font-mono" style={{ color: THEME.muted }}>
+   867→                    {currentlyActive.nim}
+   868→                  </p>
+   869→                  {opProgressText && (
+   870→                    <div className="flex items-center gap-2 mt-1">
+   871→                      <Camera className="size-3.5" style={{ color: THEME.gold }} />
+   872→                      <span className="text-xs font-medium" style={{ color: THEME.gold }}>
+   873→                        {opProgressText}
+   874→                      </span>
+   875→                    </div>
+   876→                  )}
+   877→                </div>
+   878→              ) : (
+   879→                <p className="text-sm italic" style={{ color: THEME.muted }}>
+   880→                  Semua peserta telah dipanggil
+   881→                </p>
+   882→              )}
+   883→
+   884→              {renderCallButton()}
+   885→            </CardContent>
+   886→          </Card>
+   887→        )}
+   888→
+   889→        {/* Sent Students (photoshoot) */}
+   890→        {photoshoot && renderSentStudents()}
+   891→
+   892→        {/* Queue List */}
+   893→        <Card
+   894→          className="flex-1 min-h-0 border rounded-xl overflow-hidden flex flex-col"
+   895→          style={{ backgroundColor: THEME.card, borderColor: THEME.border }}
+   896→        >
+   897→          <div
+   898→            className="shrink-0 flex items-center justify-between px-3 py-2"
+   899→            style={{ borderBottom: `1px solid ${THEME.border}` }}
+   900→          >
+   901→            <h3 className="text-xs font-semibold" style={{ color: '#ffffff' }}>
+   902→              {photoshoot ? 'Daftar Peserta' : 'Antrean'}: <span style={{ color: photoshoot ? THEME.emerald : THEME.gold }} className="font-bold">{remainingCount}</span>
+   903→            </h3>
+   904→            <span className="text-[10px]" style={{ color: THEME.muted }}>
+   905→              {photoshoot ? (dualPhotoshoot ? '2 Kamera' : 'Photoshoot') : `Ch.${myChannel}`}
+   906→            </span>
+   907→          </div>
+   908→
+   909→          <ScrollArea className="flex-1 min-h-0">
+   910→            <div className="flex flex-col">
+   911→              {channelStudents.length === 0 ? (
+   912→                <div className="flex items-center justify-center py-8">
+   913→                  <p className="text-xs" style={{ color: THEME.muted }}>Tidak ada peserta</p>
+   914→                </div>
+   915→              ) : (
+   916→                channelStudents.map((student, idx) => {
+   917→                  const isActive = isActiveStatus(student.status)
+   918→                  const isNext = !photoshoot && student.id === nextPending?.id && student.status === 'pending'
+   919→
+   920→                  return (
+   921→                    <div
+   922→                      key={student.id}
+   923→                      ref={isActive ? activeRowRef : isNext ? nextRowRef : undefined}
+   924→                      className="flex items-center gap-2 px-3 py-2 transition-colors duration-200 cursor-pointer"
+   925→                      style={getRowStyle(student)}
+   926→                      onClick={() => {
+   927→                        if (photoshoot && student.status !== 'done') {
+   928→                          setSelectedStudent(student)
+   929→                          setSearchQuery(student.nama)
+   930→                        }
+   931→                      }}
+   932→                    >
+   933→                      <span className="text-[10px] font-mono w-5 shrink-0" style={{ color: THEME.muted }}>
+   934→                        {idx + 1}
+   935→                      </span>
+   936→                      <span className="text-[10px] font-mono truncate w-16 shrink-0" style={{ color: THEME.muted }}>
+   937→                        {student.nim}
+   938→                      </span>
+   939→                      <span
+   940→                        className={`text-xs font-medium truncate flex-1 ${student.status === 'done' ? 'line-through' : ''}`}
+   941→                        style={{
+   942→                          color: isActive ? THEME.gold : selectedStudent?.id === student.id ? THEME.emerald : student.status === 'sent' ? THEME.cyan : student.status === 'done' ? THEME.muted : '#ffffff',
+   943→                        }}
+   944→                      >
+   945→                        {student.nama}
+   946→                      </span>
+   947→                      <div className="shrink-0">
+   948→                        {renderStatusBadge(student.status)}
+   949→                      </div>
+   950→                    </div>
+   951→                  )
+   952→                })
+   953→              )}
+   954→            </div>
+   955→          </ScrollArea>
+   956→        </Card>
+   957→      </div>
+   958→    )
+   959→  }
+   960→
+   961→  // ── DESKTOP LAYOUT — side-by-side: control column + full-height participant list
+   962→  // Control panel (left, fixed width) berdampingan dengan daftar peserta (right,
+   963→  // flex-1 full height). Daftar peserta TIDAK PERNAH terdesak meski banyak peserta
+   964→  // sudah dipanggil, karena panel kontrol ada di kolom terpisah.
+   965→  return (
+   966→    <div className="flex flex-row gap-3 h-full p-3" style={{ backgroundColor: THEME.bg }}>
+   967→      {/* LEFT: Control column (fixed width, internal scroll if overflow) */}
+   968→      <div className="flex flex-col gap-3 shrink-0 w-[340px] lg:w-[360px] xl:w-[400px] min-h-0 overflow-y-auto pr-1">
+   969→        {photoshoot ? renderPhotoshootSearch() : (
+   970→          <Card
+   971→            className="shrink-0 border-2 rounded-xl"
+   972→            style={{
+   973→              backgroundColor: THEME.card,
+   974→              borderColor: THEME.gold,
+   975→              boxShadow: `0 0 20px ${THEME.gold}22`,
+   976→            }}
+   977→          >
+   978→            <CardContent className="p-4 space-y-3">
+   979→              <p
+   980→                className="text-xs font-semibold uppercase tracking-widest"
+   981→                style={{ color: THEME.gold }}
+   982→              >
+   983→                Target Pemanggilan Selanjutnya
+   984→              </p>
+   985→
+   986→              {nextPending ? (
+   987→                <div className="space-y-1">
+   988→                  <p className="text-2xl font-bold leading-tight" style={{ color: '#ffffff' }}>
+   989→                    {nextPending.nama}
+   990→                  </p>
+   991→                  <p className="text-sm font-mono" style={{ color: THEME.muted }}>
+   992→                    {nextPending.nim}
+   993→                  </p>
+   994→                </div>
+   995→              ) : currentlyActive ? (
+   996→                <div className="space-y-1">
+   997→                  <p className="text-lg font-semibold leading-tight" style={{ color: THEME.gold }}>
+   998→                    Sedang difoto:
+   999→                  </p>
+  1000→                  <p className="text-2xl font-bold leading-tight" style={{ color: '#ffffff' }}>
+  1001→                    {currentlyActive.nama}
+  1002→                  </p>
+  1003→                  <p className="text-sm font-mono" style={{ color: THEME.muted }}>
+  1004→                    {currentlyActive.nim}
+  1005→                  </p>
+  1006→                  {opProgressText && (
+  1007→                    <div className="flex items-center gap-2 mt-1">
+  1008→                      <Camera className="size-3.5" style={{ color: THEME.gold }} />
+  1009→                      <span className="text-xs font-medium" style={{ color: THEME.gold }}>
+  1010→                        {opProgressText}
+  1011→                      </span>
+  1012→                    </div>
+  1013→                  )}
+  1014→                </div>
+  1015→              ) : (
+  1016→                <div className="space-y-1">
+  1017→                  <p className="text-lg italic" style={{ color: THEME.muted }}>
+  1018→                    Semua peserta telah dipanggil
+  1019→                  </p>
+  1020→                </div>
+  1021→              )}
+  1022→
+  1023→              {renderCallButton()}
+  1024→            </CardContent>
+  1025→          </Card>
+  1026→        )}
+  1027→
+  1028→        {/* Sent Students (photoshoot) */}
+  1029→        {photoshoot && renderSentStudents()}
+  1030→      </div>
+  1031→
+  1032→      {/* RIGHT: Full-height participant list — selalu terlihat penuh, tidak terdesak */}
+  1033→      <Card
+  1034→        className="flex-1 min-h-0 border rounded-xl overflow-hidden flex flex-col"
+  1035→        style={{ backgroundColor: THEME.card, borderColor: THEME.border }}
+  1036→      >
+  1037→        <div
+  1038→          className="shrink-0 flex items-center justify-between px-4 py-2.5"
+  1039→          style={{ borderBottom: `1px solid ${THEME.border}` }}
+  1040→        >
+  1041→          <h3 className="text-sm font-semibold" style={{ color: '#ffffff' }}>
+  1042→            {photoshoot ? 'Daftar Peserta' : 'Sisa Antrean'}: <span style={{ color: photoshoot ? THEME.emerald : THEME.gold }} className="font-bold">{remainingCount}</span>
+  1043→          </h3>
+  1044→          <div className="flex items-center gap-2">
+  1045→            <NetworkQualityBadge />
+  1046→            <span className="text-xs" style={{ color: THEME.muted }}>
+  1047→              {photoshoot ? (dualPhotoshoot ? '2 Kamera' : 'Photoshoot') : `Channel ${myChannel}`}
+  1048→            </span>
+  1049→          </div>
+  1050→        </div>
+  1051→
+  1052→        <div
+  1053→          className="shrink-0 grid grid-cols-[36px_90px_1fr_80px] gap-2 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider"
+  1054→          style={{
+  1055→            backgroundColor: THEME.panel,
+  1056→            color: THEME.muted,
+  1057→            borderBottom: `1px solid ${THEME.border}`,
+  1058→          }}
+  1059→        >
+  1060→          <span>No</span>
+  1061→          <span>NIM</span>
+  1062→          <span>Nama Lengkap</span>
+  1063→          <span className="text-right">Status</span>
+  1064→        </div>
+  1065→
+  1066→        <ScrollArea className="flex-1 min-h-0">
+  1067→          <div className="flex flex-col">
+  1068→            {channelStudents.length === 0 ? (
+  1069→              <div className="flex items-center justify-center py-12">
+  1070→                <p className="text-sm" style={{ color: THEME.muted }}>
+  1071→                  Tidak ada peserta
+  1072→                </p>
+  1073→              </div>
+  1074→            ) : (
+  1075→              channelStudents.map((student, idx) => {
+  1076→                const isActive = isActiveStatus(student.status)
+  1077→                const isNext = !photoshoot && student.id === nextPending?.id && student.status === 'pending'
+  1078→
+  1079→                return (
+  1080→                  <div
+  1081→                    key={student.id}
+  1082→                    ref={isActive ? activeRowRef : isNext ? nextRowRef : undefined}
+  1083→                    className="grid grid-cols-[36px_90px_1fr_80px] gap-2 items-center px-4 py-2 transition-colors duration-200 cursor-pointer"
+  1084→                    style={getRowStyle(student)}
+  1085→                    onClick={() => {
+  1086→                      if (photoshoot && student.status !== 'done') {
+  1087→                        setSelectedStudent(student)
+  1088→                        setSearchQuery(student.nama)
+  1089→                      }
+  1090→                    }}
+  1091→                  >
+  1092→                    <span className="text-xs font-mono" style={{ color: THEME.muted }}>{idx + 1}</span>
+  1093→                    <span className="text-xs font-mono truncate" style={{ color: THEME.muted }}>{student.nim}</span>
+  1094→                    <span
+  1095→                      className={`text-sm font-medium truncate ${student.status === 'done' ? 'line-through' : ''}`}
+  1096→                      style={{ color: isActive ? THEME.gold : selectedStudent?.id === student.id ? THEME.emerald : student.status === 'sent' ? THEME.cyan : student.status === 'done' ? THEME.muted : '#ffffff' }}
+  1097→                    >
+  1098→                      {student.nama}
+  1099→                    </span>
+  1100→                    <div className="flex justify-end">{renderStatusBadge(student.status)}</div>
+  1101→                  </div>
+  1102→                )
+  1103→              })
+  1104→            )}
+  1105→          </div>
+  1106→        </ScrollArea>
+  1107→      </Card>
+  1108→    </div>
+  1109→  )
+  1110→}
+  1111→
+  1112→export default McPanel
+  1113→
