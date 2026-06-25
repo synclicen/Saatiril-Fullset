@@ -24,13 +24,6 @@ import { Separator } from '@/components/ui/separator'
 import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, type CameraMode, mergeDatabases, preserveFrameOnSync, preservePhotoHistoryOnSync, mergeCaptureVersions, isPhotoshootMode, isDualPhotoshootMode } from '@/store/use-saatiril-store'
 import { onLocal, offLocal, getConnectionHealth, onLatencyUpdate, type ConnectionHealth } from '@/lib/socket'
 import { useToast } from '@/hooks/use-toast'
-import {
-  isElectronSaveAvailable,
-  isBrowserSaveSupported,
-  savePhotoInBrowser,
-  downloadPhotoFallback,
-  browserSaveStorageKey,
-} from '@/lib/browser-photo-save'
 
 // ── Theme constants ──────────────────────────────────────────────
 const BG = 'bg-[#1a0b2e]'
@@ -157,16 +150,16 @@ export default function AdminDashboard() {
       const version = data.version ?? 1
 
       // ── Save photos to disk ─────────────────────────────────────────────
-      // Two paths: Electron (window.saatirilAPI.savePhoto) or Browser
-      // (File System Access API → Chrome folder). The admin may also be
-      // running in Chrome (e.g. testing), so we handle both.
+      // Electron only: photos write to config.targetFolder (folder chosen at
+      // PROJECT CREATION) via IPC. In browser mode photos stay in memory/gallery
+      // only. The folder is NOT picked by the operator — it's set at project
+      // creation. Run via Electron desktop for permanent disk saves.
       const targetFolder = proj.config?.targetFolder
       const hasEnoughPhotos = data.photos?.length >= (photoshootMode ? 1 : 2)
 
       if (hasEnoughPhotos) {
-        if (isElectronSaveAvailable() && targetFolder) {
-          // ── Electron path ──
-          const api = (window as any).saatirilAPI
+        const api = window.saatirilAPI
+        if (api?.savePhoto && targetFolder) {
           if (photoshootMode) {
             const filename = data.filename ?? buildPhotoshootFilename(data.student.nim, data.student.nama, data.channel, version)
             api.savePhoto({ base64Data: data.photos[0], filename, targetFolder }).then((path: string | null) => {
@@ -194,31 +187,8 @@ export default function AdminDashboard() {
               console.error('[SAATIRIL ADMIN] Error saving photos to disk:', err)
             })
           }
-        } else if (!isElectronSaveAvailable()) {
-          // ── Browser path: File System Access API ──
-          // The admin can also pick a Chrome folder (same as operator). This is
-          // a backup save path — if the operator already saved via their own
-          // Chrome folder, this is redundant but harmless (same filename →
-          // same file in admin's folder). If the operator DIDN'T save (no
-          // folder picked), the admin's save here is the ONLY disk copy.
-          const storageKey = browserSaveStorageKey(proj.id)
-          if (photoshootMode) {
-            const filename = data.filename ?? buildPhotoshootFilename(data.student.nim, data.student.nama, data.channel, version)
-            savePhotoInBrowser(storageKey, data.photos[0], filename).then((ok) => {
-              if (ok) console.log(`[SAATIRIL ADMIN] Photo saved to browser folder (v${version}): ${filename}`)
-              else console.warn(`[SAATIRIL ADMIN] Browser folder not available — photo only in memory: ${filename}`)
-            }).catch((err) => console.error('[SAATIRIL ADMIN] Browser save error:', err))
-          } else {
-            const togaFilename = buildFilename(data.student.nim, data.student.nama, 1, 'Toga', version)
-            const ijazahFilename = buildFilename(data.student.nim, data.student.nama, 2, 'Ijazah', version)
-            Promise.all([
-              savePhotoInBrowser(storageKey, data.photos[0], togaFilename),
-              savePhotoInBrowser(storageKey, data.photos[1], ijazahFilename),
-            ]).then(([r1, r2]) => {
-              if (r1 && r2) console.log(`[SAATIRIL ADMIN] Photos saved to browser folder (v${version})`)
-              else console.warn('[SAATIRIL ADMIN] Browser folder not available — photos only in memory')
-            }).catch((err) => console.error('[SAATIRIL ADMIN] Browser save error:', err))
-          }
+        } else if (!api?.savePhoto) {
+          console.warn('[SAATIRIL ADMIN] savePhoto API not available — not running in Electron? Photos stay in memory only.')
         } else if (!targetFolder) {
           console.warn('[SAATIRIL ADMIN] No targetFolder in project config — photos not saved to disk')
         }

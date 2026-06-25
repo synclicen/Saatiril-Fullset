@@ -508,3 +508,45 @@ Stage Summary:
 - Bug C VERIFIED: Photos now save to disk in Chrome via File System Access API. Operator sees "Pilih Folder" button instead of warning toast.
 - Bug A VERIFIED: Versioned filenames work — v1=NIM_Nama.jpg, v2=NIM_Nama_v2.jpg. Gallery shows "FOTO ULANG v2" badge. Version counter persists across resets so each retake creates a NEW file.
 - Both fixes deployed to origin/main.
+
+---
+Task ID: REVERT-BROWSER-FOLDER-PICKER
+Agent: main (Z.ai Code)
+Task: User rejected the "Pilih Folder" button added to the operator panel (Bug C fix). Restore the original flow: folder is determined at PROJECT CREATION (config.targetFolder), operator's job is ONLY to take photos. Do NOT change the existing system flow.
+
+Work Log:
+- Read worklog to understand prior Bug C fix (commit e406e82): added browser-photo-save.ts + File System Access API folder picker to operator panel + admin dashboard browser-save path.
+- Read original (commit 316c730) operator-panel.tsx + admin-dashboard.tsx save logic to faithfully restore the pre-Bug-C behavior: Electron IPC save to config.targetFolder, else toast "Mode Browser — Foto Tidak ke Disk".
+- Confirmed project-setup.tsx ALREADY has the folder picker at project creation (line 835-860 "Browse" button → api.selectFolder). This is the existing flow the user wants preserved.
+- operator-panel.tsx edits (revert Bug C, KEEP Bug A versioning):
+  * Removed imports from '@/lib/browser-photo-save' (entire block)
+  * Removed unused lucide icons: FolderOpen, HardDrive, CheckCircle, AlertTriangle (only used by the folder-picker UI)
+  * Removed photoSaveStorageKey() helper
+  * Removed rawBrowserFolderReady state + inBrowserMode/fsSupported/browserStorageKey/browserFolderReady derivations
+  * Removed useEffect that checked getBrowserSaveDirectory + handlePickBrowserFolder callback
+  * Reverted photoshoot save block: Electron path (window.saatirilAPI?.savePhoto) + else toast "Mode Browser — Foto Tidak ke Disk". KEPT computeVersionedFilename + versioned filename + finishCapture(newVersions).
+  * Reverted standard-mode save block: same Electron-only pattern + browser toast. KEPT versioned toga/ijazah filenames.
+  * Removed mobile "Browser save folder status" bar (was below shutter mode selector)
+  * Removed desktop "Browser Save Folder" card (sidebar)
+  * Removed desktop "Electron save indicator" card (sidebar)
+- admin-dashboard.tsx edits (revert Bug C, KEEP Bug A versioning):
+  * Removed imports from '@/lib/browser-photo-save'
+  * Reverted handlePhotosSaved save logic: Electron-only (window.saatirilAPI?.savePhoto && targetFolder) + else-if warnings. Removed the browser-save (savePhotoInBrowser) branch entirely. KEPT version param in buildFilename/buildPhotoshootFilename + data.filename preference.
+  * KEPT mergeCaptureVersions in SYNC_DB handler + "FOTO ULANG v{version}" badge in renderPhotoItem (Bug A).
+- Deleted src/lib/browser-photo-save.ts (dead code after revert — no remaining references).
+- Verified no remaining references to browser-photo-save exports anywhere in src/.
+- Lint: zero errors.
+- Dev server: compiling cleanly (HTTP 200).
+- Browser verification (Agent Browser):
+  * Injected test project "Test Revert Flow" (3 participants) into localStorage
+  * Opened operator panel (?role=operator&channel=1): rendered cleanly. Searched full body text — NO "Pilih Folder", NO "Folder Chrome", NO "Simpan ke Disk", NO "folder simpan". Operator panel is back to photo-only (camera view + STANDBY + shutter modes + queue).
+  * Injected photoHistory entry + captureVersions={s1_1:2} + marked s1 done
+  * Opened admin dashboard: "FOTO ULANG v2" badge PRESENT on gallery item → Bug A versioning intact.
+  * Console: no errors. Dev log: HTTP 200, no compile/runtime errors.
+
+Stage Summary:
+- Bug C (browser folder picker) FULLY REVERTED. Operator panel no longer has any folder-picker UI. The operator's job is purely to take photos, exactly as the user demanded.
+- Original flow restored: folder is set at PROJECT CREATION via project-setup.tsx "Browse" button (Electron api.selectFolder) → stored in config.targetFolder → operator/admin save via IPC in Electron mode. In browser mode (Chrome), photos stay in memory/gallery only with a clear toast — the original behavior.
+- Bug A (versioned retake filenames) PRESERVED: retakes after MC reset still create new versioned files (v1=NIM_Nama.jpg, v2=NIM_Nama_v2.jpg) on Electron disk, and the admin gallery still shows "FOTO ULANG v2" badge.
+- Dead code (browser-photo-save.ts) deleted.
+- Lint clean, dev server clean, browser-verified.
