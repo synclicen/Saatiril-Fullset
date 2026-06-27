@@ -11,9 +11,11 @@ import {
   Wifi,
   Copy,
   Check,
+  Lock,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -28,6 +30,7 @@ import AdminDashboard from '@/components/saatiril/admin-dashboard'
 import { McPanel } from '@/components/saatiril/mc-panel'
 import OperatorPanel from '@/components/saatiril/operator-panel'
 import { SaatirilFooterLines } from '@/components/saatiril/saatiril-footer'
+import { LicenseGate } from '@/components/saatiril/license-gate'
 
 // ─── Theme constants ──────────────────────────────────────────────────────────
 const THEME = {
@@ -38,6 +41,7 @@ const THEME = {
   gold: '#d4af37',
   muted: '#c4b5fd',
   cyan: '#06b6d4',
+  red: '#ef4444',
 } as const
 
 // ─── Tab configuration ────────────────────────────────────────────────────────
@@ -67,6 +71,9 @@ function getModeBadgeText(role: Role, channel: number, mode: CameraMode): string
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export function MainApp() {
+  // ── License gate ─────────────────────────────────────────────────────────
+  const [licenseValid, setLicenseValid] = useState(false)
+
   // ── Store bindings ─────────────────────────────────────────────────────────
   const currentProject = useSaatirilStore((s) => s.currentProject)
   const updateCurrentProject = useSaatirilStore((s) => s.updateCurrentProject)
@@ -84,6 +91,9 @@ export function MainApp() {
   const [connectionQuality, setConnectionQuality] = useState<'good' | 'degraded' | 'disconnected'>('disconnected')
   const [lanIP, setLanIP] = useState<string>('')
   const [copiedIP, setCopiedIP] = useState(false)
+  const [sessionPasswordInput, setSessionPasswordInput] = useState('')
+  const [sessionPasswordVerified, setSessionPasswordVerified] = useState(false)
+  const [sessionPasswordError, setSessionPasswordError] = useState(false)
 
   // ── Refs for stable event handlers ─────────────────────────────────────────
   const myRoleRef = useRef(myRole)
@@ -275,6 +285,8 @@ export function MainApp() {
         // DO NOT strip frame for REQUEST_STATE responses — new clients need the full frame data.
         // stripFrameForSync is only for subsequent SYNC_DB updates where clients already have the frame.
         // See the NOTE in stripFrameForSync() documentation.
+        // NOTE: sessionPassword IS included in REQUEST_STATE so new clients can verify it.
+        // It will be stripped in subsequent SYNC_DB via stripFrameForSync.
         emitLocal('SYNC_DB', { project: curProj })
       }
     }
@@ -338,6 +350,82 @@ export function MainApp() {
     },
     [setMyChannel],
   )
+
+  // ── Render: License gate (Electron only) ──────────────────────────────────
+  if (!licenseValid) {
+    return <LicenseGate onLicenseValid={() => setLicenseValid(true)} />
+  }
+
+  // ── Render: Session password prompt (non-admin, when project has password) ─
+  const needsPassword = myRole !== 'admin' && currentProject?.config?.sessionPassword && currentProject.config.sessionPassword !== '__PASSWORD_SET__' && !sessionPasswordVerified
+  if (needsPassword) {
+    return (
+      <div
+        className="flex h-dvh flex-col items-center justify-center gap-6 px-6"
+        style={{ backgroundColor: THEME.bg }}
+      >
+        <div
+          className="flex size-20 items-center justify-center rounded-full"
+          style={{ backgroundColor: `${THEME.gold}15`, borderWidth: 1, borderColor: `${THEME.gold}33` }}
+        >
+          <Lock className="size-10" style={{ color: THEME.gold }} />
+        </div>
+        <div className="text-center">
+          <h2 className="text-xl font-bold text-white">Password Sesi Diperlukan</h2>
+          <p className="mt-2 text-sm" style={{ color: THEME.muted }}>
+            Admin telah mengatur password untuk sesi ini.
+            Masukkan password untuk bergabung.
+          </p>
+        </div>
+        <div className="w-full max-w-xs space-y-3">
+          <Input
+            type="password"
+            placeholder="Masukkan password sesi..."
+            value={sessionPasswordInput}
+            onChange={(e) => { setSessionPasswordInput(e.target.value); setSessionPasswordError(false) }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && sessionPasswordInput === currentProject?.config?.sessionPassword) {
+                setSessionPasswordVerified(true)
+              } else if (e.key === 'Enter') {
+                setSessionPasswordError(true)
+              }
+            }}
+            className="h-10 text-center font-mono text-sm"
+            style={{
+              backgroundColor: THEME.bg,
+              borderColor: sessionPasswordError ? THEME.red : THEME.border,
+              color: THEME.gold,
+            }}
+          />
+          {sessionPasswordError && (
+            <p className="text-center text-xs font-medium" style={{ color: THEME.red }}>
+              Password salah. Coba lagi.
+            </p>
+          )}
+          <Button
+            className="w-full h-10 font-semibold"
+            style={{ backgroundColor: THEME.gold, color: THEME.bg }}
+            onClick={() => {
+              if (sessionPasswordInput === currentProject?.config?.sessionPassword) {
+                setSessionPasswordVerified(true)
+              } else {
+                setSessionPasswordError(true)
+              }
+            }}
+          >
+            Bergabung
+          </Button>
+        </div>
+        <Badge
+          className="gap-1.5 border-[#533485] bg-[#2a164a] px-3 py-1 text-xs"
+          style={{ color: THEME.muted }}
+        >
+          <Radio className="size-3" style={{ color: THEME.gold }} />
+          {myRole === 'mc' ? 'MC' : 'Operator'} — Jalur {myChannel}
+        </Badge>
+      </div>
+    )
+  }
 
   // ── Render: Sync waiting screen ───────────────────────────────────────────
   if (!isSynced && myRole !== 'admin') {

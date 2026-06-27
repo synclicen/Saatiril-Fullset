@@ -13,6 +13,9 @@
  * - createFolder: Create a directory on disk
  * - savePhoto: Save base64 photo data to disk
  * - getLanInfo: Get LAN IP addresses and ports
+ * - getLicenseStatus: Check current license status
+ * - activateLicense: Activate with an activation code
+ * - getMachineId: Get the Machine ID for this computer
  */
 
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
@@ -21,6 +24,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import { createServer } from 'http'
 import { Server as SocketIOServer } from 'socket.io'
+import { checkLicenseStatus, activateLicense, getMachineId, getDisplayMachineId } from './license'
 
 // ─── Configuration ─────────────────────────────────────────────────────────
 const DEFAULT_HTTP_PORT = 3000
@@ -347,6 +351,27 @@ function registerIpcHandlers() {
       httpPort,
       socketPort,
       ips: getLanIPs(),
+    }
+  })
+
+  // ── License IPC handlers ──────────────────────────────────────────────
+
+  // Get current license status
+  ipcMain.handle('get-license-status', async () => {
+    return checkLicenseStatus()
+  })
+
+  // Activate with an activation code
+  ipcMain.handle('activate-license', async (_event, activationCode: string) => {
+    return activateLicense(activationCode)
+  })
+
+  // Get Machine ID (full + display)
+  ipcMain.handle('get-machine-id', async () => {
+    const machineId = getMachineId()
+    return {
+      machineId,
+      displayMachineId: getDisplayMachineId(machineId),
     }
   })
 }

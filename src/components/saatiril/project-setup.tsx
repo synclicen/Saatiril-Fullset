@@ -81,6 +81,7 @@ export default function ProjectSetup() {
   const [targetFolder, setTargetFolder] = useState('C:\\SAATIRIL_System_Out')
   const [frameData, setFrameData] = useState<string | null>(null)
   const [frameFileName, setFrameFileName] = useState<string>('')
+  const [sessionPassword, setSessionPassword] = useState('')
 
   // Excel data: single mode uses index 0; dual uses 0 (kiri) & 1 (kanan)
   const [excelData, setExcelData] = useState<[ParsedExcelData | null, ParsedExcelData | null]>([null, null])
@@ -321,6 +322,7 @@ export default function ProjectSetup() {
         preset,
         targetFolder: finalTargetFolder,
         frame: frameData,
+        sessionPassword: sessionPassword.trim() || undefined,
       },
       database: finalStudents,
       photoHistory: [],
@@ -380,6 +382,7 @@ export default function ProjectSetup() {
     preset,
     targetFolder,
     frameData,
+    sessionPassword,
     addProject,
     setCurrentProject,
     saveProjectsToStorageNow,
@@ -513,6 +516,30 @@ export default function ProjectSetup() {
                     onChange={(e) => setProjectName(e.target.value)}
                     className="border-[#533485] bg-[#3b2263] text-white placeholder:text-[#533485] focus-visible:border-[#d4af37] focus-visible:ring-[#d4af37]/30"
                   />
+                </CardContent>
+              </Card>
+
+              {/* Session Password (Keamanan LAN) */}
+              <Card className="border-[#533485] bg-[#2a164a] shadow-lg">
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-base text-white">
+                    <svg className="h-5 w-5 text-[#d4af37]" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                    Password Sesi LAN
+                    <span className="ml-auto text-[10px] font-normal text-[#533485]">Opsional</span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Input
+                    type="text"
+                    placeholder="Kosongkan = tanpa password"
+                    value={sessionPassword}
+                    onChange={(e) => setSessionPassword(e.target.value)}
+                    className="border-[#533485] bg-[#3b2263] text-white placeholder:text-[#533485] focus-visible:border-[#d4af37] focus-visible:ring-[#d4af37]/30"
+                  />
+                  <p className="mt-2 text-xs text-[#533485]">
+                    Jika diisi, Operator dan MC harus memasukkan password ini untuk bergabung ke sesi.
+                    Mencegah perangkat tidak dikenal mengakses sesi foto Anda di jaringan LAN.
+                  </p>
                 </CardContent>
               </Card>
 

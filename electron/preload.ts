@@ -29,4 +29,35 @@ contextBridge.exposeInMainWorld('saatirilAPI', {
   }> => {
     return ipcRenderer.invoke('get-lan-info')
   },
+
+  // ── License API ──────────────────────────────────────────────────────────
+  getLicenseStatus: (): Promise<{
+    isValid: boolean
+    isGracePeriod: boolean
+    isExpired: boolean
+    daysRemaining: number
+    graceDaysRemaining: number
+    licenseType: string | null
+    expiresAt: string | null
+    machineId: string
+    displayMachineId: string
+    firstRunDate: string | null
+  }> => {
+    return ipcRenderer.invoke('get-license-status')
+  },
+
+  activateLicense: (activationCode: string): Promise<{
+    success: boolean
+    error?: string
+    licenseType?: string
+  }> => {
+    return ipcRenderer.invoke('activate-license', activationCode)
+  },
+
+  getMachineId: (): Promise<{
+    machineId: string
+    displayMachineId: string
+  }> => {
+    return ipcRenderer.invoke('get-machine-id')
+  },
 })

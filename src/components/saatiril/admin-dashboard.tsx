@@ -658,6 +658,16 @@ export default function AdminDashboard() {
             <p className="mt-1.5 opacity-70">MC tidak perlu Chrome Flag (tidak butuh kamera).</p>
           </div>
         )}
+        {/* Session Password Display */}
+        {currentProject?.config?.sessionPassword && (
+          <div className="rounded-md p-3 text-xs" style={{ backgroundColor: '#22c55e15', border: '1px solid #22c55e33', color: '#86efac' }}>
+            <p className="font-semibold mb-1" style={{ color: '#4ade80' }}>🔐 Password Sesi LAN:</p>
+            <p className="font-mono text-sm font-bold tracking-wider" style={{ color: '#4ade80' }}>
+              {currentProject.config.sessionPassword}
+            </p>
+            <p className="mt-1 opacity-70">Berikan password ini kepada Operator dan MC agar bisa bergabung ke sesi.</p>
+          </div>
+        )}
         {mode === 'single' || mode === 'single-photoshoot' ? (
           <div className="flex flex-col gap-2">
             <Button

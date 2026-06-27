@@ -20,6 +20,7 @@ export interface ProjectConfig {
   preset: string
   targetFolder: string
   frame: string | null
+  sessionPassword?: string
 }
 
 // ─── Photoshoot mode helpers ──────────────────────────────────────────────────
@@ -174,7 +175,7 @@ export function mergeDatabases(
 export function stripFrameForSync(project: Project): Project {
   return {
     ...project,
-    config: { ...project.config, frame: project.config.frame ? '__FRAME_SAVED__' : null },
+    config: { ...project.config, frame: project.config.frame ? '__FRAME_SAVED__' : null, sessionPassword: '__PASSWORD_SET__' },
     photoHistory: project.photoHistory.map(h => ({ ...h, photos: [] })),
   }
 }
@@ -191,15 +192,23 @@ export function preserveFrameOnSync(
   incomingConfig: ProjectConfig,
   existingConfig: ProjectConfig | undefined,
 ): ProjectConfig {
+  let result = { ...incomingConfig }
+
   if (
     incomingConfig.frame === '__FRAME_SAVED__' &&
     existingConfig?.frame &&
     existingConfig.frame !== '__FRAME_SAVED__'
   ) {
-    return { ...incomingConfig, frame: existingConfig.frame }
+    result = { ...result, frame: existingConfig.frame }
   }
-  // If incoming has actual frame data, or no existing frame, use incoming as-is
-  return incomingConfig
+
+  // Preserve sessionPassword — never send actual password over LAN
+  if (incomingConfig.sessionPassword === '__PASSWORD_SET__' && existingConfig?.sessionPassword && existingConfig.sessionPassword !== '__PASSWORD_SET__') {
+    result = { ...result, sessionPassword: existingConfig.sessionPassword }
+  }
+  // If both are __PASSWORD_SET__ or no existing password, keep the marker
+
+  return result
 }
 
 /**
