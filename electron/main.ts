@@ -197,6 +197,9 @@ function startStaticServer(outDir: string): Promise<void> {
 }
 
 // ─── Socket.io Relay Server ────────────────────────────────────────────────
+// Session password hash storage (shared with embedded server)
+let sessionPasswordHash: string | null = null
+
 function startSocketServer(): Promise<void> {
   return new Promise((resolve, reject) => {
     const httpForSocket = createServer()
@@ -214,6 +217,7 @@ function startSocketServer(): Promise<void> {
 
     // Connection limit
     const MAX_CONNECTIONS = 10
+    const IDENTIFICATION_TIMEOUT_MS = 10000
     socketServer.use((socket, next) => {
       const current = socketServer!.sockets.sockets.size
       if (current >= MAX_CONNECTIONS) {
@@ -229,13 +233,54 @@ function startSocketServer(): Promise<void> {
     socketServer.on('connection', (socket) => {
       clientRegistry.set(socket.id, { role: 'unknown', channel: 0 })
 
-      socket.on('identify', (data: { role: string; channel: number }) => {
+      // Send auth requirement on connect
+      socket.emit('auth-requirement', { passwordRequired: sessionPasswordHash !== null })
+
+      // Identification timeout — disconnect if not identified within 10s
+      const identificationTimeout = setTimeout(() => {
         const info = clientRegistry.get(socket.id)
-        if (info) {
-          info.role = data.role
-          info.channel = data.channel
+        if (info && info.role === 'unknown') {
+          console.warn(`[SAATIRIL] Client ${socket.id} disconnected: failed to identify within 10s`)
+          socket.disconnect(true)
         }
+      }, IDENTIFICATION_TIMEOUT_MS)
+
+      // Admin sets session password
+      socket.on('SET_SESSION_PASSWORD', (data: { passwordHash: string }) => {
+        const info = clientRegistry.get(socket.id)
+        if (info && info.role === 'admin') {
+          sessionPasswordHash = data.passwordHash
+          console.log('[SAATIRIL] Session password set by admin')
+        }
+      })
+
+      // Admin clears session password
+      socket.on('CLEAR_SESSION_PASSWORD', () => {
+        const info = clientRegistry.get(socket.id)
+        if (info && info.role === 'admin') {
+          sessionPasswordHash = null
+          console.log('[SAATIRIL] Session password cleared')
+        }
+      })
+
+      // Client identification with session password validation
+      socket.on('identify', (data: { role: string; channel: number; sessionPasswordHash?: string }) => {
+        const info = clientRegistry.get(socket.id)
+        if (!info) return
+
+        // Validate session password for non-admin when password is set
+        if (data.role !== 'admin' && sessionPasswordHash) {
+          if (!data.sessionPasswordHash || data.sessionPasswordHash !== sessionPasswordHash) {
+            console.warn(`[SAATIRIL] Client ${socket.id} rejected: invalid session password (role: ${data.role})`)
+            socket.emit('auth-failed', { reason: 'session_password_required' })
+            return
+          }
+        }
+
+        info.role = data.role
+        info.channel = data.channel
         console.log(`[SAATIRIL] Client: ${socket.id} → ${data.role} Ch.${data.channel}`)
+        socket.emit('auth-success', { role: data.role, channel: data.channel })
       })
 
       socket.on('saatiril-ping', (timestamp: number) => {
@@ -243,6 +288,11 @@ function startSocketServer(): Promise<void> {
       })
 
       socket.on('lan-message', (payload: { event: string; data: any }) => {
+        const info = clientRegistry.get(socket.id)
+        if (!info || info.role === 'unknown') {
+          console.warn(`[SAATIRIL] Unidentified client ${socket.id} tried to relay message — ignoring`)
+          return
+        }
         socket.broadcast.emit('lan-message', payload)
       })
 
@@ -251,11 +301,13 @@ function startSocketServer(): Promise<void> {
           callback({
             connectedClients: socketServer!.sockets.sockets.size,
             clients: Array.from(clientRegistry.values()),
+            sessionPasswordActive: sessionPasswordHash !== null,
           })
         }
       })
 
       socket.on('disconnect', () => {
+        clearTimeout(identificationTimeout)
         clientRegistry.delete(socket.id)
       })
     })

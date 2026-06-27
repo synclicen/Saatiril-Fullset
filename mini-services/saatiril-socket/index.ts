@@ -9,10 +9,12 @@
  * 3. LAN-only network — low latency, high reliability
  * 4. Server is stateless relay — all state lives in Zustand stores on clients
  * 5. Admin is the source of truth — others sync from Admin via REQUEST_STATE/SYNC_DB
+ * 6. Session password enforcement — non-admin clients must provide correct password hash
  */
 
 import { createServer } from 'http'
 import { Server, Socket } from 'socket.io'
+import crypto from 'crypto'
 
 // ─── Configuration ─────────────────────────────────────────────────────────
 const PORT = 3003
@@ -20,11 +22,15 @@ const MAX_HTTP_BUFFER = 20e6 // 20MB — supports dual-channel photo bursts (4 �
 const PING_INTERVAL = 10000  // 10s — faster detection of disconnected clients (was 15s)
 const PING_TIMEOUT = 20000   // 20s — generous timeout for LAN (was 30s)
 const MAX_CONNECTIONS = 10   // Max concurrent clients (admin + 2×MC + 2×OP + buffer)
+const IDENTIFICATION_TIMEOUT_MS = 10000 // 10s — clients must identify within this time
 
 // ─── Health tracking ───────────────────────────────────────────────────────
 let totalMessagesRelayed = 0
 let totalConnections = 0
 let startTime = Date.now()
+
+// ─── Session password storage ──────────────────────────────────────────────
+let sessionPasswordHash: string | null = null  // SHA-256 hash of the session password
 
 function getUptime(): string {
   const seconds = Math.floor((Date.now() - startTime) / 1000)
@@ -49,6 +55,7 @@ httpServer.on('request', (req, res) => {
       totalConnections,
       totalMessagesRelayed,
       maxConnections: MAX_CONNECTIONS,
+      sessionPasswordActive: sessionPasswordHash !== null,
     }))
     return
   }
@@ -115,14 +122,58 @@ io.on('connection', (socket: Socket) => {
 
   console.log(`[SAATIRIL] Client connected: ${socket.id} (total: ${io.sockets.sockets.size}, all-time: ${totalConnections})`)
 
-  // ── Client identification ──────────────────────────────────────────────
-  socket.on('identify', (data: { role: string; channel: number }) => {
+  // ── Send auth requirement on connect ──────────────────────────────────
+  socket.emit('auth-requirement', {
+    passwordRequired: sessionPasswordHash !== null,
+  })
+
+  // ── Identification timeout — disconnect if not identified within 10s ───
+  const identificationTimeout = setTimeout(() => {
     const info = clientRegistry.get(socket.id)
-    if (info) {
-      info.role = data.role
-      info.channel = data.channel
-      console.log(`[SAATIRIL] Client identified: ${socket.id} → ${data.role} Ch.${data.channel}`)
+    if (info && info.role === 'unknown') {
+      console.warn(`[SAATIRIL] Client ${socket.id} disconnected: failed to identify within 10s`)
+      socket.disconnect(true)
     }
+  }, IDENTIFICATION_TIMEOUT_MS)
+
+  // ── SET_SESSION_PASSWORD — admin sets the session password ─────────────
+  socket.on('SET_SESSION_PASSWORD', (data: { passwordHash: string }) => {
+    const info = clientRegistry.get(socket.id)
+    if (info && info.role === 'admin') {
+      sessionPasswordHash = data.passwordHash
+      console.log('[SAATIRIL] Session password set by admin')
+    }
+  })
+
+  // ── CLEAR_SESSION_PASSWORD — admin clears the session password ─────────
+  socket.on('CLEAR_SESSION_PASSWORD', () => {
+    const info = clientRegistry.get(socket.id)
+    if (info && info.role === 'admin') {
+      sessionPasswordHash = null
+      console.log('[SAATIRIL] Session password cleared')
+    }
+  })
+
+  // ── Client identification with session password validation ────────────
+  socket.on('identify', (data: { role: string; channel: number; sessionPasswordHash?: string }) => {
+    const info = clientRegistry.get(socket.id)
+    if (!info) return
+
+    // Validate session password for non-admin when password is set
+    if (data.role !== 'admin' && sessionPasswordHash) {
+      if (!data.sessionPasswordHash || data.sessionPasswordHash !== sessionPasswordHash) {
+        console.warn(`[SAATIRIL] Client ${socket.id} rejected: invalid session password (role: ${data.role})`)
+        socket.emit('auth-failed', { reason: 'session_password_required' })
+        return  // Don't register the client
+      }
+    }
+
+    info.role = data.role
+    info.channel = data.channel
+    console.log(`[SAATIRIL] Client identified: ${socket.id} → ${data.role} Ch.${data.channel}`)
+
+    // Notify client that auth succeeded
+    socket.emit('auth-success', { role: data.role, channel: data.channel })
   })
 
   // ── Ping/pong for latency measurement ────────────────────────────────────
@@ -132,12 +183,15 @@ io.on('connection', (socket: Socket) => {
 
   // ── Relay LAN messages between clients ──────────────────────────────────
   socket.on('lan-message', (payload: { event: string; data: any }) => {
-    // Update activity tracking
     const info = clientRegistry.get(socket.id)
-    if (info) {
-      info.lastActivity = Date.now()
-      info.messagesRelayed++
+    if (!info || info.role === 'unknown') {
+      console.warn(`[SAATIRIL] Unidentified client ${socket.id} tried to relay message — ignoring`)
+      return
     }
+
+    // Update activity tracking
+    info.lastActivity = Date.now()
+    info.messagesRelayed++
     totalMessagesRelayed++
 
     // Broadcast to all OTHER clients (not back to sender)
@@ -152,6 +206,7 @@ io.on('connection', (socket: Socket) => {
 
   // ── Disconnect ──────────────────────────────────────────────────────────
   socket.on('disconnect', (reason) => {
+    clearTimeout(identificationTimeout)
     const info = clientRegistry.get(socket.id)
     const duration = info ? Math.round((Date.now() - info.connectedAt) / 1000) : 0
     console.log(
@@ -174,6 +229,7 @@ io.on('connection', (socket: Socket) => {
         connectedClients: io.sockets.sockets.size,
         totalConnections,
         totalMessagesRelayed,
+        sessionPasswordActive: sessionPasswordHash !== null,
         clients: Array.from(clientRegistry.values()).map(c => ({
           role: c.role,
           channel: c.channel,
@@ -190,7 +246,7 @@ setInterval(() => {
   const clientCount = io.sockets.sockets.size
   console.log(
     `[SAATIRIL] Health: ${clientCount} clients, ${totalMessagesRelayed} messages relayed, ` +
-    `uptime: ${getUptime()}`
+    `uptime: ${getUptime()}, password: ${sessionPasswordHash ? 'active' : 'none'}`
   )
   if (clientCount > 0) {
     for (const [id, info] of clientRegistry) {
@@ -207,6 +263,8 @@ httpServer.listen(PORT, () => {
   console.log(`[SAATIRIL]  Max connections: ${MAX_CONNECTIONS}`)
   console.log(`[SAATIRIL]  Max payload: ${MAX_HTTP_BUFFER / 1e6}MB`)
   console.log(`[SAATIRIL]  Ping: interval=${PING_INTERVAL}ms timeout=${PING_TIMEOUT}ms`)
+  console.log(`[SAATIRIL]  Identification timeout: ${IDENTIFICATION_TIMEOUT_MS}ms`)
+  console.log(`[SAATIRIL]  Session password enforcement: ENABLED`)
   console.log(`[SAATIRIL]  Health check: http://localhost:${PORT}/health`)
   console.log(`[SAATIRIL] ═══════════════════════════════════════════════════════════`)
 })

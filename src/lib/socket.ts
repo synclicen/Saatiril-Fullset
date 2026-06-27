@@ -9,6 +9,23 @@ export type LocalNetworkCallback = (data: any) => void
 let socket: Socket | null = null
 const listeners: Record<string, LocalNetworkCallback[]> = {}
 
+// ─── Session password (hash) ───────────────────────────────────────────────
+// Stored locally so we can re-identify on reconnect
+let currentSessionPasswordHash: string | null = null
+
+// ─── Auth state ─────────────────────────────────────────────────────────────
+let isAuthenticated: boolean = false
+let authRequiredByServer: boolean = false
+
+// ─── SHA-256 hash helper (browser native) ──────────────────────────────────
+async function sha256(text: string): Promise<string> {
+  const encoder = new TextEncoder()
+  const data = encoder.encode(text)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
 // ─── Connection health tracking ───────────────────────────────────────────
 let connectTime: number | null = null
 let lastEventTime: number | null = null
@@ -259,18 +276,33 @@ export function connectSocket(): Socket {
     isReconnecting = false
     console.log('[SAATIRIL] Socket connected:', socket?.id, `(reconnects: ${reconnectCount})`)
 
-    // Identify ourselves to the server
-    socket?.emit('identify', {
+    // Reset auth state on new connection
+    isAuthenticated = false
+
+    // Identify ourselves to the server (with session password hash if available)
+    const identifyPayload: Record<string, any> = {
       role: typeof window !== 'undefined'
         ? new URLSearchParams(window.location.search).get('role') || 'unknown'
         : 'unknown',
       channel: typeof window !== 'undefined'
         ? parseInt(new URLSearchParams(window.location.search).get('channel') || '1', 10)
         : 1,
-    })
+    }
+
+    // Include session password hash for non-admin clients
+    const role = identifyPayload.role
+    if (role !== 'admin' && currentSessionPasswordHash) {
+      identifyPayload.sessionPasswordHash = currentSessionPasswordHash
+    }
+
+    socket?.emit('identify', identifyPayload)
 
     // Flush any queued events from when we were disconnected
-    flushEventQueue()
+    // Only flush after we know we're authenticated
+    // (auth-success handler will flush)
+    if (role === 'admin' || !authRequiredByServer) {
+      flushEventQueue()
+    }
 
     // Start ping measurement for latency tracking
     startPingMeasurement()
@@ -320,6 +352,48 @@ export function connectSocket(): Socket {
       console.log('[SAATIRIL] Manual reconnection attempt...')
       socket?.connect()
     }, 5000)
+  })
+
+  // ── Auth event handlers ────────────────────────────────────────────────
+  socket.on('auth-requirement', (data: { passwordRequired: boolean }) => {
+    authRequiredByServer = data.passwordRequired
+    console.log(`[SAATIRIL] Server auth requirement: passwordRequired=${data.passwordRequired}`)
+    // Notify listeners about auth requirement
+    if (listeners['auth-requirement']) {
+      listeners['auth-requirement'].forEach(cb => {
+        try { cb(data) } catch (err) {
+          console.error('[SAATIRIL] Error in auth-requirement listener:', err)
+        }
+      })
+    }
+  })
+
+  socket.on('auth-success', (data: { role: string; channel: number }) => {
+    isAuthenticated = true
+    console.log(`[SAATIRIL] Auth success: role=${data.role}, channel=${data.channel}`)
+    // Flush queued events now that we're authenticated
+    flushEventQueue()
+    // Notify listeners about auth success
+    if (listeners['auth-success']) {
+      listeners['auth-success'].forEach(cb => {
+        try { cb(data) } catch (err) {
+          console.error('[SAATIRIL] Error in auth-success listener:', err)
+        }
+      })
+    }
+  })
+
+  socket.on('auth-failed', (data: { reason: string }) => {
+    isAuthenticated = false
+    console.warn(`[SAATIRIL] Auth failed: ${data.reason}`)
+    // Notify listeners about auth failure
+    if (listeners['auth-failed']) {
+      listeners['auth-failed'].forEach(cb => {
+        try { cb(data) } catch (err) {
+          console.error('[SAATIRIL] Error in auth-failed listener:', err)
+        }
+      })
+    }
   })
 
   // ── Ping/pong handler for latency measurement ────────────────────────
@@ -388,4 +462,67 @@ export function offLocal(event: string, callback?: LocalNetworkCallback) {
   } else {
     delete listeners[event]
   }
+}
+
+// ─── Session Password Management ──────────────────────────────────────────
+
+/**
+ * Admin: set the session password on the server.
+ * Sends the SHA-256 hash so the password is never transmitted in plaintext.
+ */
+export async function setSessionPassword(password: string): Promise<void> {
+  if (!socket?.connected) return
+  const hash = await sha256(password)
+  currentSessionPasswordHash = hash
+  socket.emit('SET_SESSION_PASSWORD', { passwordHash: hash })
+  console.log('[SAATIRIL] Session password set on server')
+}
+
+/**
+ * Admin: clear the session password on the server.
+ */
+export function clearSessionPassword(): void {
+  if (!socket?.connected) return
+  currentSessionPasswordHash = null
+  socket.emit('CLEAR_SESSION_PASSWORD')
+  console.log('[SAATIRIL] Session password cleared on server')
+}
+
+/**
+ * Non-admin: re-identify with a session password.
+ * Called after the user enters the password in the prompt.
+ * Hashes the password and sends it to the server for validation.
+ */
+export async function reidentifyWithPassword(password: string): Promise<void> {
+  if (!socket?.connected) return
+  const hash = await sha256(password)
+  currentSessionPasswordHash = hash
+
+  const role = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('role') || 'unknown'
+    : 'unknown'
+  const channel = typeof window !== 'undefined'
+    ? parseInt(new URLSearchParams(window.location.search).get('channel') || '1', 10)
+    : 1
+
+  socket.emit('identify', {
+    role,
+    channel,
+    sessionPasswordHash: hash,
+  })
+  console.log(`[SAATIRIL] Re-identifying with session password (role: ${role})`)
+}
+
+/**
+ * Check if the current connection is authenticated.
+ */
+export function isSocketAuthenticated(): boolean {
+  return isAuthenticated
+}
+
+/**
+ * Check if the server requires a session password.
+ */
+export function isServerPasswordRequired(): boolean {
+  return authRequiredByServer
 }

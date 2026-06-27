@@ -34,7 +34,7 @@ import {
 } from '@/components/ui/select'
 
 import { useSaatirilStore, type CameraMode, type Student, stripFrameForSync, isPhotoshootMode, isDualMode } from '@/store/use-saatiril-store'
-import { emitLocal } from '@/lib/socket'
+import { emitLocal, setSessionPassword } from '@/lib/socket'
 import { useToast } from '@/hooks/use-toast'
 
 // ─── Parsed data from Excel ────────────────────────────────────────────────────
@@ -369,6 +369,11 @@ export default function ProjectSetup() {
     // Sync database over LAN — strip frame data to save bandwidth
     emitLocal('SYNC_DB', { project: stripFrameForSync(project) })
 
+    // Set session password on the socket server (so non-admin clients must validate)
+    if (sessionPassword.trim()) {
+      setSessionPassword(sessionPassword.trim())
+    }
+
     // Small delay to ensure state is persisted before navigation
     setTimeout(() => {
       setCurrentScreen('app')
@@ -530,7 +535,7 @@ export default function ProjectSetup() {
                 </CardHeader>
                 <CardContent>
                   <Input
-                    type="text"
+                    type="password"
                     placeholder="Kosongkan = tanpa password"
                     value={sessionPassword}
                     onChange={(e) => setSessionPassword(e.target.value)}

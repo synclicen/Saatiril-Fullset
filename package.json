@@ -17,6 +17,7 @@
     "electron:dev": "SAATIRIL_DEV=1 electron .",
     "electron:build": "next build && tsc -p electron/tsconfig.json && esbuild electron/main.ts --bundle --platform=node --outfile=electron/main.js --external:electron --external:buffer --external:fs --external:path --external:os --external:http --external:https --external:net --external:crypto --external:stream --external:events --external:url --external:child_process --external:dns --external:tls --external:zlib --external:string_decoder && electron-builder",
     "electron:build:win": "next build && tsc -p electron/tsconfig.json && esbuild electron/main.ts --bundle --platform=node --outfile=electron/main.js --external:electron --external:buffer --external:fs --external:path --external:os --external:http --external:https --external:net --external:crypto --external:stream --external:events --external:url --external:child_process --external:dns --external:tls --external:zlib --external:string_decoder && electron-builder --win",
+    "generate-license": "npx tsx tools/generate-license.ts",
     "electron:compile": "tsc -p electron/tsconfig.json",
     "electron:bundle": "esbuild electron/main.ts --bundle --platform=node --outfile=electron/main.js --external:electron --external:buffer --external:fs --external:path --external:os --external:http --external:https --external:net --external:crypto --external:stream --external:events --external:url --external:child_process --external:dns --external:tls --external:zlib --external:string_decoder"
   },

@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useSaatirilStore, type AppTab, type Role, type Project, type CameraMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync, preservePhotoHistoryOnSync, isDualMode, isPhotoshootMode } from '@/store/use-saatiril-store'
-import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth } from '@/lib/socket'
+import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth, setSessionPassword, clearSessionPassword, reidentifyWithPassword, isSocketAuthenticated, isServerPasswordRequired } from '@/lib/socket'
 
 import AdminDashboard from '@/components/saatiril/admin-dashboard'
 import { McPanel } from '@/components/saatiril/mc-panel'
@@ -94,6 +94,8 @@ export function MainApp() {
   const [sessionPasswordInput, setSessionPasswordInput] = useState('')
   const [sessionPasswordVerified, setSessionPasswordVerified] = useState(false)
   const [sessionPasswordError, setSessionPasswordError] = useState(false)
+  const [serverRequiresPassword, setServerRequiresPassword] = useState(false)
+  const [authFailedReason, setAuthFailedReason] = useState<string | null>(null)
 
   // ── Refs for stable event handlers ─────────────────────────────────────────
   const myRoleRef = useRef(myRole)
@@ -193,6 +195,12 @@ export function MainApp() {
       const role = myRoleRef.current
       if (role !== 'admin') {
         emitLocal('REQUEST_STATE', { role, channel: useSaatirilStore.getState().myChannel })
+      } else {
+        // Admin: if project has a session password, set it on the server
+        const curProj = useSaatirilStore.getState().currentProject
+        if (curProj?.config?.sessionPassword && curProj.config.sessionPassword !== '__PASSWORD_SET__') {
+          setSessionPassword(curProj.config.sessionPassword)
+        }
       }
 
       console.log('[SAATIRIL] Connected — requesting state sync')
@@ -202,8 +210,36 @@ export function MainApp() {
       setConnectionQuality('disconnected')
     }
 
+    // ── Auth event handlers ────────────────────────────────────────────────
+    const handleAuthRequirement = (data: { passwordRequired: boolean }) => {
+      setServerRequiresPassword(data.passwordRequired)
+      if (data.passwordRequired && myRoleRef.current !== 'admin') {
+        // Server requires password — show prompt if not yet verified
+        setSessionPasswordVerified(false)
+      }
+    }
+
+    const handleAuthSuccess = (data: { role: string; channel: number }) => {
+      setSessionPasswordVerified(true)
+      setSessionPasswordError(false)
+      setAuthFailedReason(null)
+      // Now that we're authenticated, request state sync
+      if (data.role !== 'admin') {
+        emitLocal('REQUEST_STATE', { role: data.role, channel: data.channel })
+      }
+    }
+
+    const handleAuthFailed = (data: { reason: string }) => {
+      setSessionPasswordVerified(false)
+      setSessionPasswordError(true)
+      setAuthFailedReason(data.reason)
+    }
+
     socket.on('connect', handleConnect)
     socket.on('disconnect', handleDisconnect)
+    socket.on('auth-requirement', handleAuthRequirement)
+    socket.on('auth-success', handleAuthSuccess)
+    socket.on('auth-failed', handleAuthFailed)
 
     queueMicrotask(() => {
       if (socket.connected) {
@@ -215,6 +251,9 @@ export function MainApp() {
     return () => {
       socket.off('connect', handleConnect)
       socket.off('disconnect', handleDisconnect)
+      socket.off('auth-requirement', handleAuthRequirement)
+      socket.off('auth-success', handleAuthSuccess)
+      socket.off('auth-failed', handleAuthFailed)
     }
   }, [])
 
@@ -285,9 +324,18 @@ export function MainApp() {
         // DO NOT strip frame for REQUEST_STATE responses — new clients need the full frame data.
         // stripFrameForSync is only for subsequent SYNC_DB updates where clients already have the frame.
         // See the NOTE in stripFrameForSync() documentation.
-        // NOTE: sessionPassword IS included in REQUEST_STATE so new clients can verify it.
-        // It will be stripped in subsequent SYNC_DB via stripFrameForSync.
-        emitLocal('SYNC_DB', { project: curProj })
+        //
+        // SECURITY: Strip the session password from REQUEST_STATE — the server now handles
+        // password validation, so we never send the actual password over the LAN.
+        // Instead, we send a flag so clients know a password is required.
+        const safeProject = {
+          ...curProj,
+          config: {
+            ...curProj.config,
+            sessionPassword: curProj.config.sessionPassword ? '__PASSWORD_SET__' : undefined,
+          },
+        }
+        emitLocal('SYNC_DB', { project: safeProject })
       }
     }
 
@@ -356,8 +404,14 @@ export function MainApp() {
     return <LicenseGate onLicenseValid={() => setLicenseValid(true)} />
   }
 
-  // ── Render: Session password prompt (non-admin, when project has password) ─
-  const needsPassword = myRole !== 'admin' && currentProject?.config?.sessionPassword && currentProject.config.sessionPassword !== '__PASSWORD_SET__' && !sessionPasswordVerified
+  // ── Render: Session password prompt (non-admin, when server requires password) ─
+  // Server-side validation: show prompt when server says password is required
+  // OR when we have a __PASSWORD_SET__ marker and haven't authenticated yet
+  const needsPassword = myRole !== 'admin' && !sessionPasswordVerified && (
+    serverRequiresPassword ||
+    (currentProject?.config?.sessionPassword && currentProject.config.sessionPassword !== '__PASSWORD_SET__') ||
+    (currentProject?.config?.sessionPassword === '__PASSWORD_SET__' && !isSocketAuthenticated())
+  )
   if (needsPassword) {
     return (
       <div
@@ -384,10 +438,8 @@ export function MainApp() {
             value={sessionPasswordInput}
             onChange={(e) => { setSessionPasswordInput(e.target.value); setSessionPasswordError(false) }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && sessionPasswordInput === currentProject?.config?.sessionPassword) {
-                setSessionPasswordVerified(true)
-              } else if (e.key === 'Enter') {
-                setSessionPasswordError(true)
+              if (e.key === 'Enter' && sessionPasswordInput.trim()) {
+                reidentifyWithPassword(sessionPasswordInput.trim())
               }
             }}
             className="h-10 text-center font-mono text-sm"
@@ -399,17 +451,17 @@ export function MainApp() {
           />
           {sessionPasswordError && (
             <p className="text-center text-xs font-medium" style={{ color: THEME.red }}>
-              Password salah. Coba lagi.
+              {authFailedReason === 'session_password_required'
+                ? 'Password salah. Coba lagi.'
+                : 'Gagal mengautentikasi. Coba lagi.'}
             </p>
           )}
           <Button
             className="w-full h-10 font-semibold"
             style={{ backgroundColor: THEME.gold, color: THEME.bg }}
             onClick={() => {
-              if (sessionPasswordInput === currentProject?.config?.sessionPassword) {
-                setSessionPasswordVerified(true)
-              } else {
-                setSessionPasswordError(true)
+              if (sessionPasswordInput.trim()) {
+                reidentifyWithPassword(sessionPasswordInput.trim())
               }
             }}
           >

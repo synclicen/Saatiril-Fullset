@@ -599,3 +599,128 @@ Stage Summary:
 - Ratio: "9:16 — 16:9 Portrait" added for tall portrait photos.
 - Filter preset previews: ~35% of original area (5-column grid, smaller thumbnails).
 - All browser-verified, lint clean, dev server HTTP 200.
+---
+Task ID: 7
+Agent: socket-server-password
+Task: Add server-side session password enforcement to socket server
+
+Work Log:
+- Read existing socket server code at `/home/z/my-project/mini-services/saatiril-socket/index.ts`
+- Added `crypto` import for potential server-side hashing
+- Added `sessionPasswordHash` module-level variable (SHA-256 hash storage)
+- Added `SET_SESSION_PASSWORD` event handler (admin-only, stores hash)
+- Added `CLEAR_SESSION_PASSWORD` event handler (admin-only, clears hash)
+- Modified `identify` handler to validate session password for non-admin clients
+  - Emits `auth-failed` with reason `session_password_required` on invalid/missing password
+  - Emits `auth-success` on successful identification
+- Added unauthenticated message relay rejection in `lan-message` handler (rejects `unknown` role)
+- Added 10-second identification timeout — disconnects unidentified clients
+- Added `auth-requirement` event emitted on connect (informs client if password is required)
+- Added `sessionPasswordActive` to `/health` endpoint and `server-stats` response
+- Added identification timeout and session password status to startup banner and periodic health log
+- Kept all existing features: connection limit middleware, health check, ping/pong, server-stats, graceful shutdown, uncaught error handling
+- Verified lint passes with no errors
+- Confirmed server starts successfully on port 3003
+
+Stage Summary:
+- Socket server now enforces Level 1 LAN session password authentication
+- Non-admin clients must provide matching `sessionPasswordHash` via `identify` event when a session password is set
+- Unidentified clients (role=unknown) are blocked from relaying messages and auto-disconnected after 10s
+- New events: `SET_SESSION_PASSWORD`, `CLEAR_SESSION_PASSWORD`, `auth-requirement`, `auth-success`, `auth-failed`
+- Server operational on port 3003
+
+---
+Task ID: 11
+Agent: license-generator
+Task: Create activation code generator tool
+
+Work Log:
+- Read `electron/license.ts` to understand the exact algorithm (LICENSE_SECRET, generateExpectedCode, verifyActivationCode)
+- Found existing basic `tools/generate-license.ts` with positional args — rewrote entirely with `--type`, `--expires`, `--year` flag-based CLI
+- Implemented the SAME `generateExpectedCode` algorithm as `electron/license.ts`
+- Implemented `verifyActivationCode` that mirrors the Electron app's verification logic (permanent → annual → event brute-force)
+- Discovered and fixed a milliseconds bug: `setHours(23, 59, 59)` preserves milliseconds from `new Date()`, causing generated codes to not match verification dates. Fixed both `electron/license.ts` and `tools/generate-license.ts` to use `setHours(23, 59, 59, 0)`
+- Added ANSI-colored output with box drawing characters, status badges, and days-remaining display
+- Added `--help` flag with comprehensive usage documentation
+- Added error handling for invalid Machine ID, license type, date format, and year range
+- Added `"generate-license": "npx tsx tools/generate-license.ts"` script to package.json
+- Tested all license types: permanent ✅, annual (default) ✅, annual (specific year) ✅, event (specific date) ✅, event (default 90 days) ✅
+- Tested error cases: invalid Machine ID ✅, invalid type ✅, missing args ✅
+
+Stage Summary:
+- Complete CLI tool at `tools/generate-license.ts` that generates SAATIRIL activation codes
+- Uses identical algorithm to `electron/license.ts` — generated codes will be accepted by the Electron app
+- Supports `--type permanent|annual|event|trial`, `--expires YYYY-MM-DD`, `--year YYYY` flags
+- Self-verifies generated codes using the same brute-force logic as the Electron app
+- Fixed `setHours` milliseconds bug in both `electron/license.ts` and the generator tool
+- Convenience script: `bun run generate-license <machineId> [options]`
+---
+Task ID: 7-11
+Agent: Main Agent
+Task: Implement Level 1 Security Protection (License + LAN Session Password)
+
+Work Log:
+- Reviewed existing codebase — discovered most Level 1 features were ALREADY implemented:
+  - electron/license.ts: Full Machine ID, activation code verification, encrypted storage, grace period
+  - electron/main.ts: IPC handlers for license (get-license-status, activate-license, get-machine-id)
+  - electron/preload.ts: Exposed license API to renderer
+  - src/components/saatiril/license-gate.tsx: Full activation UI
+  - main-app.tsx: LicenseGate integration + session password prompt
+  - project-setup.tsx: Session password input field
+  - Store: sessionPassword in ProjectConfig with strip/preserve logic
+
+- Implemented missing pieces:
+  1. **Socket Server Password Enforcement** (mini-services/saatiril-socket/index.ts):
+     - Added sessionPasswordHash storage (SHA-256)
+     - Added SET_SESSION_PASSWORD / CLEAR_SESSION_PASSWORD events (admin-only)
+     - Modified `identify` handler to validate sessionPasswordHash for non-admin clients
+     - Added auth-failed / auth-success / auth-requirement events
+     - Added 10-second identification timeout (disconnect unidentified clients)
+     - Added unauthenticated message relay rejection
+     - Added sessionPasswordActive to health check and server-stats
+
+  2. **Embedded Electron Socket Server** (electron/main.ts):
+     - Ported the same password enforcement to the embedded socket server
+     - Identical logic for SET/CLEAR password, identify validation, auth events
+
+  3. **Socket Client Updates** (src/lib/socket.ts):
+     - Added SHA-256 hashing utility (browser-native crypto.subtle)
+     - Added sessionPasswordHash to identify payload for non-admin
+     - Added auth-requirement / auth-success / auth-failed event handlers
+     - Added setSessionPassword() — admin sets password hash on server
+     - Added clearSessionPassword() — admin clears password on server
+     - Added reidentifyWithPassword() — non-admin re-sends identify with password hash
+     - Added isSocketAuthenticated() / isServerPasswordRequired() helpers
+     - Authenticated clients get event queue flushed on auth-success
+
+  4. **Main App Updates** (src/components/saatiril/main-app.tsx):
+     - Added auth event listeners (auth-requirement, auth-success, auth-failed)
+     - Admin sends SET_SESSION_PASSWORD on connect when project has password
+     - Password prompt now uses reidentifyWithPassword() instead of local comparison
+     - Server-side validation replaces client-side comparison
+     - REQUEST_STATE now strips session password (sends '__PASSWORD_SET__' marker)
+     - Actual password never sent over LAN — only hash for server validation
+
+  5. **Project Setup** (src/components/saatiril/project-setup.tsx):
+     - Added setSessionPassword() call after project creation
+     - Changed password input from type="text" to type="password"
+
+  6. **License Bug Fix** (electron/license.ts):
+     - Fixed milliseconds bug in annual license: new Date(year, 11, 31, 23, 59, 59) → new Date(year, 11, 31, 23, 59, 59, 0)
+     - Same fix already applied to event license dates by generator tool
+
+  7. **Activation Code Generator Tool** (tools/generate-license.ts):
+     - Created standalone CLI tool for generating activation codes
+     - Supports permanent, annual, event, and trial license types
+     - Uses exact same algorithm as electron/license.ts
+     - Includes self-verification after generation
+     - Professional colored terminal output with box-drawing characters
+     - Added `generate-license` script to package.json
+
+Stage Summary:
+- Level 1 Security Protection is now fully implemented
+- License system: Machine ID + activation code + encrypted storage + 7-day grace period
+- LAN session password: Server-side SHA-256 hash validation, password never transmitted in plaintext
+- Both standalone socket server AND embedded Electron socket server enforce passwords
+- Activation code generator tool allows developer to generate codes from Machine IDs
+- App verified working via Agent Browser (hub page renders correctly)

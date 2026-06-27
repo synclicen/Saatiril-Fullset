@@ -143,7 +143,7 @@ export function verifyActivationCode(
   const now = new Date()
   for (let yearOffset = 0; yearOffset <= 2; yearOffset++) {
     const year = now.getFullYear() + yearOffset
-    const expiryDate = new Date(year, 11, 31, 23, 59, 59) // Dec 31
+    const expiryDate = new Date(year, 11, 31, 23, 59, 59, 0) // Dec 31 — ms=0 for consistent hashing
     const annualCode = generateExpectedCode(machineId, 'annual', expiryDate.toISOString())
     if (formatted === annualCode) {
       return { licenseType: 'annual', expiresAt: expiryDate.toISOString() }
@@ -154,7 +154,7 @@ export function verifyActivationCode(
   for (let dayOffset = 0; dayOffset <= 90; dayOffset++) {
     const date = new Date(now)
     date.setDate(date.getDate() + dayOffset)
-    date.setHours(23, 59, 59)
+    date.setHours(23, 59, 59, 0)
     const eventCode = generateExpectedCode(machineId, 'event', date.toISOString())
     if (formatted === eventCode) {
       return { licenseType: 'event', expiresAt: date.toISOString() }

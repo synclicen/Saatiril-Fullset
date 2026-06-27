@@ -1,0 +1,948 @@
+     1→'use client'
+     2→
+     3→import React, { useCallback, useRef, useState } from 'react'
+     4→import * as XLSX from 'xlsx'
+     5→import {
+     6→  ArrowLeft,
+     7→  Camera,
+     8→  Check,
+     9→  FileSpreadsheet,
+    10→  FolderOpen,
+    11→  Frame,
+    12→  ImagePlus,
+    13→  Monitor,
+    14→  Upload,
+    15→  X,
+    16→} from 'lucide-react'
+    17→
+    18→import { Button } from '@/components/ui/button'
+    19→import { Input } from '@/components/ui/input'
+    20→import { Label } from '@/components/ui/label'
+    21→import { Badge } from '@/components/ui/badge'
+    22→import {
+    23→  Card,
+    24→  CardContent,
+    25→  CardHeader,
+    26→  CardTitle,
+    27→} from '@/components/ui/card'
+    28→import {
+    29→  Select,
+    30→  SelectContent,
+    31→  SelectItem,
+    32→  SelectTrigger,
+    33→  SelectValue,
+    34→} from '@/components/ui/select'
+    35→
+    36→import { useSaatirilStore, type CameraMode, type Student, stripFrameForSync, isPhotoshootMode, isDualMode } from '@/store/use-saatiril-store'
+    37→import { emitLocal } from '@/lib/socket'
+    38→import { useToast } from '@/hooks/use-toast'
+    39→
+    40→// ─── Parsed data from Excel ────────────────────────────────────────────────────
+    41→interface ParsedExcelData {
+    42→  fileName: string
+    43→  students: Student[]
+    44→}
+    45→
+    46→// ─── Filter Preset options ─────────────────────────────────────────────────────
+    47→// CSS filter strings MUST stay in sync with PRESET_FILTERS in operator-panel.tsx
+    48→// so the preview thumbnails exactly match the live camera output.
+    49→export const PRESET_OPTIONS: Array<{
+    50→  value: string
+    51→  label: string
+    52→  desc: string
+    53→  filter: string
+    54→}> = [
+    55→  { value: 'original',    label: 'Original Sensor',  desc: 'Tanpa Filter',                 filter: 'none' },
+    56→  { value: 'studio',      label: 'Studio Bright',    desc: 'Cahaya Studio Hangat',         filter: 'brightness(1.1) contrast(1.05) saturate(1.1)' },
+    57→  { value: 'cinematic',   label: 'Cinematic Gold',   desc: 'Tone Sinematik Emas',          filter: 'sepia(0.15) contrast(1.1) brightness(0.95) saturate(1.3)' },
+    58→  { value: 'pro',         label: 'Preset Pro',       desc: 'High Contrast + Sharpening',   filter: 'contrast(1.25) brightness(1.05) saturate(1.15)' },
+    59→  { value: 'vivid',       label: 'Vivid',            desc: 'Warna Cerah & Kontras Tinggi', filter: 'brightness(1.08) contrast(1.12) saturate(1.45) hue-rotate(5deg)' },
+    60→  { value: 'softPortrait',label: 'Soft Portrait',    desc: 'Kulit Lembut & Hangat',        filter: 'brightness(1.12) contrast(0.92) saturate(1.08) sepia(0.08)' },
+    61→  { value: 'classicFilm', label: 'Classic Film',     desc: 'Nuansa Film Vintage',          filter: 'brightness(1.02) contrast(1.15) saturate(0.85) sepia(0.2)' },
+    62→  { value: 'dramaticBW',  label: 'Dramatic B&W',     desc: 'Hitam Putih Dramatis',         filter: 'brightness(1.05) contrast(1.35) saturate(0) grayscale(1)' },
+    63→  { value: 'warmSunset',  label: 'Warm Sunset',      desc: 'Tone Emas Sore Hari',          filter: 'brightness(1.06) contrast(1.08) saturate(1.3) sepia(0.18) hue-rotate(-10deg)' },
+    64→]
+    65→
+    66→// ─── Component ─────────────────────────────────────────────────────────────────
+    67→export default function ProjectSetup() {
+    68→  const { toast } = useToast()
+    69→  const {
+    70→    addProject,
+    71→    setCurrentProject,
+    72→    setCurrentScreen,
+    73→    saveProjectsToStorageNow,
+    74→  } = useSaatirilStore()
+    75→
+    76→  // ── Form state ─────────────────────────────────────────────────────────────
+    77→  const [projectName, setProjectName] = useState('')
+    78→  const [cameraMode, setCameraMode] = useState<CameraMode>('single')
+    79→  const [ratio, setRatio] = useState('4:3')
+    80→  const [preset, setPreset] = useState('original')
+    81→  const [targetFolder, setTargetFolder] = useState('C:\\SAATIRIL_System_Out')
+    82→  const [frameData, setFrameData] = useState<string | null>(null)
+    83→  const [frameFileName, setFrameFileName] = useState<string>('')
+    84→  const [sessionPassword, setSessionPassword] = useState('')
+    85→
+    86→  // Excel data: single mode uses index 0; dual uses 0 (kiri) & 1 (kanan)
+    87→  const [excelData, setExcelData] = useState<[ParsedExcelData | null, ParsedExcelData | null]>([null, null])
+    88→
+    89→  // Loading states for file parsing
+    90→  const [parsingExcel, setParsingExcel] = useState<[boolean, boolean]>([false, false])
+    91→  const [parsingFrame, setParsingFrame] = useState(false)
+    92→
+    93→  // Refs for hidden file inputs
+    94→  const excelInputRef0 = useRef<HTMLInputElement>(null)
+    95→  const excelInputRef1 = useRef<HTMLInputElement>(null)
+    96→  const frameInputRef = useRef<HTMLInputElement>(null)
+    97→
+    98→  // ── Excel parsing ──────────────────────────────────────────────────────────
+    99→  const parseExcelFile = useCallback(
+   100→    (file: File, channelIndex: number) => {
+   101→      setParsingExcel((prev) => {
+   102→        const next = [...prev] as [boolean, boolean]
+   103→        next[channelIndex] = true
+   104→        return next
+   105→      })
+   106→
+   107→      const reader = new FileReader()
+   108→      reader.onload = (e) => {
+   109→        try {
+   110→          const data = new Uint8Array(e.target?.result as ArrayBuffer)
+   111→          const workbook = XLSX.read(data, { type: 'array' })
+   112→          const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
+   113→          const jsonData = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, {
+   114→            defval: '',
+   115→          })
+   116→
+   117→          if (jsonData.length === 0) {
+   118→            toast({
+   119→              title: 'File Kosong',
+   120→              description: 'File Excel tidak memiliki data.',
+   121→              variant: 'destructive',
+   122→            })
+   123→            setParsingExcel((prev) => {
+   124→              const next = [...prev] as [boolean, boolean]
+   125→              next[channelIndex] = false
+   126→              return next
+   127→            })
+   128→            return
+   129→          }
+   130→
+   131→          // Identify NIM and Nama columns
+   132→          const headers = Object.keys(jsonData[0])
+   133→          const nimCol = headers.find((h) => {
+   134→            const lower = h.toLowerCase().trim()
+   135→            return lower.includes('nim') || lower.includes('nis') || lower.includes('id')
+   136→          })
+   137→          const namaCol = headers.find((h) => {
+   138→            const lower = h.toLowerCase().trim()
+   139→            return lower.includes('nama') || lower.includes('name')
+   140→          })
+   141→
+   142→          if (!nimCol || !namaCol) {
+   143→            toast({
+   144→              title: 'Kolom Tidak Ditemukan',
+   145→              description: `Tidak dapat menemukan kolom NIM/ID dan Nama. Kolom yang ditemukan: ${headers.join(', ')}`,
+   146→              variant: 'destructive',
+   147→            })
+   148→            setParsingExcel((prev) => {
+   149→              const next = [...prev] as [boolean, boolean]
+   150→              next[channelIndex] = false
+   151→              return next
+   152→            })
+   153→            return
+   154→          }
+   155→
+   156→          const channelNumber = channelIndex + 1
+   157→          const students: Student[] = jsonData
+   158→            .filter((row) => {
+   159→              const nim = String(row[nimCol] ?? '').trim()
+   160→              const nama = String(row[namaCol] ?? '').trim()
+   161→              return nim !== '' && nama !== ''
+   162→            })
+   163→            .map((row) => ({
+   164→              id: `ID_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+   165→              nim: String(row[nimCol] ?? '').trim(),
+   166→              nama: String(row[namaCol] ?? '').trim(),
+   167→              status: 'pending' as const,
+   168→              assignedChannel: channelNumber,
+   169→            }))
+   170→
+   171→          setExcelData((prev) => {
+   172→            const next = [...prev] as [ParsedExcelData | null, ParsedExcelData | null]
+   173→            next[channelIndex] = { fileName: file.name, students }
+   174→            return next
+   175→          })
+   176→
+   177→          toast({
+   178→            title: 'Data Berhasil Dimuat',
+   179→            description: `${students.length} peserta terbaca dari "${file.name}"`,
+   180→          })
+   181→        } catch (err) {
+   182→          console.error('[SAATIRIL] Excel parse error:', err)
+   183→          toast({
+   184→            title: 'Gagal Membaca File',
+   185→            description: 'Pastikan file berformat .xlsx atau .xls yang valid.',
+   186→            variant: 'destructive',
+   187→          })
+   188→        } finally {
+   189→          setParsingExcel((prev) => {
+   190→            const next = [...prev] as [boolean, boolean]
+   191→            next[channelIndex] = false
+   192→            return next
+   193→          })
+   194→        }
+   195→      }
+   196→      reader.onerror = () => {
+   197→        toast({
+   198→          title: 'Gagal Membaca File',
+   199→          description: 'Terjadi kesalahan saat membaca file.',
+   200→          variant: 'destructive',
+   201→        })
+   202→        setParsingExcel((prev) => {
+   203→          const next = [...prev] as [boolean, boolean]
+   204→          next[channelIndex] = false
+   205→          return next
+   206→        })
+   207→      }
+   208→      reader.readAsArrayBuffer(file)
+   209→    },
+   210→    [toast],
+   211→  )
+   212→
+   213→  // ── Frame overlay parsing ──────────────────────────────────────────────────
+   214→  const parseFrameFile = useCallback(
+   215→    (file: File) => {
+   216→      if (!file.name.toLowerCase().endsWith('.png')) {
+   217→        toast({
+   218→          title: 'Format Salah',
+   219→          description: 'Frame overlay harus berformat .PNG (transparan).',
+   220→          variant: 'destructive',
+   221→        })
+   222→        return
+   223→      }
+   224→
+   225→      setParsingFrame(true)
+   226→      const reader = new FileReader()
+   227→      reader.onload = (e) => {
+   228→        const dataUrl = e.target?.result as string
+   229→        setFrameData(dataUrl)
+   230→        setFrameFileName(file.name)
+   231→        setParsingFrame(false)
+   232→        toast({
+   233→          title: 'Frame Dimuat',
+   234→          description: `"${file.name}" berhasil dimuat sebagai overlay.`,
+   235→        })
+   236→      }
+   237→      reader.onerror = () => {
+   238→        toast({
+   239→          title: 'Gagal Membaca Frame',
+   240→          description: 'Terjadi kesalahan saat membaca file frame.',
+   241→          variant: 'destructive',
+   242→        })
+   243→        setParsingFrame(false)
+   244→      }
+   245→      reader.readAsDataURL(file)
+   246→    },
+   247→    [toast],
+   248→  )
+   249→
+   250→  // ── Drop zone handlers ─────────────────────────────────────────────────────
+   251→  const handleExcelDrop = useCallback(
+   252→    (e: React.DragEvent, channelIndex: number) => {
+   253→      e.preventDefault()
+   254→      e.stopPropagation()
+   255→      const file = e.dataTransfer.files[0]
+   256→      if (file) parseExcelFile(file, channelIndex)
+   257→    },
+   258→    [parseExcelFile],
+   259→  )
+   260→
+   261→  const handleFrameDrop = useCallback(
+   262→    (e: React.DragEvent) => {
+   263→      e.preventDefault()
+   264→      e.stopPropagation()
+   265→      const file = e.dataTransfer.files[0]
+   266→      if (file) parseFrameFile(file)
+   267→    },
+   268→    [parseFrameFile],
+   269→  )
+   270→
+   271→  const handleDragOver = useCallback((e: React.DragEvent) => {
+   272→    e.preventDefault()
+   273→    e.stopPropagation()
+   274→  }, [])
+   275→
+   276→  // ── Form validation ────────────────────────────────────────────────────────
+   277→  const isNameValid = projectName.trim().length > 0
+   278→  const isSingleDataReady = (cameraMode === 'single' || cameraMode === 'single-photoshoot' || cameraMode === 'dual-photoshoot') && excelData[0] !== null && excelData[0]!.students.length > 0
+   279→  const isDualDataReady =
+   280→    cameraMode === 'dual' &&
+   281→    excelData[0] !== null &&
+   282→    excelData[0]!.students.length > 0 &&
+   283→    excelData[1] !== null &&
+   284→    excelData[1]!.students.length > 0
+   285→  const isDataReady = isSingleDataReady || isDualDataReady
+   286→  const canStart = isNameValid && isDataReady
+   287→
+   288→  // ── Submit / create project ────────────────────────────────────────────────
+   289→  const handleCreateProject = useCallback(() => {
+   290→    if (!canStart) return
+   291→
+   292→    const allStudents: Student[] = []
+   293→
+   294→    if (cameraMode === 'dual') {
+   295→      allStudents.push(...(excelData[0]?.students ?? []))
+   296→      allStudents.push(...(excelData[1]?.students ?? []))
+   297→    } else {
+   298→      // single, single-photoshoot, dual-photoshoot: only 1 data upload
+   299→      allStudents.push(...(excelData[0]?.students ?? []))
+   300→    }
+   301→
+   302→    // Re-generate unique IDs to avoid collision from parallel parsing
+   303→    const finalStudents: Student[] = allStudents.map((s, i) => ({
+   304→      ...s,
+   305→      id: `ID_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 9)}`,
+   306→    }))
+   307→
+   308→    const projectId = `PRJ_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+   309→
+   310→    // Create subfolder based on project name under target folder
+   311→    const sanitizedName = projectName.trim().replace(/[^a-zA-Z0-9_\-\s]/g, '').replace(/\s+/g, '_')
+   312→    const finalTargetFolder = targetFolder
+   313→      ? `${targetFolder.replace(/[\\/]+$/, '')}\\${sanitizedName}`
+   314→      : `C:\\SAATIRIL_System_Out\\${sanitizedName}`
+   315→
+   316→    const project = {
+   317→      id: projectId,
+   318→      name: projectName.trim(),
+   319→      config: {
+   320→        mode: cameraMode,
+   321→        ratio,
+   322→        preset,
+   323→        targetFolder: finalTargetFolder,
+   324→        frame: frameData,
+   325→        sessionPassword: sessionPassword.trim() || undefined,
+   326→      },
+   327→      database: finalStudents,
+   328→      photoHistory: [],
+   329→    }
+   330→
+   331→    addProject(project)
+   332→    setCurrentProject(project)
+   333→
+   334→    // IMMEDIATE save before navigation to prevent data loss on first launch
+   335→    saveProjectsToStorageNow()
+   336→
+   337→    // ── Create project folder on disk (Electron only) ────────────────────
+   338→    const api = window.saatirilAPI
+   339→    if (api?.createFolder) {
+   340→      api.createFolder(finalTargetFolder).then((result: { success: boolean; path?: string; error?: string }) => {
+   341→        if (result.success) {
+   342→          console.log(`[SAATIRIL] ✅ Project folder created: ${result.path}`)
+   343→          toast({
+   344→            title: 'Proyek Dibuat!',
+   345→            description: `"${projectName.trim()}" — ${finalStudents.length} peserta dimuat. Folder: ${finalTargetFolder}`,
+   346→          })
+   347→        } else {
+   348→          console.error('[SAATIRIL] Failed to create project folder:', result.error)
+   349→          toast({
+   350→            title: 'Proyek Dibuat!',
+   351→            description: `"${projectName.trim()}" — ${finalStudents.length} peserta. ⚠️ Folder gagal: ${result.error}`,
+   352→            variant: 'destructive',
+   353→          })
+   354→        }
+   355→      }).catch((err: Error) => {
+   356→        console.error('[SAATIRIL] createFolder IPC error:', err)
+   357→        toast({
+   358→          title: 'Proyek Dibuat!',
+   359→          description: `"${projectName.trim()}" — ${finalStudents.length} peserta dimuat.`,
+   360→        })
+   361→      })
+   362→    } else {
+   363→      toast({
+   364→        title: 'Proyek Dibuat!',
+   365→        description: `"${projectName.trim()}" — ${finalStudents.length} peserta dimuat.`,
+   366→      })
+   367→    }
+   368→
+   369→    // Sync database over LAN — strip frame data to save bandwidth
+   370→    emitLocal('SYNC_DB', { project: stripFrameForSync(project) })
+   371→
+   372→    // Small delay to ensure state is persisted before navigation
+   373→    setTimeout(() => {
+   374→      setCurrentScreen('app')
+   375→    }, 50)
+   376→  }, [
+   377→    canStart,
+   378→    cameraMode,
+   379→    excelData,
+   380→    projectName,
+   381→    ratio,
+   382→    preset,
+   383→    targetFolder,
+   384→    frameData,
+   385→    sessionPassword,
+   386→    addProject,
+   387→    setCurrentProject,
+   388→    saveProjectsToStorageNow,
+   389→    setCurrentScreen,
+   390→    toast,
+   391→  ])
+   392→
+   393→  // ── Upload zone component ──────────────────────────────────────────────────
+   394→  const renderUploadZone = (
+   395→    channelIndex: number,
+   396→    label: string,
+   397→    accentColor: string,
+   398→    accentBorder: string,
+   399→  ) => {
+   400→    const data = excelData[channelIndex]
+   401→    const isLoading = parsingExcel[channelIndex]
+   402→    const inputRef = channelIndex === 0 ? excelInputRef0 : excelInputRef1
+   403→
+   404→    return (
+   405→      <div className="space-y-2">
+   406→        <Label className="text-sm font-medium" style={{ color: accentColor }}>
+   407→          {label}
+   408→        </Label>
+   409→        <div
+   410→          onDrop={(e) => handleExcelDrop(e, channelIndex)}
+   411→          onDragOver={handleDragOver}
+   412→          onClick={() => inputRef.current?.click()}
+   413→          className={`
+   414→            relative cursor-pointer rounded-lg border-2 border-dashed p-6
+   415→            transition-all duration-200
+   416→            hover:border-opacity-100 hover:bg-white/5
+   417→            ${data ? accentBorder : 'border-[#533485]'}
+   418→          `}
+   419→        >
+   420→          <input
+   421→            ref={inputRef}
+   422→            type="file"
+   423→            accept=".xlsx,.xls,.csv"
+   424→            className="hidden"
+   425→            onChange={(e) => {
+   426→              const file = e.target.files?.[0]
+   427→              if (file) parseExcelFile(file, channelIndex)
+   428→              // Reset so same file can be re-selected
+   429→              e.target.value = ''
+   430→            }}
+   431→          />
+   432→
+   433→          <div className="flex flex-col items-center gap-2 text-center">
+   434→            {isLoading ? (
+   435→              <>
+   436→                <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#533485] border-t-[#d4af37]" />
+   437→                <p className="text-xs text-[#c4b5fd]">Membaca file...</p>
+   438→              </>
+   439→            ) : data ? (
+   440→              <>
+   441→                <FileSpreadsheet className="h-8 w-8" style={{ color: accentColor }} />
+   442→                <p className="text-sm font-medium" style={{ color: accentColor }}>
+   443→                  Data siap: {data.students.length} Peserta Terbaca
+   444→                </p>
+   445→                <p className="text-xs text-[#c4b5fd]">{data.fileName}</p>
+   446→                <button
+   447→                  onClick={(e) => {
+   448→                    e.stopPropagation()
+   449→                    setExcelData((prev) => {
+   450→                      const next = [...prev] as [ParsedExcelData | null, ParsedExcelData | null]
+   451→                      next[channelIndex] = null
+   452→                      return next
+   453→                    })
+   454→                  }}
+   455→                  className="mt-1 rounded-full p-1 text-[#c4b5fd] transition-colors hover:bg-white/10 hover:text-red-400"
+   456→                >
+   457→                  <X className="h-4 w-4" />
+   458→                </button>
+   459→              </>
+   460→            ) : (
+   461→              <>
+   462→                <Upload className="h-8 w-8 text-[#533485]" />
+   463→                <p className="text-sm text-[#c4b5fd]">
+   464→                  Drag & drop file Excel di sini
+   465→                </p>
+   466→                <p className="text-xs text-[#533485]">.xlsx / .xls / .csv</p>
+   467→              </>
+   468→            )}
+   469→          </div>
+   470→        </div>
+   471→      </div>
+   472→    )
+   473→  }
+   474→
+   475→  // ── Render ─────────────────────────────────────────────────────────────────
+   476→  return (
+   477→    <div className="relative h-screen bg-[#1a0b2e] backdrop-blur-sm overflow-hidden">
+   478→      {/* Subtle gradient overlay */}
+   479→      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[#1a0b2e] via-[#2a164a]/30 to-[#1a0b2e]" />
+   480→
+   481→      <div className="relative z-10 flex h-full flex-col">
+   482→        {/* ── Header ─────────────────────────────────────────────────────────── */}
+   483→        <header className="flex items-center gap-3 border-b border-[#533485]/50 px-5 py-2.5">
+   484→          <Button
+   485→            variant="ghost"
+   486→            size="icon"
+   487→            onClick={() => setCurrentScreen('hub')}
+   488→            className="text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37]"
+   489→          >
+   490→            <ArrowLeft className="h-4 w-4" />
+   491→          </Button>
+   492→          <div>
+   493→            <h1 className="text-base font-bold text-white">
+   494→              <span className="text-[#d4af37]">SAATIRIL</span> — Buat Proyek Baru
+   495→            </h1>
+   496→          </div>
+   497→        </header>
+   498→
+   499→        {/* ── Main Content: 2-Column Layout ──────────────────────────────────── */}
+   500→        <main className="flex-1 overflow-y-auto p-4">
+   501→          <div className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-2">
+   502→            {/* ── LEFT COLUMN ──────────────────────────────────────────────── */}
+   503→            <div className="flex flex-col gap-3">
+   504→              {/* Project Name */}
+   505→              <Card className="border-[#533485] bg-[#2a164a] shadow-lg">
+   506→                <CardHeader className="pb-2">
+   507→                  <CardTitle className="flex items-center gap-2 text-base text-white">
+   508→                    <Monitor className="h-5 w-5 text-[#d4af37]" />
+   509→                    Nama Proyek
+   510→                  </CardTitle>
+   511→                </CardHeader>
+   512→                <CardContent>
+   513→                  <Input
+   514→                    placeholder="Masukkan nama event / proyek..."
+   515→                    value={projectName}
+   516→                    onChange={(e) => setProjectName(e.target.value)}
+   517→                    className="border-[#533485] bg-[#3b2263] text-white placeholder:text-[#533485] focus-visible:border-[#d4af37] focus-visible:ring-[#d4af37]/30"
+   518→                  />
+   519→                </CardContent>
+   520→              </Card>
+   521→
+   522→              {/* Session Password (Keamanan LAN) */}
+   523→              <Card className="border-[#533485] bg-[#2a164a] shadow-lg">
+   524→                <CardHeader className="pb-2">
+   525→                  <CardTitle className="flex items-center gap-2 text-base text-white">
+   526→                    <svg className="h-5 w-5 text-[#d4af37]" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+   527→                    Password Sesi LAN
+   528→                    <span className="ml-auto text-[10px] font-normal text-[#533485]">Opsional</span>
+   529→                  </CardTitle>
+   530→                </CardHeader>
+   531→                <CardContent>
+   532→                  <Input
+   533→                    type="text"
+   534→                    placeholder="Kosongkan = tanpa password"
+   535→                    value={sessionPassword}
+   536→                    onChange={(e) => setSessionPassword(e.target.value)}
+   537→                    className="border-[#533485] bg-[#3b2263] text-white placeholder:text-[#533485] focus-visible:border-[#d4af37] focus-visible:ring-[#d4af37]/30"
+   538→                  />
+   539→                  <p className="mt-2 text-xs text-[#533485]">
+   540→                    Jika diisi, Operator dan MC harus memasukkan password ini untuk bergabung ke sesi.
+   541→                    Mencegah perangkat tidak dikenal mengakses sesi foto Anda di jaringan LAN.
+   542→                  </p>
+   543→                </CardContent>
+   544→              </Card>
+   545→
+   546→              {/* Camera Mode */}
+   547→              <Card className="border-[#533485] bg-[#2a164a] shadow-lg">
+   548→                <CardHeader className="pb-2">
+   549→                  <CardTitle className="flex items-center gap-2 text-base text-white">
+   550→                    <Camera className="h-5 w-5 text-[#d4af37]" />
+   551→                    Mode Kamera
+   552→                  </CardTitle>
+   553→                </CardHeader>
+   554→                <CardContent className="space-y-3">
+   555→                  <Select
+   556→                    value={cameraMode}
+   557→                    onValueChange={(val) => {
+   558→                      setCameraMode(val as CameraMode)
+   559→                      // Reset kanan data when switching away from dual
+   560→                      if (val !== 'dual') {
+   561→                        setExcelData((prev) => [prev[0], null])
+   562→                      }
+   563→                    }}
+   564→                  >
+   565→                    <SelectTrigger className="w-full border-[#533485] bg-[#3b2263] text-white focus:ring-[#d4af37]/30">
+   566→                      <SelectValue />
+   567→                    </SelectTrigger>
+   568→                    <SelectContent className="border-[#533485] bg-[#2a164a]">
+   569→                      <SelectItem value="single" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+   570→                        Single Mode — 1 MC & 1 Kamera
+   571→                      </SelectItem>
+   572→                      <SelectItem value="dual" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+   573→                        Dual Mode — 2 MC & 2 Kamera Bersamaan
+   574→                      </SelectItem>
+   575→                      <SelectItem value="single-photoshoot" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+   576→                        Single Photoshoot — 1 MC & 1 Kamera (Urutan Bebas)
+   577→                      </SelectItem>
+   578→                      <SelectItem value="dual-photoshoot" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+   579→                        Dual Photoshoot — 1 MC & 2 Kamera Bersamaan (Urutan Bebas)
+   580→                      </SelectItem>
+   581→                    </SelectContent>
+   582→                  </Select>
+   583→
+   584→                  {cameraMode === 'single' ? (
+   585→                    <Badge
+   586→                      variant="outline"
+   587→                      className="border-[#d4af37]/40 text-[#d4af37]"
+   588→                    >
+   589→                      Single Channel — Wisuda
+   590→                    </Badge>
+   591→                  ) : cameraMode === 'dual' ? (
+   592→                    <div className="flex gap-2">
+   593→                      <Badge
+   594→                        variant="outline"
+   595→                        className="border-[#d4af37]/40 text-[#d4af37]"
+   596→                      >
+   597→                        JALUR KIRI
+   598→                      </Badge>
+   599→                      <Badge
+   600→                        variant="outline"
+   601→                        className="border-cyan-400/40 text-cyan-400"
+   602→                      >
+   603→                        JALUR KANAN
+   604→                      </Badge>
+   605→                    </div>
+   606→                  ) : cameraMode === 'single-photoshoot' ? (
+   607→                    <Badge
+   608→                      variant="outline"
+   609→                      className="border-emerald-400/40 text-emerald-400"
+   610→                    >
+   611→                      Photoshoot — 1 Foto/Peserta
+   612→                    </Badge>
+   613→                  ) : (
+   614→                    <div className="flex gap-2">
+   615→                      <Badge
+   616→                        variant="outline"
+   617→                        className="border-emerald-400/40 text-emerald-400"
+   618→                      >
+   619→                        Photoshoot — 1 Foto/Peserta
+   620→                      </Badge>
+   621→                      <Badge
+   622→                        variant="outline"
+   623→                        className="border-cyan-400/40 text-cyan-400"
+   624→                      >
+   625→                        2 Kamera
+   626→                      </Badge>
+   627→                    </div>
+   628→                  )}
+   629→                </CardContent>
+   630→              </Card>
+   631→
+   632→              {/* Excel Upload */}
+   633→              <Card className="border-[#533485] bg-[#2a164a] shadow-lg">
+   634→                <CardHeader className="pb-2">
+   635→                  <CardTitle className="flex items-center gap-2 text-base text-white">
+   636→                    <FileSpreadsheet className="h-5 w-5 text-[#d4af37]" />
+   637→                    Upload Data Peserta
+   638→                  </CardTitle>
+   639→                </CardHeader>
+   640→                <CardContent className="space-y-4">
+   641→                  {cameraMode === 'dual' ? (
+   642→                    <div className="grid gap-4 sm:grid-cols-2">
+   643→                      {renderUploadZone(
+   644→                        0,
+   645→                        'Data JALUR KIRI',
+   646→                        '#d4af37',
+   647→                        'border-[#d4af37]/50',
+   648→                      )}
+   649→                      {renderUploadZone(
+   650→                        1,
+   651→                        'Data JALUR KANAN',
+   652→                        '#22d3ee',
+   653→                        'border-cyan-400/50',
+   654→                      )}
+   655→                    </div>
+   656→                  ) : (
+   657→                    renderUploadZone(
+   658→                      0,
+   659→                      isPhotoshootMode(cameraMode) ? 'Data Peserta Photoshoot' : 'Data Peserta',
+   660→                      isPhotoshootMode(cameraMode) ? '#4ade80' : '#d4af37',
+   661→                      isPhotoshootMode(cameraMode) ? 'border-emerald-400/50' : 'border-[#d4af37]/50',
+   662→                    )
+   663→                  )}
+   664→
+   665→                  <p className="text-xs text-[#533485]">
+   666→                    Kolom harus mengandung kata "nim"/"nis"/"id" untuk NIM
+   667→                    dan "nama"/"name" untuk Nama.
+   668→                    {isPhotoshootMode(cameraMode) && (
+   669→                      <span className="block mt-1 text-emerald-400/70">
+   670→                        Mode Photoshoot: hanya 1 foto per peserta, urutan bebas.
+   671→                      </span>
+   672→                    )}
+   673→                  </p>
+   674→                </CardContent>
+   675→              </Card>
+   676→            </div>
+   677→
+   678→            {/* ── RIGHT COLUMN ─────────────────────────────────────────────── */}
+   679→            <div className="flex flex-col gap-3">
+   680→              {/* Visual Camera Settings */}
+   681→              <Card className="border-[#533485] bg-[#2a164a] shadow-lg">
+   682→                <CardHeader className="pb-2">
+   683→                  <CardTitle className="flex items-center gap-2 text-base text-white">
+   684→                    <Camera className="h-5 w-5 text-[#d4af37]" />
+   685→                    Pengaturan Visual Kamera
+   686→                  </CardTitle>
+   687→                </CardHeader>
+   688→                <CardContent className="space-y-5">
+   689→                  {/* Photo Ratio */}
+   690→                  <div className="space-y-2">
+   691→                    <Label className="text-sm font-medium text-[#c4b5fd]">
+   692→                      Photo Ratio
+   693→                    </Label>
+   694→                    <Select value={ratio} onValueChange={setRatio}>
+   695→                      <SelectTrigger className="w-full border-[#533485] bg-[#3b2263] text-white focus:ring-[#d4af37]/30">
+   696→                        <SelectValue />
+   697→                      </SelectTrigger>
+   698→                      <SelectContent className="border-[#533485] bg-[#2a164a]">
+   699→                        <SelectItem value="4:3" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+   700→                          4:3 — Standard
+   701→                        </SelectItem>
+   702→                        <SelectItem value="16:9" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+   703→                          16:9 — Widescreen
+   704→                        </SelectItem>
+   705→                        <SelectItem value="9:16" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+   706→                          9:16 — 16:9 Portrait
+   707→                        </SelectItem>
+   708→                        <SelectItem value="3:4" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+   709→                          3:4 — Portrait
+   710→                        </SelectItem>
+   711→                        <SelectItem value="2:3" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+   712→                          2:3 — Pass Photo Portrait
+   713→                        </SelectItem>
+   714→                        <SelectItem value="4:6" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+   715→                          4:6 — Pass Photo Portrait
+   716→                        </SelectItem>
+   717→                      </SelectContent>
+   718→                    </Select>
+   719→                  </div>
+   720→
+   721→                  {/* Filter Preset — visual grid with live preview thumbnails */}
+   722→                  <div className="space-y-2">
+   723→                    <Label className="text-sm font-medium text-[#c4b5fd]">
+   724→                      Filter Preset
+   725→                    </Label>
+   726→                    <p className="text-xs text-white/50">
+   727→                      Klik preset untuk melihat contoh hasil foto. Preview menggunakan foto contoh yang sama agar perbedaan terlihat jelas.
+   728→                    </p>
+   729→                    <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-5">
+   730→                      {PRESET_OPTIONS.map((opt) => {
+   731→                        const selected = preset === opt.value
+   732→                        return (
+   733→                          <button
+   734→                            key={opt.value}
+   735→                            type="button"
+   736→                            onClick={() => setPreset(opt.value)}
+   737→                            aria-pressed={selected}
+   738→                            className={`
+   739→                              group relative flex flex-col overflow-hidden rounded-md border text-left
+   740→                              transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-[#d4af37]/40
+   741→                              ${selected
+   742→                                ? 'border-[#d4af37] bg-[#d4af37]/10 ring-1 ring-[#d4af37]/50'
+   743→                                : 'border-[#533485] bg-[#3b2263]/60 hover:border-[#d4af37]/50 hover:bg-[#3b2263]'}
+   744→                            `}
+   745→                          >
+   746→                            {/* Selected check badge */}
+   747→                            {selected && (
+   748→                              <span className="absolute right-1 top-1 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-[#d4af37] text-[#2a164a] shadow">
+   749→                                <Check className="h-2.5 w-2.5" strokeWidth={3} />
+   750→                              </span>
+   751→                            )}
+   752→
+   753→                            {/* Preview thumbnail — CSS filter matches operator live output */}
+   754→                            <div className="relative aspect-[3/4] w-full overflow-hidden bg-black/30">
+   755→                              <img
+   756→                                src="/samples/preset-base.jpg"
+   757→                                alt={`Contoh foto preset ${opt.label}`}
+   758→                                className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+   759→                                style={{ filter: opt.filter }}
+   760→                                draggable={false}
+   761→                              />
+   762→                            </div>
+   763→
+   764→                            {/* Label + description */}
+   765→                            <div className="flex flex-col gap-0 px-1.5 py-1">
+   766→                              <span
+   767→                                className={`truncate text-[10px] font-semibold leading-tight ${
+   768→                                  selected ? 'text-[#d4af37]' : 'text-white'
+   769→                                }`}
+   770→                              >
+   771→                                {opt.label}
+   772→                              </span>
+   773→                              <span className="truncate text-[8px] leading-tight text-white/50">
+   774→                                {opt.desc}
+   775→                              </span>
+   776→                            </div>
+   777→                          </button>
+   778→                        )
+   779→                      })}
+   780→                    </div>
+   781→                  </div>
+   782→
+   783→                  {/* Frame Overlay */}
+   784→                  <div className="space-y-2">
+   785→                    <Label className="flex items-center gap-2 text-sm font-medium text-[#c4b5fd]">
+   786→                      <Frame className="h-4 w-4" />
+   787→                      Frame Overlay (PNG Transparan)
+   788→                    </Label>
+   789→                    <div
+   790→                      onDrop={handleFrameDrop}
+   791→                      onDragOver={handleDragOver}
+   792→                      onClick={() => frameInputRef.current?.click()}
+   793→                      className={`
+   794→                        relative cursor-pointer rounded-lg border-2 border-dashed p-4
+   795→                        transition-all duration-200 hover:bg-white/5
+   796→                        ${frameData ? 'border-[#d4af37]/50' : 'border-[#533485]'}
+   797→                      `}
+   798→                    >
+   799→                      <input
+   800→                        ref={frameInputRef}
+   801→                        type="file"
+   802→                        accept=".png"
+   803→                        className="hidden"
+   804→                        onChange={(e) => {
+   805→                          const file = e.target.files?.[0]
+   806→                          if (file) parseFrameFile(file)
+   807→                          e.target.value = ''
+   808→                        }}
+   809→                      />
+   810→
+   811→                      <div className="flex flex-col items-center gap-2">
+   812→                        {parsingFrame ? (
+   813→                          <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#533485] border-t-[#d4af37]" />
+   814→                        ) : frameData ? (
+   815→                          <div className="flex flex-col items-center gap-2">
+   816→                            <div className="relative h-24 w-24 overflow-hidden rounded-md border border-[#533485]">
+   817→                                <img
+   818→                                src={frameData}
+   819→                                alt="Frame preview"
+   820→                                className="h-full w-full object-contain"
+   821→                              />
+   822→                            </div>
+   823→                            <p className="text-xs text-[#d4af37]">{frameFileName}</p>
+   824→                            <button
+   825→                              onClick={(e) => {
+   826→                                e.stopPropagation()
+   827→                                setFrameData(null)
+   828→                                setFrameFileName('')
+   829→                              }}
+   830→                              className="rounded-full p-1 text-[#c4b5fd] transition-colors hover:bg-white/10 hover:text-red-400"
+   831→                            >
+   832→                              <X className="h-4 w-4" />
+   833→                            </button>
+   834→                          </div>
+   835→                        ) : (
+   836→                          <>
+   837→                            <ImagePlus className="h-8 w-8 text-[#533485]" />
+   838→                            <p className="text-sm text-[#c4b5fd]">
+   839→                              Upload frame overlay PNG
+   840→                            </p>
+   841→                            <p className="text-xs text-[#533485]">.png (transparan)</p>
+   842→                          </>
+   843→                        )}
+   844→                      </div>
+   845→                    </div>
+   846→                  </div>
+   847→                </CardContent>
+   848→              </Card>
+   849→
+   850→              {/* Target Folder */}
+   851→              <Card className="border-[#533485] bg-[#2a164a] shadow-lg">
+   852→                <CardHeader className="pb-2">
+   853→                  <CardTitle className="flex items-center gap-2 text-base text-white">
+   854→                    <FolderOpen className="h-5 w-5 text-[#d4af37]" />
+   855→                    Folder Tujuan Output
+   856→                  </CardTitle>
+   857→                </CardHeader>
+   858→                <CardContent>
+   859→                  <div className="flex gap-2">
+   860→                    <Input
+   861→                      readOnly
+   862→                      value={targetFolder}
+   863→                      className="border-[#533485] bg-[#3b2263] text-[#c4b5fd] selection:bg-[#d4af37]/30"
+   864→                    />
+   865→                    <Button
+   866→                      variant="outline"
+   867→                      className="shrink-0 border-[#533485] bg-[#3b2263] text-[#c4b5fd] hover:bg-[#533485]/30 hover:text-[#d4af37]"
+   868→                      onClick={async () => {
+   869→                        // Use Electron folder picker if available
+   870→                        const api = window.saatirilAPI
+   871→                        if (api?.selectFolder) {
+   872→                          const selected = await api.selectFolder(targetFolder)
+   873→                          if (selected) {
+   874→                            setTargetFolder(selected)
+   875→                            toast({
+   876→                              title: 'Folder Dipilih',
+   877→                              description: selected,
+   878→                            })
+   879→                          }
+   880→                        } else {
+   881→                          toast({
+   882→                            title: 'Tidak Tersedia',
+   883→                            description:
+   884→                              'Folder browsing hanya berfungsi pada versi .exe desktop.',
+   885→                          })
+   886→                        }
+   887→                      }}
+   888→                    >
+   889→                      Browse
+   890→                    </Button>
+   891→                  </div>
+   892→                  <p className="mt-2 text-xs text-[#533485]">
+   893→                    Subfolder berdasarkan nama proyek akan dibuat otomatis di dalam folder ini.
+   894→                  </p>
+   895→                  {projectName.trim() && targetFolder && (
+   896→                    <p className="mt-1 text-xs text-[#d4af37]/80">
+   897→                      → {targetFolder.replace(/[\\/]+$/, '')}\\{projectName.trim().replace(/[^a-zA-Z0-9_\-\s]/g, '').replace(/\s+/g, '_')}
+   898→                    </p>
+   899→                  )}
+   900→                </CardContent>
+   901→              </Card>
+   902→            </div>
+   903→          </div>
+   904→        </main>
+   905→
+   906→        {/* ── Bottom: Start Button ─────────────────────────────────────────── */}
+   907→        <footer className="border-t border-[#533485]/50 px-5 py-3">
+   908→          <div className="mx-auto flex max-w-6xl items-center justify-between">
+   909→            <div className="text-sm text-[#c4b5fd]">
+   910→              {!isNameValid && (
+   911→                <span>Masukkan nama proyek untuk melanjutkan</span>
+   912→              )}
+   913→              {isNameValid && !isDataReady && (
+   914→                <span>Upload data peserta (Excel) untuk melanjutkan</span>
+   915→              )}
+   916→              {canStart && (
+   917→                <span className={isPhotoshootMode(cameraMode) ? 'text-emerald-400' : 'text-[#d4af37]'}>
+   918→                  Siap memulai —{' '}
+   919→                  {cameraMode === 'dual'
+   920→                    ? (excelData[0]?.students.length ?? 0) +
+   921→                      (excelData[1]?.students.length ?? 0)
+   922→                    : excelData[0]?.students.length}{' '}
+   923→                  peserta akan dimuat
+   924→                </span>
+   925→              )}
+   926→            </div>
+   927→            <Button
+   928→              disabled={!canStart}
+   929→              onClick={handleCreateProject}
+   930→              className={`
+   931→                px-8 py-3 text-base font-bold uppercase tracking-wider
+   932→                transition-all duration-300
+   933→                ${
+   934→                  canStart
+   935→                    ? 'bg-[#d4af37] text-[#1a0b2e] shadow-lg shadow-[#d4af37]/25 hover:bg-[#e5c44a] hover:shadow-[#d4af37]/40'
+   936→                    : 'bg-[#3b2263] text-[#533485] cursor-not-allowed'
+   937→                }
+   938→              `}
+   939→            >
+   940→              MULAI SISTEM SAATIRIL
+   941→            </Button>
+   942→          </div>
+   943→        </footer>
+   944→      </div>
+   945→    </div>
+   946→  )
+   947→}
+   948→
