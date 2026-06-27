@@ -1,0 +1,735 @@
+     1→'use client'
+     2→
+     3→import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+     4→import {
+     5→  ArrowLeft,
+     6→  Camera,
+     7→  LayoutDashboard,
+     8→  Megaphone,
+     9→  Radio,
+    10→  Loader2,
+    11→  Wifi,
+    12→  Copy,
+    13→  Check,
+    14→  Lock,
+    15→} from 'lucide-react'
+    16→import { Button } from '@/components/ui/button'
+    17→import { Badge } from '@/components/ui/badge'
+    18→import { Input } from '@/components/ui/input'
+    19→import {
+    20→  Select,
+    21→  SelectContent,
+    22→  SelectItem,
+    23→  SelectTrigger,
+    24→  SelectValue,
+    25→} from '@/components/ui/select'
+    26→import { useSaatirilStore, type AppTab, type Role, type Project, type CameraMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync, preservePhotoHistoryOnSync, isDualMode, isPhotoshootMode } from '@/store/use-saatiril-store'
+    27→import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth, setSessionPassword, clearSessionPassword, reidentifyWithPassword, isSocketAuthenticated, isServerPasswordRequired } from '@/lib/socket'
+    28→
+    29→import AdminDashboard from '@/components/saatiril/admin-dashboard'
+    30→import { McPanel } from '@/components/saatiril/mc-panel'
+    31→import OperatorPanel from '@/components/saatiril/operator-panel'
+    32→import { SaatirilFooterLines } from '@/components/saatiril/saatiril-footer'
+    33→import { LicenseGate } from '@/components/saatiril/license-gate'
+    34→
+    35→// ─── Theme constants ──────────────────────────────────────────────────────────
+    36→const THEME = {
+    37→  bg: '#1a0b2e',
+    38→  panel: '#2a164a',
+    39→  card: '#3b2263',
+    40→  border: '#533485',
+    41→  gold: '#d4af37',
+    42→  muted: '#c4b5fd',
+    43→  cyan: '#06b6d4',
+    44→  red: '#ef4444',
+    45→} as const
+    46→
+    47→// ─── Tab configuration ────────────────────────────────────────────────────────
+    48→interface TabConfig {
+    49→  id: AppTab
+    50→  label: string
+    51→  icon: React.ReactNode
+    52→}
+    53→
+    54→const TABS: TabConfig[] = [
+    55→  { id: 'admin', label: 'Admin Dashboard', icon: <LayoutDashboard className="size-4" /> },
+    56→  { id: 'mc', label: 'Panel MC', icon: <Megaphone className="size-4" /> },
+    57→  { id: 'operator', label: 'Panel Operator', icon: <Camera className="size-4" /> },
+    58→]
+    59→
+    60→// ─── Mode badge text helper ───────────────────────────────────────────────────
+    61→function getModeBadgeText(role: Role, channel: number, mode: CameraMode): string {
+    62→  switch (role) {
+    63→    case 'admin':
+    64→      return 'Admin Control Center'
+    65→    case 'mc':
+    66→      return isPhotoshootMode(mode) ? `Layar MC` : `Layar MC - Jalur ${channel}`
+    67→    case 'operator':
+    68→      return isPhotoshootMode(mode) ? `Kamera ${channel}` : `Kamera - Jalur ${channel}`
+    69→  }
+    70→}
+    71→
+    72→// ─── Component ────────────────────────────────────────────────────────────────
+    73→export function MainApp() {
+    74→  // ── License gate ─────────────────────────────────────────────────────────
+    75→  const [licenseValid, setLicenseValid] = useState(false)
+    76→
+    77→  // ── Store bindings ─────────────────────────────────────────────────────────
+    78→  const currentProject = useSaatirilStore((s) => s.currentProject)
+    79→  const updateCurrentProject = useSaatirilStore((s) => s.updateCurrentProject)
+    80→  const myRole = useSaatirilStore((s) => s.myRole)
+    81→  const myChannel = useSaatirilStore((s) => s.myChannel)
+    82→  const currentTab = useSaatirilStore((s) => s.currentTab)
+    83→  const setMyRole = useSaatirilStore((s) => s.setMyRole)
+    84→  const setMyChannel = useSaatirilStore((s) => s.setMyChannel)
+    85→  const setCurrentScreen = useSaatirilStore((s) => s.setCurrentScreen)
+    86→  const setCurrentTab = useSaatirilStore((s) => s.setCurrentTab)
+    87→  const loadProjectsFromStorage = useSaatirilStore((s) => s.loadProjectsFromStorage)
+    88→
+    89→  // ── Local state ────────────────────────────────────────────────────────────
+    90→  const [serverConnected, setServerConnected] = useState(false)
+    91→  const [connectionQuality, setConnectionQuality] = useState<'good' | 'degraded' | 'disconnected'>('disconnected')
+    92→  const [lanIP, setLanIP] = useState<string>('')
+    93→  const [copiedIP, setCopiedIP] = useState(false)
+    94→  const [sessionPasswordInput, setSessionPasswordInput] = useState('')
+    95→  const [sessionPasswordVerified, setSessionPasswordVerified] = useState(false)
+    96→  const [sessionPasswordError, setSessionPasswordError] = useState(false)
+    97→  const [serverRequiresPassword, setServerRequiresPassword] = useState(false)
+    98→  const [authFailedReason, setAuthFailedReason] = useState<string | null>(null)
+    99→
+   100→  // ── Refs for stable event handlers ─────────────────────────────────────────
+   101→  const myRoleRef = useRef(myRole)
+   102→  const currentProjectRef = useRef(currentProject)
+   103→  useEffect(() => { myRoleRef.current = myRole }, [myRole])
+   104→  useEffect(() => { currentProjectRef.current = currentProject }, [currentProject])
+   105→
+   106→  // ── Derived values ─────────────────────────────────────────────────────────
+   107→  const isDualModeVal = isDualMode(currentProject?.config.mode ?? 'single')
+   108→  // Non-admin is synced when they have a project (from server or localStorage)
+   109→  const isSynced = myRole === 'admin' || currentProject !== null
+   110→  const effectiveTab: AppTab = useMemo(() => {
+   111→    if (myRole === 'admin') return currentTab
+   112→    if (myRole === 'mc') return 'mc'
+   113→    return 'operator'
+   114→  }, [myRole, currentTab])
+   115→
+   116→  // ── Detect LAN IP via WebRTC ───────────────────────────────────────────────
+   117→  const lanIPFoundRef = useRef(false)
+   118→  useEffect(() => {
+   119→    try {
+   120→      const pc = new RTCPeerConnection({ iceServers: [] })
+   121→      pc.createDataChannel('')
+   122→      pc.createOffer().then((offer) => pc.setLocalDescription(offer))
+   123→      pc.onicecandidate = (e) => {
+   124→        if (!e.candidate) return
+   125→        const parts = e.candidate.candidate.split(' ')
+   126→        const ip = parts[4]
+   127→        if (ip && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip) && !ip.startsWith('0.') && ip !== '0.0.0.0') {
+   128→          lanIPFoundRef.current = true
+   129→          setLanIP(ip)
+   130→          pc.close()
+   131→        }
+   132→      }
+   133→      // Fallback: also try to detect from hostname
+   134→      setTimeout(() => {
+   135→        pc.close()
+   136→        if (!lanIPFoundRef.current && typeof window !== 'undefined') {
+   137→          // Try using the hostname from current URL
+   138→          const hostname = window.location.hostname
+   139→          if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+   140→            setLanIP(hostname)
+   141→          }
+   142→        }
+   143→      }, 3000)
+   144→    } catch {
+   145→      // WebRTC not available, skip
+   146→    }
+   147→  }, [])
+   148→
+   149→  // ── Detect HTTP port for LAN access ───────────────────────────────────────
+   150→  const [httpPort, setHttpPort] = useState(3000)
+   151→
+   152→  useEffect(() => {
+   153→    const api = window.saatirilAPI
+   154→    if (api?.isElectron && api.getLanInfo) {
+   155→      api.getLanInfo().then((info: { httpPort: number }) => {
+   156→        setHttpPort(info.httpPort)
+   157→      }).catch(() => {})
+   158→    }
+   159→  }, [])
+   160→
+   161→  // ── Copy IP to clipboard ───────────────────────────────────────────────────
+   162→  const handleCopyIP = useCallback(() => {
+   163→    if (!lanIP) return
+   164→    navigator.clipboard.writeText(`http://${lanIP}:${httpPort}`)
+   165→    setCopiedIP(true)
+   166→    setTimeout(() => setCopiedIP(false), 2000)
+   167→  }, [lanIP, httpPort])
+   168→
+   169→  // ── URL parameter handling (run once on mount) ────────────────────────────
+   170→  useEffect(() => {
+   171→    const params = new URLSearchParams(window.location.search)
+   172→    const roleParam = params.get('role') as Role | null
+   173→    const channelParam = params.get('channel')
+   174→
+   175→    if (roleParam && ['admin', 'mc', 'operator'].includes(roleParam)) {
+   176→      setMyRole(roleParam)
+   177→    }
+   178→    if (channelParam) {
+   179→      const ch = parseInt(channelParam, 10)
+   180→      if (ch >= 1 && ch <= 2) {
+   181→        setMyChannel(ch)
+   182→      }
+   183→    }
+   184→  }, [setMyRole, setMyChannel])
+   185→
+   186→  // ── Socket initialization ─────────────────────────────────────────────────
+   187→  useEffect(() => {
+   188→    const socket = connectSocket()
+   189→
+   190→    const handleConnect = () => {
+   191→      setServerConnected(true)
+   192→      setConnectionQuality('good')
+   193→
+   194→      // On (re)connection, re-request state sync from admin to ensure we have latest data
+   195→      const role = myRoleRef.current
+   196→      if (role !== 'admin') {
+   197→        emitLocal('REQUEST_STATE', { role, channel: useSaatirilStore.getState().myChannel })
+   198→      } else {
+   199→        // Admin: if project has a session password, set it on the server
+   200→        const curProj = useSaatirilStore.getState().currentProject
+   201→        if (curProj?.config?.sessionPassword && curProj.config.sessionPassword !== '__PASSWORD_SET__') {
+   202→          setSessionPassword(curProj.config.sessionPassword)
+   203→        }
+   204→      }
+   205→
+   206→      console.log('[SAATIRIL] Connected — requesting state sync')
+   207→    }
+   208→    const handleDisconnect = () => {
+   209→      setServerConnected(false)
+   210→      setConnectionQuality('disconnected')
+   211→    }
+   212→
+   213→    // ── Auth event handlers ────────────────────────────────────────────────
+   214→    const handleAuthRequirement = (data: { passwordRequired: boolean }) => {
+   215→      setServerRequiresPassword(data.passwordRequired)
+   216→      if (data.passwordRequired && myRoleRef.current !== 'admin') {
+   217→        // Server requires password — show prompt if not yet verified
+   218→        setSessionPasswordVerified(false)
+   219→      }
+   220→    }
+   221→
+   222→    const handleAuthSuccess = (data: { role: string; channel: number }) => {
+   223→      setSessionPasswordVerified(true)
+   224→      setSessionPasswordError(false)
+   225→      setAuthFailedReason(null)
+   226→      // Now that we're authenticated, request state sync
+   227→      if (data.role !== 'admin') {
+   228→        emitLocal('REQUEST_STATE', { role: data.role, channel: data.channel })
+   229→      }
+   230→    }
+   231→
+   232→    const handleAuthFailed = (data: { reason: string }) => {
+   233→      setSessionPasswordVerified(false)
+   234→      setSessionPasswordError(true)
+   235→      setAuthFailedReason(data.reason)
+   236→    }
+   237→
+   238→    socket.on('connect', handleConnect)
+   239→    socket.on('disconnect', handleDisconnect)
+   240→    socket.on('auth-requirement', handleAuthRequirement)
+   241→    socket.on('auth-success', handleAuthSuccess)
+   242→    socket.on('auth-failed', handleAuthFailed)
+   243→
+   244→    queueMicrotask(() => {
+   245→      if (socket.connected) {
+   246→        setServerConnected(true)
+   247→        setConnectionQuality('good')
+   248→      }
+   249→    })
+   250→
+   251→    return () => {
+   252→      socket.off('connect', handleConnect)
+   253→      socket.off('disconnect', handleDisconnect)
+   254→      socket.off('auth-requirement', handleAuthRequirement)
+   255→      socket.off('auth-success', handleAuthSuccess)
+   256→      socket.off('auth-failed', handleAuthFailed)
+   257→    }
+   258→  }, [])
+   259→
+   260→  // ── Connection quality monitor ────────────────────────────────────────────
+   261→  useEffect(() => {
+   262→    const monitor = setInterval(() => {
+   263→      const health = getConnectionHealth()
+   264→      if (!health.connected) {
+   265→        setConnectionQuality('disconnected')
+   266→      } else if (health.reconnectCount > 2) {
+   267→        setConnectionQuality('degraded')
+   268→      } else {
+   269→        setConnectionQuality('good')
+   270→      }
+   271→    }, 5000)
+   272→    return () => clearInterval(monitor)
+   273→  }, [])
+   274→
+   275→  // ── Socket event listeners (stable — no currentProject in deps) ──────────
+   276→  useEffect(() => {
+   277→    const handleSyncDb = (data: { project: Project }) => {
+   278→      const role = myRoleRef.current
+   279→      // Read latest state synchronously (avoids stale currentProjectRef race
+   280→      // when SYNC_DB echo arrives right after a local state update like reset).
+   281→      const curProj = useSaatirilStore.getState().currentProject
+   282→
+   283→      if (role !== 'admin' && data.project) {
+   284→        // For MC/Operator: merge incoming database with local (prevents data regression)
+   285→        if (curProj && data.project.id === curProj.id) {
+   286→          const mergedDb = mergeDatabases(curProj.database, data.project.database)
+   287→          const mergedConfig = preserveFrameOnSync(data.project.config, curProj.config)
+   288→          const mergedPhotoHistory = preservePhotoHistoryOnSync(
+   289→            data.project.photoHistory ?? [],
+   290→            curProj.photoHistory,
+   291→          )
+   292→          updateCurrentProject({
+   293→            ...curProj,
+   294→            database: mergedDb,
+   295→            photoHistory: mergedPhotoHistory,
+   296→            config: mergedConfig,
+   297→          })
+   298→        } else {
+   299→          updateCurrentProject(data.project)
+   300→        }
+   301→      } else if (role === 'admin' && data.project) {
+   302→        // For admin: merge database with incoming (prevents channel data overwrite in dual mode)
+   303→        if (curProj && data.project.id === curProj.id) {
+   304→          const mergedDb = mergeDatabases(curProj.database, data.project.database)
+   305→          const mergedConfig = preserveFrameOnSync(data.project.config, curProj.config)
+   306→          const mergedPhotoHistory = preservePhotoHistoryOnSync(
+   307→            data.project.photoHistory ?? [],
+   308→            curProj.photoHistory,
+   309→          )
+   310→          updateCurrentProject({
+   311→            ...curProj,
+   312→            database: mergedDb,
+   313→            photoHistory: mergedPhotoHistory,
+   314→            config: mergedConfig,
+   315→          })
+   316→        }
+   317→      }
+   318→    }
+   319→
+   320→    const handleRequestState = () => {
+   321→      const role = myRoleRef.current
+   322→      const curProj = currentProjectRef.current
+   323→      if (role === 'admin' && curProj) {
+   324→        // DO NOT strip frame for REQUEST_STATE responses — new clients need the full frame data.
+   325→        // stripFrameForSync is only for subsequent SYNC_DB updates where clients already have the frame.
+   326→        // See the NOTE in stripFrameForSync() documentation.
+   327→        //
+   328→        // SECURITY: Strip the session password from REQUEST_STATE — the server now handles
+   329→        // password validation, so we never send the actual password over the LAN.
+   330→        // Instead, we send a flag so clients know a password is required.
+   331→        const safeProject = {
+   332→          ...curProj,
+   333→          config: {
+   334→            ...curProj.config,
+   335→            sessionPassword: curProj.config.sessionPassword ? '__PASSWORD_SET__' : undefined,
+   336→          },
+   337→        }
+   338→        emitLocal('SYNC_DB', { project: safeProject })
+   339→      }
+   340→    }
+   341→
+   342→    onLocal('SYNC_DB', handleSyncDb)
+   343→    onLocal('REQUEST_STATE', handleRequestState)
+   344→
+   345→    return () => {
+   346→      offLocal('SYNC_DB', handleSyncDb)
+   347→      offLocal('REQUEST_STATE', handleRequestState)
+   348→    }
+   349→  }, [updateCurrentProject])
+   350→
+   351→  // ── Non-admin: load localStorage + request state from admin ────────────────
+   352→  useEffect(() => {
+   353→    if (myRole === 'admin') return
+   354→
+   355→    // Try to recover project from localStorage first (for reconnection/recovery)
+   356→    loadProjectsFromStorage()
+   357→
+   358→    // Request state from admin via socket
+   359→    emitLocal('REQUEST_STATE', { role: myRole, channel: myChannel })
+   360→
+   361→    // Periodic retry while we don't have a project
+   362→    const requestInterval = setInterval(() => {
+   363→      if (!useSaatirilStore.getState().currentProject) {
+   364→        emitLocal('REQUEST_STATE', { role: myRole, channel: myChannel })
+   365→      }
+   366→    }, 3000)
+   367→
+   368→    return () => clearInterval(requestInterval)
+   369→  }, [myRole, myChannel, loadProjectsFromStorage])
+   370→
+   371→  // ── Handlers ──────────────────────────────────────────────────────────────
+   372→  const handleBack = useCallback(() => {
+   373→    // Save project state before navigating back to hub
+   374→    const store = useSaatirilStore.getState()
+   375→    if (store.currentProject) {
+   376→      store.saveProjectsToStorageNow()
+   377→    }
+   378→    // Reset to admin role and tab when going back to hub
+   379→    store.setMyRole('admin')
+   380→    store.setCurrentTab('admin')
+   381→    store.setMyChannel(1)
+   382→    store.resetOpState()
+   383→    setCurrentScreen('hub')
+   384→  }, [setCurrentScreen])
+   385→
+   386→  const handleTabChange = useCallback(
+   387→    (tab: AppTab) => {
+   388→      if (myRole === 'admin') {
+   389→        setCurrentTab(tab)
+   390→      }
+   391→    },
+   392→    [myRole, setCurrentTab],
+   393→  )
+   394→
+   395→  const handleChannelSelect = useCallback(
+   396→    (channel: string) => {
+   397→      setMyChannel(parseInt(channel, 10))
+   398→    },
+   399→    [setMyChannel],
+   400→  )
+   401→
+   402→  // ── Render: License gate (Electron only) ──────────────────────────────────
+   403→  if (!licenseValid) {
+   404→    return <LicenseGate onLicenseValid={() => setLicenseValid(true)} />
+   405→  }
+   406→
+   407→  // ── Render: Session password prompt (non-admin, when server requires password) ─
+   408→  // Server-side validation: show prompt when server says password is required
+   409→  // OR when we have a __PASSWORD_SET__ marker and haven't authenticated yet
+   410→  const needsPassword = myRole !== 'admin' && !sessionPasswordVerified && (
+   411→    serverRequiresPassword ||
+   412→    (currentProject?.config?.sessionPassword && currentProject.config.sessionPassword !== '__PASSWORD_SET__') ||
+   413→    (currentProject?.config?.sessionPassword === '__PASSWORD_SET__' && !isSocketAuthenticated())
+   414→  )
+   415→  if (needsPassword) {
+   416→    return (
+   417→      <div
+   418→        className="flex h-dvh flex-col items-center justify-center gap-6 px-6"
+   419→        style={{ backgroundColor: THEME.bg }}
+   420→      >
+   421→        <div
+   422→          className="flex size-20 items-center justify-center rounded-full"
+   423→          style={{ backgroundColor: `${THEME.gold}15`, borderWidth: 1, borderColor: `${THEME.gold}33` }}
+   424→        >
+   425→          <Lock className="size-10" style={{ color: THEME.gold }} />
+   426→        </div>
+   427→        <div className="text-center">
+   428→          <h2 className="text-xl font-bold text-white">Password Sesi Diperlukan</h2>
+   429→          <p className="mt-2 text-sm" style={{ color: THEME.muted }}>
+   430→            Admin telah mengatur password untuk sesi ini.
+   431→            Masukkan password untuk bergabung.
+   432→          </p>
+   433→        </div>
+   434→        <div className="w-full max-w-xs space-y-3">
+   435→          <Input
+   436→            type="password"
+   437→            placeholder="Masukkan password sesi..."
+   438→            value={sessionPasswordInput}
+   439→            onChange={(e) => { setSessionPasswordInput(e.target.value); setSessionPasswordError(false) }}
+   440→            onKeyDown={(e) => {
+   441→              if (e.key === 'Enter' && sessionPasswordInput.trim()) {
+   442→                reidentifyWithPassword(sessionPasswordInput.trim())
+   443→              }
+   444→            }}
+   445→            className="h-10 text-center font-mono text-sm"
+   446→            style={{
+   447→              backgroundColor: THEME.bg,
+   448→              borderColor: sessionPasswordError ? THEME.red : THEME.border,
+   449→              color: THEME.gold,
+   450→            }}
+   451→          />
+   452→          {sessionPasswordError && (
+   453→            <p className="text-center text-xs font-medium" style={{ color: THEME.red }}>
+   454→              {authFailedReason === 'session_password_required'
+   455→                ? 'Password salah. Coba lagi.'
+   456→                : 'Gagal mengautentikasi. Coba lagi.'}
+   457→            </p>
+   458→          )}
+   459→          <Button
+   460→            className="w-full h-10 font-semibold"
+   461→            style={{ backgroundColor: THEME.gold, color: THEME.bg }}
+   462→            onClick={() => {
+   463→              if (sessionPasswordInput.trim()) {
+   464→                reidentifyWithPassword(sessionPasswordInput.trim())
+   465→              }
+   466→            }}
+   467→          >
+   468→            Bergabung
+   469→          </Button>
+   470→        </div>
+   471→        <Badge
+   472→          className="gap-1.5 border-[#533485] bg-[#2a164a] px-3 py-1 text-xs"
+   473→          style={{ color: THEME.muted }}
+   474→        >
+   475→          <Radio className="size-3" style={{ color: THEME.gold }} />
+   476→          {myRole === 'mc' ? 'MC' : 'Operator'} — Jalur {myChannel}
+   477→        </Badge>
+   478→      </div>
+   479→    )
+   480→  }
+   481→
+   482→  // ── Render: Sync waiting screen ───────────────────────────────────────────
+   483→  if (!isSynced && myRole !== 'admin') {
+   484→    return (
+   485→      <div
+   486→        className="flex h-full flex-col items-center justify-center gap-6 px-6"
+   487→        style={{ backgroundColor: THEME.bg }}
+   488→      >
+   489→        <div className="flex size-20 items-center justify-center rounded-full border-2 border-[#533485] bg-[#2a164a]">
+   490→          <Loader2 className="size-10 animate-spin" style={{ color: THEME.gold }} />
+   491→        </div>
+   492→        <div className="text-center">
+   493→          <h2 className="text-xl font-bold text-white">Sinkronisasi Data</h2>
+   494→          <p className="mt-2 text-sm" style={{ color: THEME.muted }}>
+   495→            Menunggu data proyek dari Admin...
+   496→          </p>
+   497→          <p className="mt-1 text-xs" style={{ color: `${THEME.muted}88` }}>
+   498→            Pastikan Admin sudah membuka proyek di jaringan LAN yang sama.
+   499→          </p>
+   500→        </div>
+   501→        <Badge
+   502→          className="gap-1.5 border-[#533485] bg-[#2a164a] px-3 py-1 text-xs"
+   503→          style={{ color: THEME.muted }}
+   504→        >
+   505→          <Radio className="size-3" style={{ color: THEME.gold }} />
+   506→          {myRole === 'mc' ? 'MC' : 'Operator'} — Jalur {myChannel}
+   507→        </Badge>
+   508→      </div>
+   509→    )
+   510→  }
+   511→
+   512→  // ── Render: Tab content ───────────────────────────────────────────────────
+   513→  const renderTabContent = () => {
+   514→    switch (effectiveTab) {
+   515→      case 'admin':
+   516→        return <AdminDashboard />
+   517→      case 'mc':
+   518→        return <McPanel readOnly={myRole === 'admin'} />
+   519→      case 'operator':
+   520→        return <OperatorPanel readOnly={myRole === 'admin'} />
+   521→    }
+   522→  }
+   523→
+   524→  // ── Main render ───────────────────────────────────────────────────────────
+   525→  return (
+   526→    <div className="flex h-dvh flex-col" style={{ backgroundColor: THEME.bg }}>
+   527→      {/* ── Header ──────────────────────────────────────────────────────────── */}
+   528→      <header
+   529→        className="shrink-0 border-b backdrop-blur-sm z-20"
+   530→        style={{
+   531→          backgroundColor: `${THEME.panel}ee`,
+   532→          borderColor: THEME.border,
+   533→        }}
+   534→      >
+   535→        <div className="flex flex-col gap-0">
+   536→          {/* Top row: back, project name, badge, server status */}
+   537→          <div className="flex items-center gap-2 px-2 py-2 sm:gap-3 sm:px-4 md:gap-4 md:px-6">
+   538→            {/* Back button — only for Admin (MC/Operator should never navigate back to hub) */}
+   539→            {myRole === 'admin' && (
+   540→              <Button
+   541→                variant="ghost"
+   542→                size="icon"
+   543→                onClick={handleBack}
+   544→                className="shrink-0 text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37]"
+   545→                aria-label="Kembali ke hub"
+   546→              >
+   547→                <ArrowLeft className="size-5" />
+   548→              </Button>
+   549→            )}
+   550→
+   551→            {/* Project name */}
+   552→            <div className="min-w-0 flex-1">
+   553→              <h1 className="truncate text-sm font-bold text-white sm:text-base">
+   554→                {currentProject?.name ?? 'Saatiril'}
+   555→              </h1>
+   556→            </div>
+   557→
+   558→            {/* Mode badge — shorter on mobile */}
+   559→            <Badge
+   560→              className="shrink-0 gap-1 border-none px-2 py-1 text-[9px] font-semibold uppercase tracking-wider sm:text-[10px] md:text-xs md:gap-1.5 md:px-2.5"
+   561→              style={{
+   562→                backgroundColor: myRole === 'admin' ? `${THEME.gold}22` : myRole === 'mc' ? `${THEME.gold}22` : `${THEME.cyan}22`,
+   563→                color: myRole === 'operator' ? THEME.cyan : THEME.gold,
+   564→              }}
+   565→            >
+   566→              {myRole === 'admin' && <LayoutDashboard className="size-3" />}
+   567→              {myRole === 'mc' && <Megaphone className="size-3" />}
+   568→              {myRole === 'operator' && <Camera className="size-3" />}
+   569→              <span className="hidden md:inline">{getModeBadgeText(myRole, myChannel, currentProject?.config.mode ?? 'single')}</span>
+   570→              <span className="md:hidden">{myRole === 'admin' ? 'Admin' : myRole === 'mc' ? `MC-${myChannel}` : `Op-${myChannel}`}</span>
+   571→            </Badge>
+   572→
+   573→            {/* Channel indicator (MC/Operator only) — hidden on mobile since badge shows it */}
+   574→            {myRole !== 'admin' && (
+   575→              <Badge
+   576→                className="hidden sm:flex shrink-0 gap-1 border-none px-2 py-0.5 text-[10px] font-bold md:text-xs"
+   577→                style={{
+   578→                  backgroundColor: myChannel === 1 ? `${THEME.gold}22` : `${THEME.cyan}22`,
+   579→                  color: myChannel === 1 ? THEME.gold : THEME.cyan,
+   580→                }}
+   581→              >
+   582→                <Radio className="size-3" />
+   583→                Jalur {myChannel}
+   584→              </Badge>
+   585→            )}
+   586→
+   587→            {/* LAN IP indicator — hidden on mobile to save space */}
+   588→            {lanIP && (
+   589→              <button
+   590→                onClick={handleCopyIP}
+   591→                className="hidden sm:flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-white/10 cursor-pointer"
+   592→                title="Klik untuk salin alamat LAN"
+   593→              >
+   594→                <Wifi className="size-3" style={{ color: THEME.gold }} />
+   595→                <span className="text-[10px] font-mono font-medium" style={{ color: THEME.gold }}>
+   596→                  {lanIP}:{httpPort}
+   597→                </span>
+   598→                {copiedIP ? (
+   599→                  <Check className="size-3" style={{ color: '#22c55e' }} />
+   600→                ) : (
+   601→                  <Copy className="size-3" style={{ color: THEME.muted }} />
+   602→                )}
+   603→              </button>
+   604→            )}
+   605→
+   606→            {/* Server status with connection quality */}
+   607→            <div className="flex shrink-0 items-center gap-1.5" title={connectionQuality === 'good' ? 'Koneksi LAN stabil' : connectionQuality === 'degraded' ? 'Koneksi tidak stabil' : 'Tidak terhubung'}>
+   608→              <span
+   609→                className="size-2 rounded-full"
+   610→                style={{
+   611→                  backgroundColor: connectionQuality === 'good' ? '#22c55e' : connectionQuality === 'degraded' ? '#f59e0b' : '#ef4444',
+   612→                  boxShadow: connectionQuality === 'good'
+   613→                    ? '0 0 6px #22c55e88'
+   614→                    : connectionQuality === 'degraded'
+   615→                      ? '0 0 6px #f59e0b88'
+   616→                      : '0 0 6px #ef444488',
+   617→                  animation: connectionQuality === 'degraded' ? 'pulse 2s infinite' : 'none',
+   618→                }}
+   619→              />
+   620→              <span className="hidden text-[10px] font-medium sm:inline" style={{ color: connectionQuality === 'good' ? '#22c55e' : connectionQuality === 'degraded' ? '#f59e0b' : THEME.muted }}>
+   621→                {connectionQuality === 'good' ? 'LAN' : connectionQuality === 'degraded' ? 'LAN ⚠' : 'OFFLINE'}
+   622→              </span>
+   623→            </div>
+   624→          </div>
+   625→
+   626→          {/* Tab navigation (admin only) — compact on mobile */}
+   627→          {myRole === 'admin' && (
+   628→            <div className="flex items-center gap-1 border-t px-2 py-1 sm:px-4 md:px-6" style={{ borderColor: `${THEME.border}66` }}>
+   629→              {TABS.map((tab) => {
+   630→                const isActive = effectiveTab === tab.id
+   631→                return (
+   632→                  <button
+   633→                    key={tab.id}
+   634→                    onClick={() => handleTabChange(tab.id)}
+   635→                    className={`
+   636→                      flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold
+   637→                      transition-all duration-200 sm:text-sm
+   638→                      ${
+   639→                        isActive
+   640→                          ? 'text-[#1a0b2e] shadow-md'
+   641→                          : 'text-[#c4b5fd] hover:bg-white/5 hover:text-white'
+   642→                      }
+   643→                    `}
+   644→                    style={
+   645→                      isActive
+   646→                        ? { backgroundColor: THEME.gold }
+   647→                        : undefined
+   648→                    }
+   649→                    aria-selected={isActive}
+   650→                    role="tab"
+   651→                  >
+   652→                    {tab.icon}
+   653→                    <span className="hidden sm:inline">{tab.label}</span>
+   654→                  </button>
+   655→                )
+   656→              })}
+   657→
+   658→              {/* Channel selector (admin, dual mode, on MC or Operator tab) */}
+   659→              {isDualModeVal && (effectiveTab === 'mc' || effectiveTab === 'operator') && (
+   660→                <div className="ml-auto flex items-center gap-2">
+   661→                  <span className="text-[10px] font-medium uppercase tracking-wider" style={{ color: THEME.muted }}>
+   662→                    Jalur Simulasi
+   663→                  </span>
+   664→                  <Select value={String(myChannel)} onValueChange={handleChannelSelect}>
+   665→                    <SelectTrigger
+   666→                      size="sm"
+   667→                      className="h-7 gap-1 border px-2 text-xs"
+   668→                      style={{
+   669→                        backgroundColor: THEME.card,
+   670→                        borderColor: THEME.border,
+   671→                        color: THEME.muted,
+   672→                      }}
+   673→                    >
+   674→                      <SelectValue />
+   675→                    </SelectTrigger>
+   676→                    <SelectContent
+   677→                      className="border"
+   678→                      style={{
+   679→                        backgroundColor: THEME.panel,
+   680→                        borderColor: THEME.border,
+   681→                      }}
+   682→                    >
+   683→                      <SelectItem
+   684→                        value="1"
+   685→                        className="text-xs"
+   686→                        style={{ color: THEME.gold }}
+   687→                      >
+   688→                        Jalur 1 — Kiri
+   689→                      </SelectItem>
+   690→                      <SelectItem
+   691→                        value="2"
+   692→                        className="text-xs"
+   693→                        style={{ color: THEME.cyan }}
+   694→                      >
+   695→                        Jalur 2 — Kanan
+   696→                      </SelectItem>
+   697→                    </SelectContent>
+   698→                  </Select>
+   699→                </div>
+   700→              )}
+   701→            </div>
+   702→          )}
+   703→        </div>
+   704→      </header>
+   705→
+   706→      {/* ── Main Content Area ───────────────────────────────────────────────── */}
+   707→      <main className="flex-1 min-h-0 overflow-hidden">
+   708→        <div
+   709→          key={effectiveTab}
+   710→          className="h-full animate-in fade-in slide-in-from-y-2 duration-300"
+   711→        >
+   712→          {renderTabContent()}
+   713→        </div>
+   714→      </main>
+   715→
+   716→      {/* ── Footer (sticky to bottom) — hidden on mobile Operator/MC to save space */}
+   717→      {!(myRole !== 'admin') && (
+   718→      <footer
+   719→        className="shrink-0 border-t"
+   720→        style={{
+   721→          backgroundColor: `${THEME.panel}88`,
+   722→          borderColor: `${THEME.border}44`,
+   723→        }}
+   724→      >
+   725→        <div className="space-y-0.5 px-4 py-1.5 sm:px-6 sm:py-2">
+   726→          <SaatirilFooterLines />
+   727→        </div>
+   728→      </footer>
+   729→      )}
+   730→    </div>
+   731→  )
+   732→}
+   733→
+   734→export default MainApp
+   735→
