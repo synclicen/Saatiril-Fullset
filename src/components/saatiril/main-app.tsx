@@ -202,32 +202,35 @@ export function MainApp() {
         setSessionPasswordVerified(false)
       }
 
-      // On (re)connection, re-request state sync from admin to ensure we have latest data
+      // On (re)connection: admin sends password; non-admin waits for auth-success
       const role = myRoleRef.current
-      if (role !== 'admin') {
-        emitLocal('REQUEST_STATE', { role, channel: useSaatirilStore.getState().myChannel })
-      } else {
+      if (role === 'admin') {
         // Admin: if project has a session password, set it on the server
         const curProj = useSaatirilStore.getState().currentProject
         if (curProj?.config?.sessionPassword && curProj.config.sessionPassword !== '__PASSWORD_SET__') {
           setSessionPassword(curProj.config.sessionPassword)
         }
       }
+      // NOTE: Non-admin does NOT send REQUEST_STATE here — they're not
+      // authenticated yet. The server will ignore it. REQUEST_STATE is sent
+      // in handleAuthSuccess after authentication succeeds.
 
-      console.log('[SAATIRIL] Connected — requesting state sync')
+      console.log(`[SAATIRIL] Socket connected — role: ${role}, waiting for auth`)
     }
     const handleDisconnect = () => {
       setServerConnected(false)
       setConnectionQuality('disconnected')
       // CRITICAL: On disconnect, mark auth as unverified for non-admin
-      // so the join screen reappears on reconnect
+      // so the join screen reappears on reconnect (if password required)
       if (myRoleRef.current !== 'admin') {
         setSessionPasswordVerified(false)
       }
+      console.log('[SAATIRIL] Socket disconnected')
     }
 
     // ── Auth event handlers ────────────────────────────────────────────────
     const handleAuthRequirement = (data: { passwordRequired: boolean }) => {
+      console.log(`[SAATIRIL] Auth requirement: passwordRequired=${data.passwordRequired}`)
       setServerRequiresPassword(data.passwordRequired)
       if (data.passwordRequired && myRoleRef.current !== 'admin') {
         // Server requires password — show prompt if not yet verified
@@ -252,16 +255,19 @@ export function MainApp() {
     }
 
     const handleAuthSuccess = (data: { role: string; channel: number }) => {
+      console.log(`[SAATIRIL] Auth SUCCESS: role=${data.role}, channel=${data.channel}`)
       setSessionPasswordVerified(true)
       setSessionPasswordError(false)
       setAuthFailedReason(null)
-      // Now that we're authenticated, request state sync
+      // Now that we're authenticated, request state sync from admin
       if (data.role !== 'admin') {
         emitLocal('REQUEST_STATE', { role: data.role, channel: data.channel })
+        console.log('[SAATIRIL] Authenticated — requesting state sync from admin')
       }
     }
 
     const handleAuthFailed = (data: { reason: string }) => {
+      console.warn(`[SAATIRIL] Auth FAILED: reason=${data.reason}`)
       setSessionPasswordVerified(false)
       setSessionPasswordError(true)
       setAuthFailedReason(data.reason)
