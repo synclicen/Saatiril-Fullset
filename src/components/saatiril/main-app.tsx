@@ -235,10 +235,19 @@ export function MainApp() {
       } else if (!data.passwordRequired && myRoleRef.current !== 'admin') {
         // Server does NOT require password — this can happen when:
         // 1. No password was set (admin chose no password)
-        // 2. Password was cleared
-        // In this case, the initial identify (without password) should succeed,
-        // and we'll get auth-success. But we need to wait for it.
-        // Don't set verified=true here — wait for auth-success.
+        // 2. Password was cleared by admin
+        //
+        // CRITICAL: Re-identify immediately so the server can send auth-success.
+        // Without this, a client that was previously `pending_auth` (wrong password)
+        // would remain stuck even after the admin clears the password.
+        const sock = getSocket()
+        if (sock?.connected) {
+          const params = new URLSearchParams(window.location.search)
+          const role = params.get('role') || 'unknown'
+          const channel = parseInt(params.get('channel') || '1', 10)
+          sock.emit('identify', { role, channel })
+          console.log('[SAATIRIL] Password cleared — re-identifying to get auth-success')
+        }
       }
     }
 
@@ -520,23 +529,23 @@ export function MainApp() {
     [setMyChannel],
   )
 
-  // ── Render: Unified Join Session screen for MC/Operator ──────────────────
-  // This screen handles three states for non-admin clients:
-  // 1. Connecting to server (socket not connected yet)
-  // 2. Password required (server requires authentication)
-  // 3. Connection error (socket failed to connect)
+  // ── Render: Password Join screen for MC/Operator ──────────────────────────
+  // This screen is ONLY shown when the server requires a session password
+  // or when authentication has failed. It does NOT block MC/Operator from
+  // accessing the app when no password is set — they proceed directly to
+  // the main app (same behavior as before the password feature was added).
   //
-  // CRITICAL FIX: Previously, the join screen only showed when
-  // `serverRequiresPassword` was true OR `sessionPasswordError` was true.
-  // But there was a race condition: between the `connect` event and the
-  // `auth-requirement` event, both flags were false, causing the join
-  // screen to disappear and the sync screen to show instead.
+  // Flow when NO password is set:
+  //   Socket connects → identify (no hash) → server sends auth-success → done
+  //   The join screen never appears. MC/Operator go straight to the main app.
   //
-  // Now, the join screen shows for ALL non-admin clients that haven't
-  // received auth-success yet. The only way to pass the join screen is
-  // to receive auth-success from the server (with or without a password).
-  // This ensures the password prompt ALWAYS appears when needed.
-  const showJoinScreen = myRole !== 'admin' && !sessionPasswordVerified
+  // Flow when password IS set:
+  //   Socket connects → identify (no hash) → server sends auth-failed →
+  //   Join screen appears → user enters password → reidentify → auth-success → done
+  //
+  // This ensures the password feature is truly OPTIONAL and doesn't break
+  // the ceremony flow when no password is configured.
+  const showJoinScreen = myRole !== 'admin' && !sessionPasswordVerified && (serverRequiresPassword || sessionPasswordError)
 
   if (showJoinScreen) {
     const isConnecting = !serverConnected && !sessionPasswordError && !connectionFailed
