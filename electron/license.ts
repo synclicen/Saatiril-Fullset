@@ -384,3 +384,85 @@ export function activateLicense(activationCode: string): { success: boolean; err
   console.log(`[SAATIRIL LICENSE] Activated: ${verification.licenseType} (expires: ${verification.expiresAt})`)
   return { success: true, licenseType: verification.licenseType }
 }
+
+// ─── Generate License Code (for admin/developer use) ───────────────────────
+/**
+ * Generates a monthly activation code for a given Machine ID.
+ * This is used by the /admin page to let developers generate codes
+ * without needing the CLI tool.
+ *
+ * Requires adminKey for security — only developers with the source code
+ * can compute the correct admin key.
+ */
+export function generateLicenseCode(
+  machineId: string,
+  adminKey: string
+): {
+  success: boolean
+  error?: string
+  data?: {
+    machineId: string
+    displayMachineId: string
+    licenseType: LicenseType
+    activationCode: string
+    expiresAt: string
+    expiresAtFormatted: string
+    daysRemaining: number
+    verified: boolean
+  }
+} {
+  // ── Validate admin key ──────────────────────────────────────────────────
+  const expectedAdminKey = crypto
+    .createHash('sha256')
+    .update(`${LICENSE_SECRET}:admin-api-key`)
+    .digest('hex')
+    .substring(0, 16)
+    .toUpperCase()
+
+  if (adminKey !== expectedAdminKey) {
+    return { success: false, error: 'Admin key tidak valid. Akses ditolak.' }
+  }
+
+  // ── Validate Machine ID ─────────────────────────────────────────────────
+  if (!machineId || !/^[a-f0-9]{64}$/i.test(machineId)) {
+    return {
+      success: false,
+      error: `Machine ID tidak valid. Harus 64 karakter hex (SHA-256). Diterima: ${machineId?.length || 0} karakter.`,
+    }
+  }
+
+  // ── Generate monthly license (30 days from now) ─────────────────────────
+  const d = new Date()
+  d.setDate(d.getDate() + 30)
+  d.setHours(23, 59, 59, 0) // ms=0 for consistent hashing
+  const expiresAt = d.toISOString()
+
+  const activationCode = generateExpectedCode(machineId, 'monthly', expiresAt)
+  const displayMachineId = getDisplayMachineId(machineId)
+
+  // ── Verify the code using the same algorithm as the Electron app ────────
+  const verification = verifyActivationCode(machineId, activationCode)
+  const isVerified = verification !== null
+
+  // ── Calculate days remaining ────────────────────────────────────────────
+  const now = new Date()
+  const daysRemaining = Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+
+  return {
+    success: true,
+    data: {
+      machineId,
+      displayMachineId,
+      licenseType: 'monthly',
+      activationCode,
+      expiresAt,
+      expiresAtFormatted: d.toLocaleDateString('id-ID', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      }),
+      daysRemaining,
+      verified: isVerified,
+    },
+  }
+}

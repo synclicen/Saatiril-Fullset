@@ -24,6 +24,21 @@ interface MachineIdResult {
   displayMachineId: string
 }
 
+interface GenerateLicenseCodeResult {
+  success: boolean
+  error?: string
+  data?: {
+    machineId: string
+    displayMachineId: string
+    licenseType: string
+    activationCode: string
+    expiresAt: string
+    expiresAtFormatted: string
+    daysRemaining: number
+    verified: boolean
+  }
+}
+
 interface SaatirilAPI {
   isElectron: boolean
   selectFolder: (defaultPath: string) => Promise<string | null>
@@ -38,6 +53,7 @@ interface SaatirilAPI {
   getLicenseStatus: () => Promise<LicenseStatusResult>
   activateLicense: (activationCode: string) => Promise<LicenseActivationResult>
   getMachineId: () => Promise<MachineIdResult>
+  generateLicenseCode: (machineId: string, adminKey: string) => Promise<GenerateLicenseCodeResult>
 }
 
 declare global {

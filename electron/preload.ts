@@ -60,4 +60,22 @@ contextBridge.exposeInMainWorld('saatirilAPI', {
   }> => {
     return ipcRenderer.invoke('get-machine-id')
   },
+
+  // ── Generate License Code (admin/developer) ────────────────────────────
+  generateLicenseCode: (machineId: string, adminKey: string): Promise<{
+    success: boolean
+    error?: string
+    data?: {
+      machineId: string
+      displayMachineId: string
+      licenseType: string
+      activationCode: string
+      expiresAt: string
+      expiresAtFormatted: string
+      daysRemaining: number
+      verified: boolean
+    }
+  }> => {
+    return ipcRenderer.invoke('generate-license-code', machineId, adminKey)
+  },
 })

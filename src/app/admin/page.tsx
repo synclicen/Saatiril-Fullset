@@ -60,25 +60,39 @@ export default function AdminLicensePage() {
     setResult(null)
 
     try {
-      const response = await fetch('/api/generate-license/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          machineId: machineId.trim(),
-          adminKey: adminKey.trim(),
-        }),
-      })
+      // ── Use Electron IPC if available (works in packaged app) ───────────
+      const api = window.saatirilAPI
+      if (api?.isElectron && api.generateLicenseCode) {
+        const data = await api.generateLicenseCode(machineId.trim(), adminKey.trim())
 
-      const data = await response.json()
+        if (!data.success) {
+          setError(data.error || 'Gagal membuat kode aktivasi.')
+          return
+        }
 
-      if (!data.success) {
-        setError(data.error || 'Gagal membuat kode aktivasi.')
-        return
+        setResult(data.data!)
+      } else {
+        // ── Fallback: use API route (dev server mode) ───────────────────
+        const response = await fetch('/api/generate-license/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            machineId: machineId.trim(),
+            adminKey: adminKey.trim(),
+          }),
+        })
+
+        const data = await response.json()
+
+        if (!data.success) {
+          setError(data.error || 'Gagal membuat kode aktivasi.')
+          return
+        }
+
+        setResult(data.data)
       }
-
-      setResult(data.data)
     } catch (err: any) {
-      setError('Terjadi kesalahan jaringan. Coba lagi.')
+      setError('Terjadi kesalahan. Pastikan Machine ID dan Admin Key benar.')
     } finally {
       setLoading(false)
     }

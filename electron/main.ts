@@ -24,7 +24,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import { createServer } from 'http'
 import { Server as SocketIOServer } from 'socket.io'
-import { checkLicenseStatus, activateLicense, getMachineId, getDisplayMachineId } from './license'
+import { checkLicenseStatus, activateLicense, getMachineId, getDisplayMachineId, generateLicenseCode } from './license'
 
 // ─── Configuration ─────────────────────────────────────────────────────────
 const DEFAULT_HTTP_PORT = 3000
@@ -425,6 +425,11 @@ function registerIpcHandlers() {
       machineId,
       displayMachineId: getDisplayMachineId(machineId),
     }
+  })
+
+  // Generate license code (for admin/developer use)
+  ipcMain.handle('generate-license-code', async (_event, machineId: string, adminKey: string) => {
+    return generateLicenseCode(machineId, adminKey)
   })
 }
 
