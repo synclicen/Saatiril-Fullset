@@ -30,7 +30,6 @@ import AdminDashboard from '@/components/saatiril/admin-dashboard'
 import { McPanel } from '@/components/saatiril/mc-panel'
 import OperatorPanel from '@/components/saatiril/operator-panel'
 import { SaatirilFooterLines } from '@/components/saatiril/saatiril-footer'
-import { LicenseGate } from '@/components/saatiril/license-gate'
 
 // ─── Theme constants ──────────────────────────────────────────────────────────
 const THEME = {
@@ -71,9 +70,6 @@ function getModeBadgeText(role: Role, channel: number, mode: CameraMode): string
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export function MainApp() {
-  // ── License gate ─────────────────────────────────────────────────────────
-  const [licenseValid, setLicenseValid] = useState(false)
-
   // ── Store bindings ─────────────────────────────────────────────────────────
   const currentProject = useSaatirilStore((s) => s.currentProject)
   const updateCurrentProject = useSaatirilStore((s) => s.updateCurrentProject)
@@ -272,6 +268,37 @@ export function MainApp() {
     return () => clearInterval(monitor)
   }, [])
 
+  // ── Ensure session password is sent to server when admin has a project ────
+  // This is critical: project-setup.tsx calls setSessionPassword() but the socket
+  // may not be connected yet. This useEffect ensures the password is always sent
+  // whenever the admin has a project with a session password AND the socket connects.
+  useEffect(() => {
+    if (myRole !== 'admin') return
+    if (!currentProject?.config?.sessionPassword) return
+    if (currentProject.config.sessionPassword === '__PASSWORD_SET__') return
+
+    // Send password to server whenever socket is connected and we have a password
+    const checkAndSend = () => {
+      const socket = getSocket()
+      if (socket?.connected && currentProject.config.sessionPassword) {
+        setSessionPassword(currentProject.config.sessionPassword)
+        console.log('[SAATIRIL] Session password sent to server (ensure hook)')
+      }
+    }
+
+    // Check immediately
+    checkAndSend()
+
+    // Also check on connect events
+    const unsubscribe = onLocal('__SOCKET_CONNECTED__', () => {
+      setTimeout(checkAndSend, 500) // Small delay to ensure identify is sent first
+    })
+
+    return () => {
+      unsubscribe()
+    }
+  }, [myRole, currentProject?.config?.sessionPassword])
+
   // ── Socket event listeners (stable — no currentProject in deps) ──────────
   useEffect(() => {
     const handleSyncDb = (data: { project: Project }) => {
@@ -398,11 +425,6 @@ export function MainApp() {
     },
     [setMyChannel],
   )
-
-  // ── Render: License gate (Electron only) ──────────────────────────────────
-  if (!licenseValid) {
-    return <LicenseGate onLicenseValid={() => setLicenseValid(true)} />
-  }
 
   // ── Render: Session password prompt (non-admin, when server requires password) ─
   // Server-side validation: show prompt when server says password is required

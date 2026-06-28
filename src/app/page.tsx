@@ -131,10 +131,20 @@ class ScreenErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySta
 export default function Home() {
   const currentScreen = useSaatirilStore((s) => s.currentScreen)
   const loadProjectsFromStorage = useSaatirilStore((s) => s.loadProjectsFromStorage)
-  const [licenseValid, setLicenseValid] = useState(false)
+
+  // ── Check if LAN client (MC/Operator) — they bypass license check ──────────
+  const [isLanClient] = useState(() => {
+    if (typeof window === 'undefined') return false
+    const params = new URLSearchParams(window.location.search)
+    const roleParam = params.get('role')
+    return roleParam === 'mc' || roleParam === 'operator'
+  })
+
+  // License is valid if: LAN client (no license needed) OR license gate passes
+  const [licenseValid, setLicenseValid] = useState(isLanClient)
 
   // ── URL parameter routing for LAN clients (MC/Operator) ─────────────────
-  // Detect role from URL and bypass hub/setup screens for non-admin clients.
+  // Detect role from URL and bypass hub/setup/license screens for non-admin clients.
   // useLayoutEffect ensures this runs before browser paint, preventing flash
   // of the hub screen that the user should never see.
   useLayoutEffect(() => {
