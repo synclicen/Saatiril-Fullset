@@ -292,7 +292,7 @@ export function LicenseGate({ onLicenseValid }: Props) {
               onClick={handleCopyId}
               className="flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-medium transition-colors hover:bg-white/10"
               style={{ color: THEME.gold }}
-              title="Salin Machine ID lengkap"
+              title="Salin Machine ID lengkap ke clipboard"
             >
               {copiedId ? (
                 <>
@@ -302,13 +302,14 @@ export function LicenseGate({ onLicenseValid }: Props) {
               ) : (
                 <>
                   <Copy className="size-3" />
-                  Salin
+                  Salin ID Lengkap
                 </>
               )}
             </button>
           </div>
+          {/* Short display ID */}
           <div
-            className="rounded px-3 py-2 font-mono text-sm font-bold tracking-wider"
+            className="rounded px-3 py-2 font-mono text-lg font-bold tracking-widest text-center"
             style={{
               backgroundColor: `${THEME.bg}`,
               color: THEME.gold,
@@ -318,9 +319,31 @@ export function LicenseGate({ onLicenseValid }: Props) {
           >
             {status?.displayMachineId || '-----'}
           </div>
+          {/* Full Machine ID (collapsible) */}
+          {status?.machineId && (
+            <details className="mt-2">
+              <summary
+                className="cursor-pointer text-[10px] font-medium"
+                style={{ color: THEME.cyan }}
+              >
+                Tampilkan ID Lengkap (64 karakter)
+              </summary>
+              <div
+                className="mt-1 rounded px-2 py-1.5 font-mono text-[9px] leading-relaxed break-all select-all"
+                style={{
+                  backgroundColor: `${THEME.bg}`,
+                  color: `${THEME.muted}cc`,
+                  borderWidth: 1,
+                  borderColor: `${THEME.border}44`,
+                }}
+              >
+                {status.machineId}
+              </div>
+            </details>
+          )}
           <p className="mt-2 text-[10px] leading-relaxed" style={{ color: `${THEME.muted}99` }}>
-            Kirim ID ini ke pengembang SAATIRIL untuk mendapatkan kode aktivasi (berlaku 1 bulan).
-            Klik &ldquo;Salin&rdquo; untuk menyalin ID lengkap ke clipboard.
+            Klik &ldquo;Salin ID Lengkap&rdquo; untuk menyalin seluruh 64 karakter ID ke clipboard,
+            lalu kirimkan ke pengembang SAATIRIL untuk mendapatkan kode aktivasi (berlaku 1 bulan).
           </p>
         </div>
 
@@ -388,6 +411,13 @@ export function LicenseGate({ onLicenseValid }: Props) {
             Hubungi pengembang SAATIRIL untuk mendapatkan kode aktivasi.
             <br />
             Setiap kode berlaku 1 bulan dan hanya untuk satu perangkat.
+          </p>
+          <p className="mt-2 text-[10px]" style={{ color: `${THEME.muted}55` }}>
+            Pengembang? Buka{' '}
+            <a href="/admin" style={{ color: THEME.cyan }} className="underline">
+              halaman generator
+            </a>{' '}
+            untuk membuat kode aktivasi.
           </p>
         </div>
       </div>

@@ -75,3 +75,4 @@ server.log
 # Worklog
 worklog.mdtool-results/
 tool-results/
+upload/
