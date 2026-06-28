@@ -127,7 +127,7 @@ export function generateExpectedCode(
 export function verifyActivationCode(
   machineId: string,
   activationCode: string
-): { licenseType: LicenseType; expiresAt: string | null } | null {
+): { licenseType: LicenseType; expiresAt: string } | null {
   // Normalize the code (remove dashes, whitespace, uppercase)
   const normalized = activationCode.replace(/[-\s]/g, '').toUpperCase()
   if (normalized.length !== 16) return null
