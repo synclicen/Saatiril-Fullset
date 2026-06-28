@@ -22,3 +22,23 @@ Stage Summary:
   3. Client: race condition causing MC/Operator to skip join screen (fixed showJoinScreen logic)
 - Additional improvements: pendingSessionPassword, __SOCKET_CONNECTED__ event, interval-based password delivery
 - Commit: b1b1a9e "fix: MC/Operator session password prompt not appearing — 3 critical bugs fixed"
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix MC/Operator blocked by join screen when no session password set
+
+Work Log:
+- Deep investigation of the MC/Operator LAN join flow
+- Traced the complete flow: URL access → role detection → LicenseGate bypass → socket connection → session password auth
+- Found the root cause: `showJoinScreen = myRole !== 'admin' && !sessionPasswordVerified` blocked ALL non-admin clients, even when no password was set
+- Before the password feature, MC/Operator could access the app immediately; the password feature made auth-success a prerequisite
+- Fixed by changing showJoinScreen condition to only show when password IS required: `myRole !== 'admin' && !sessionPasswordVerified && (serverRequiresPassword || sessionPasswordError)`
+- Added re-identify logic when admin clears password (so pending_auth clients can get auth-success immediately)
+- Tested: MC page now shows "Sinkronisasi Data" instead of blocking join screen
+- Lint passes, dev server compiles without errors
+- Committed and pushed
+
+Stage Summary:
+- Key fix: `showJoinScreen` condition changed from blocking ALL non-admin to only blocking when password required
+- Password feature is now truly OPTIONAL — ceremonies work without password just like before
+- Commit: b288ab9 "fix: MC/Operator blocked by join screen when no session password set"
