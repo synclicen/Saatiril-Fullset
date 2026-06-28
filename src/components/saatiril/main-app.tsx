@@ -388,16 +388,26 @@ export function MainApp() {
   // This is critical: project-setup.tsx calls setSessionPassword() but the socket
   // may not be connected yet. This useEffect ensures the password is always sent
   // whenever the admin has a project with a session password AND the socket connects.
+  //
+  // The sessionPassword in currentProject.config may be:
+  // 1. The actual password string (restored from separate localStorage by setCurrentProject)
+  // 2. '__PASSWORD_SET__' marker (if restoration from separate storage failed)
+  // 3. undefined (no password set)
+  //
+  // Only case 1 is actionable — we can send the actual password to the server.
+  // The '__PASSWORD_SET__' marker means the password was set but is not available
+  // (shouldn't happen if separate storage works correctly).
   useEffect(() => {
     if (myRole !== 'admin') return
-    if (!currentProject?.config?.sessionPassword) return
-    if (currentProject.config.sessionPassword === '__PASSWORD_SET__') return
+    const sp = currentProject?.config?.sessionPassword
+    if (!sp || sp === '__PASSWORD_SET__') return
 
     // Send password to server whenever socket is connected and we have a password
     const checkAndSend = () => {
       const socket = getSocket()
-      if (socket?.connected && currentProject.config.sessionPassword) {
-        setSessionPassword(currentProject.config.sessionPassword)
+      const currentSP = useSaatirilStore.getState().currentProject?.config?.sessionPassword
+      if (socket?.connected && currentSP && currentSP !== '__PASSWORD_SET__') {
+        setSessionPassword(currentSP)
         console.log('[SAATIRIL] Session password sent to server (ensure hook)')
       }
     }

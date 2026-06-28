@@ -33,7 +33,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 
-import { useSaatirilStore, type CameraMode, type Student, stripFrameForSync, isPhotoshootMode, isDualMode } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type CameraMode, type Student, isPhotoshootMode, isDualMode } from '@/store/use-saatiril-store'
 import { emitLocal, setSessionPassword } from '@/lib/socket'
 import { useToast } from '@/hooks/use-toast'
 
@@ -366,8 +366,20 @@ export default function ProjectSetup() {
       })
     }
 
-    // Sync database over LAN — strip frame data to save bandwidth
-    emitLocal('SYNC_DB', { project: stripFrameForSync(project) })
+    // Sync database over LAN — DO NOT strip frame for initial project creation!
+    // New clients receiving this as their first SYNC_DB have no existing frame
+    // data to preserve, so stripping would permanently lose the frame on their side.
+    // Instead, send the full project (like handleRequestState does) and only
+    // strip the session password for security.
+    emitLocal('SYNC_DB', {
+      project: {
+        ...project,
+        config: {
+          ...project.config,
+          sessionPassword: project.config.sessionPassword ? '__PASSWORD_SET__' : undefined,
+        },
+      },
+    })
 
     // Set session password on the socket server (so non-admin clients must validate)
     if (sessionPassword.trim()) {

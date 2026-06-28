@@ -104,3 +104,33 @@ Stage Summary:
 - MC shows useful connection states (connecting/failed) instead of stuck on sync screen
 - connectionStateRecovery disabled to prevent Caddy proxy crash
 - Commit: 688d115 - pushed to main
+
+---
+Task ID: 3
+Agent: Main Agent
+Task: Fix 2 bugs: (1) Admin password not enforced on MC/Operator, (2) Frame auto-framing not working
+
+Work Log:
+- Deep investigation of session password flow: project-setup → store → socket → server → MC/Operator
+- Found Bug #1 root cause: `sanitizeProject()` in use-saatiril-store.ts did NOT include `sessionPassword` in `cleanConfig`, so it was stripped every time `setCurrentProject` was called
+- This broke the "ensure session password" hooks in main-app.tsx which check `currentProject?.config?.sessionPassword` (always undefined after sanitize)
+- Result: password was never re-sent to socket server after reconnection, so MC/Operator always got auth-success without needing password
+- Fix #1: Added `sessionPassword: project.config?.sessionPassword ? '__PASSWORD_SET__' : undefined` to sanitizeProject's cleanConfig
+- Fix #1: Added separate localStorage storage for session passwords (SESSION_PASSWORD_KEY_PREFIX), similar to frame storage
+- Fix #1: Updated addProject, deleteProject, setCurrentProject, updateCurrentProject, loadProjectsFromStorage, saveProjectsToStorage, saveProjectsToStorageNow to handle session password storage
+- Fix #1: Updated ensure-session-password hook in main-app.tsx to use getAuthState() and properly check for __PASSWORD_SET__ marker
+- Found Bug #2 root cause: project-setup.tsx line 370 used `stripFrameForSync(project)` for initial SYNC_DB broadcast
+- This stripped the frame data (replaced with '__FRAME_SAVED__'), but MC/Operator had no existing frame in their localStorage to restore from
+- The periodic REQUEST_STATE retry stopped after currentProject was set (with stripped frame), so the frame was permanently lost
+- Fix #2: Changed project-setup.tsx to send full project data (not stripped) for initial SYNC_DB, only stripping sessionPassword for security
+- This is consistent with handleRequestState which already does NOT strip frame for new clients
+- Subsequent SYNC_DB emissions from MC/Operator panels still use stripFrameForSync (correct — clients already have frame by then)
+- Lint: clean
+- Tested: App loads without errors, socket service runs correctly
+
+Stage Summary:
+- Bug #1 (Password): sanitizeProject stripped sessionPassword → ensure hooks broken → password never sent to server → MC/Operator skip password prompt
+  - Fixed by preserving sessionPassword as marker in sanitizeProject + separate localStorage storage + proper restoration
+- Bug #2 (Frame): project-setup used stripFrameForSync for initial broadcast → MC/Operator received __FRAME_SAVED__ with no existing frame → frame permanently lost
+  - Fixed by sending full project data (like handleRequestState) instead of stripped data
+- Commit: pending push
