@@ -8,7 +8,7 @@ import {
   Loader2,
   Lock,
   ShieldCheck,
-  Infinity,
+  Clock,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -188,7 +188,7 @@ export function LicenseGate({ onLicenseValid }: Props) {
     )
   }
 
-  // Grace period is disabled — always require activation code
+  // No grace period, monthly license only
 
   // ── Main activation UI ─────────────────────────────────────────────────
   return (
@@ -230,7 +230,7 @@ export function LicenseGate({ onLicenseValid }: Props) {
                 </p>
                 <p className="mt-0.5 text-xs" style={{ color: THEME.muted }}>
                   Masukkan kode aktivasi untuk membuka SAATIRIL.
-                  Hubungi pengembang untuk mendapatkan kode.
+                  Hubungi pengembang untuk mendapatkan kode baru.
                 </p>
               </div>
             </div>
@@ -250,16 +250,17 @@ export function LicenseGate({ onLicenseValid }: Props) {
               <ShieldCheck className="mt-0.5 size-4 shrink-0" style={{ color: THEME.emerald }} />
               <div>
                 <p className="text-sm font-semibold" style={{ color: THEME.emerald }}>
-                  Lisensi Aktif — {getLicenseTypeLabel(status.licenseType)}
+                  Lisensi Aktif — {status.daysRemaining} Hari Tersisa
                 </p>
                 {status.expiresAt && (
                   <p className="mt-0.5 text-xs" style={{ color: THEME.muted }}>
                     Berlaku hingga: {new Date(status.expiresAt).toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' })}
                   </p>
                 )}
-                {!status.expiresAt && (
-                  <p className="mt-0.5 text-xs" style={{ color: THEME.muted }}>
-                    Berlaku selamanya (Permanent)
+                {status.expiresAt && status.daysRemaining <= 7 && (
+                  <p className="mt-1 text-xs font-medium" style={{ color: THEME.gold }}>
+                    <Clock className="mb-0.5 mr-1 inline size-3" />
+                    Segera hubungi pengembang untuk kode baru sebelum masa aktif berakhir.
                   </p>
                 )}
                 <Button
@@ -318,7 +319,7 @@ export function LicenseGate({ onLicenseValid }: Props) {
             {status?.displayMachineId || '-----'}
           </div>
           <p className="mt-2 text-[10px] leading-relaxed" style={{ color: `${THEME.muted}99` }}>
-            Kirim ID ini ke pengembang SAATIRIL untuk mendapatkan kode aktivasi.
+            Kirim ID ini ke pengembang SAATIRIL untuk mendapatkan kode aktivasi (berlaku 1 bulan).
             Klik &ldquo;Salin&rdquo; untuk menyalin ID lengkap ke clipboard.
           </p>
         </div>
@@ -386,23 +387,12 @@ export function LicenseGate({ onLicenseValid }: Props) {
           <p className="text-[10px] leading-relaxed" style={{ color: `${THEME.muted}88` }}>
             Hubungi pengembang SAATIRIL untuk mendapatkan kode aktivasi.
             <br />
-            Setiap kode hanya berlaku untuk satu perangkat.
+            Setiap kode berlaku 1 bulan dan hanya untuk satu perangkat.
           </p>
         </div>
       </div>
     </div>
   )
-}
-
-// ─── Helpers ───────────────────────────────────────────────────────────────
-function getLicenseTypeLabel(type: string): string {
-  switch (type) {
-    case 'permanent': return 'Permanent'
-    case 'annual': return 'Tahunan'
-    case 'event': return 'Acara'
-    case 'trial': return 'Percobaan'
-    default: return type
-  }
 }
 
 export default LicenseGate

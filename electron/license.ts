@@ -14,6 +14,7 @@
  * - Activation Code = SHA256(machineId + ":" + licenseType + ":" + expiry + ":" + SECRET)
  * - License data is HMAC-signed to prevent tampering
  * - No grace period — activation required immediately
+ * - Monthly license only — every code valid for 30 days, then must request new code
  */
 
 import * as crypto from 'crypto'
@@ -31,14 +32,14 @@ const GRACE_PERIOD_DAYS = 0 // No grace period — activation required immediate
 const LICENSE_SECRET = 'SAATIRIL-2026-HUMAS-UIN-ANTASARI-BANJARMASIN'
 
 // ─── Types ─────────────────────────────────────────────────────────────────
-export type LicenseType = 'trial' | 'event' | 'annual' | 'permanent'
+export type LicenseType = 'monthly'
 
 export interface LicenseData {
   machineId: string
   activationCode: string
   licenseType: LicenseType
   activatedAt: string    // ISO date
-  expiresAt: string | null // ISO date or null for permanent
+  expiresAt: string // ISO date — always present for monthly license
   signature: string
 }
 
@@ -133,31 +134,16 @@ export function verifyActivationCode(
 
   const formatted = `${normalized.slice(0, 4)}-${normalized.slice(4, 8)}-${normalized.slice(8, 12)}-${normalized.slice(12, 16)}`
 
-  // Try permanent first (most common for internal use)
-  const permanentCode = generateExpectedCode(machineId, 'permanent', null)
-  if (formatted === permanentCode) {
-    return { licenseType: 'permanent', expiresAt: null }
-  }
-
-  // Try annual — check current year and next year
+  // Only monthly license type — check dates from today up to 45 days ahead
+  // This covers codes generated up to ~15 days ago (30-day validity + 15 day buffer)
   const now = new Date()
-  for (let yearOffset = 0; yearOffset <= 2; yearOffset++) {
-    const year = now.getFullYear() + yearOffset
-    const expiryDate = new Date(year, 11, 31, 23, 59, 59, 0) // Dec 31 — ms=0 for consistent hashing
-    const annualCode = generateExpectedCode(machineId, 'annual', expiryDate.toISOString())
-    if (formatted === annualCode) {
-      return { licenseType: 'annual', expiresAt: expiryDate.toISOString() }
-    }
-  }
-
-  // Try event — check dates from today up to 90 days ahead
-  for (let dayOffset = 0; dayOffset <= 90; dayOffset++) {
+  for (let dayOffset = 0; dayOffset <= 45; dayOffset++) {
     const date = new Date(now)
     date.setDate(date.getDate() + dayOffset)
-    date.setHours(23, 59, 59, 0)
-    const eventCode = generateExpectedCode(machineId, 'event', date.toISOString())
-    if (formatted === eventCode) {
-      return { licenseType: 'event', expiresAt: date.toISOString() }
+    date.setHours(23, 59, 59, 0) // ms=0 for consistent hashing
+    const monthlyCode = generateExpectedCode(machineId, 'monthly', date.toISOString())
+    if (formatted === monthlyCode) {
+      return { licenseType: 'monthly', expiresAt: date.toISOString() }
     }
   }
 
@@ -244,7 +230,7 @@ export function writeLicenseFile(data: LicenseData): boolean {
   }
 }
 
-// ─── First Run Tracking (for grace period) ────────────────────────────────
+// ─── First Run Tracking ────────────────────────────────────────────────────
 export function getFirstRunDate(): string | null {
   try {
     const filePath = getFirstRunFilePath()
@@ -320,15 +306,15 @@ export function checkLicenseStatus(): LicenseStatus {
       }
     }
 
-    // Check expiry
+    // Check expiry (monthly license always has expiry date)
     const now = new Date()
     const isExpired = licenseData.expiresAt
       ? new Date(licenseData.expiresAt) < now
-      : false
+      : true // No expiry date = invalid for monthly-only system
 
     const daysRemaining = licenseData.expiresAt
       ? Math.max(0, Math.ceil((new Date(licenseData.expiresAt).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
-      : Infinity
+      : 0
 
     return {
       isValid: !isExpired,
@@ -371,9 +357,9 @@ export function activateLicense(activationCode: string): { success: boolean; err
     return { success: false, error: 'Kode aktivasi tidak valid untuk perangkat ini.' }
   }
 
-  // Check if event license is already expired
-  if (verification.expiresAt && new Date(verification.expiresAt) < new Date()) {
-    return { success: false, error: 'Kode aktivasi sudah kadaluarsa.' }
+  // Check if license is already expired (code was generated too long ago)
+  if (new Date(verification.expiresAt) < new Date()) {
+    return { success: false, error: 'Kode aktivasi sudah kadaluarsa. Hubungi pengembang untuk mendapatkan kode baru.' }
   }
 
   // Create license data
@@ -395,6 +381,6 @@ export function activateLicense(activationCode: string): { success: boolean; err
     return { success: false, error: 'Gagal menyimpan data lisensi ke disk.' }
   }
 
-  console.log(`[SAATIRIL LICENSE] Activated: ${verification.licenseType}${verification.expiresAt ? ` (expires: ${verification.expiresAt})` : ' (permanent)'}`)
+  console.log(`[SAATIRIL LICENSE] Activated: ${verification.licenseType} (expires: ${verification.expiresAt})`)
   return { success: true, licenseType: verification.licenseType }
 }
