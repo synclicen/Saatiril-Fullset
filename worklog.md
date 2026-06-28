@@ -42,3 +42,32 @@ Stage Summary:
 - Key fix: `showJoinScreen` condition changed from blocking ALL non-admin to only blocking when password required
 - Password feature is now truly OPTIONAL — ceremonies work without password just like before
 - Commit: b288ab9 "fix: MC/Operator blocked by join screen when no session password set"
+---
+Task ID: 2
+Agent: Main Agent
+Task: Fix MC/Operator still failing to join LAN session (with or without password)
+
+Work Log:
+- Deep investigation of entire MC/Operator connection flow
+- Discovered 3 critical issues:
+  1. SHA-256 crypto.subtle NOT available in insecure HTTP contexts (http://192.168.x.x)
+     - This means password hashing SILENTLY FAILED on LAN HTTP
+     - reidentifyWithPassword() would never send identify because sha256() threw
+     - Added pure JS SHA-256 implementation as fallback
+     - Verified against standard test vectors (test123, empty, abc, password)
+  2. Premature REQUEST_STATE in handleConnect — sent before authentication
+     - Server silently drops messages from unauthenticated clients
+     - Removed the premature REQUEST_STATE, now only sent after auth-success
+  3. Missing debug logging — impossible to diagnose issues on real LAN
+     - Added console.log/warn at every step of auth flow
+     - Added try/catch with error logging for sha256, setSessionPassword, reidentifyWithPassword
+- Tested: MC page shows "Sinkronisasi Data" (correct behavior when waiting for admin)
+- Auth flow verified: passwordRequired=false → auth-success → requesting state sync
+- Lint passes, dev server compiles without errors
+- Committed and pushed
+
+Stage Summary:
+- Key fix: SHA-256 JS fallback for HTTP LAN contexts
+- Key fix: Removed premature REQUEST_STATE that server would ignore
+- Key improvement: Comprehensive auth debug logging for LAN diagnosis
+- Commit: bfaca75 "fix: SHA-256 fallback for HTTP LAN, better auth debug logging, fix premature REQUEST_STATE"
