@@ -200,6 +200,17 @@ function startStaticServer(outDir: string): Promise<void> {
 // Session password hash storage (shared with embedded server)
 let sessionPasswordHash: string | null = null
 
+/**
+ * Broadcast auth-requirement to ALL connected clients.
+ * Called when the session password is set or cleared by admin.
+ * This ensures existing clients are notified about the auth requirement change.
+ */
+function broadcastAuthRequirement(server: SocketIOServer) {
+  const payload = { passwordRequired: sessionPasswordHash !== null }
+  server.emit('auth-requirement', payload)
+  console.log(`[SAATIRIL] Broadcast auth-requirement: passwordRequired=${payload.passwordRequired}`)
+}
+
 function startSocketServer(): Promise<void> {
   return new Promise((resolve, reject) => {
     const httpForSocket = createServer()
@@ -217,7 +228,7 @@ function startSocketServer(): Promise<void> {
 
     // Connection limit
     const MAX_CONNECTIONS = 10
-    const IDENTIFICATION_TIMEOUT_MS = 10000
+    const IDENTIFICATION_TIMEOUT_MS = 15000
     socketServer.use((socket, next) => {
       const current = socketServer!.sockets.sockets.size
       if (current >= MAX_CONNECTIONS) {
@@ -227,7 +238,7 @@ function startSocketServer(): Promise<void> {
       next()
     })
 
-    // Client tracking
+    // Client tracking — role can be 'unknown' | 'admin' | 'mc' | 'operator' | 'pending_auth'
     const clientRegistry = new Map<string, { role: string; channel: number }>()
 
     socketServer.on('connection', (socket) => {
@@ -236,11 +247,14 @@ function startSocketServer(): Promise<void> {
       // Send auth requirement on connect
       socket.emit('auth-requirement', { passwordRequired: sessionPasswordHash !== null })
 
-      // Identification timeout — disconnect if not identified within 10s
+      // Identification timeout — disconnect if not identified within timeout
+      // CRITICAL: 'pending_auth' clients are NOT disconnected — they're waiting
+      // for the user to enter the session password. Only truly 'unknown' clients
+      // (that never sent an identify at all) are disconnected.
       const identificationTimeout = setTimeout(() => {
         const info = clientRegistry.get(socket.id)
         if (info && info.role === 'unknown') {
-          console.warn(`[SAATIRIL] Client ${socket.id} disconnected: failed to identify within 10s`)
+          console.warn(`[SAATIRIL] Client ${socket.id} disconnected: failed to identify within ${IDENTIFICATION_TIMEOUT_MS}ms`)
           socket.disconnect(true)
         }
       }, IDENTIFICATION_TIMEOUT_MS)
@@ -250,7 +264,9 @@ function startSocketServer(): Promise<void> {
         const info = clientRegistry.get(socket.id)
         if (info && info.role === 'admin') {
           sessionPasswordHash = data.passwordHash
-          console.log('[SAATIRIL] Session password set by admin')
+          console.log('[SAATIRIL] Session password set by admin — broadcasting to all clients')
+          // Broadcast auth-requirement to ALL clients so they know password is now required
+          broadcastAuthRequirement(socketServer!)
         }
       })
 
@@ -259,7 +275,9 @@ function startSocketServer(): Promise<void> {
         const info = clientRegistry.get(socket.id)
         if (info && info.role === 'admin') {
           sessionPasswordHash = null
-          console.log('[SAATIRIL] Session password cleared')
+          console.log('[SAATIRIL] Session password cleared — broadcasting to all clients')
+          // Broadcast auth-requirement to ALL clients so they know password is no longer required
+          broadcastAuthRequirement(socketServer!)
         }
       })
 
@@ -272,6 +290,11 @@ function startSocketServer(): Promise<void> {
         if (data.role !== 'admin' && sessionPasswordHash) {
           if (!data.sessionPasswordHash || data.sessionPasswordHash !== sessionPasswordHash) {
             console.warn(`[SAATIRIL] Client ${socket.id} rejected: invalid session password (role: ${data.role})`)
+            // CRITICAL FIX: Set role to 'pending_auth' instead of leaving as 'unknown'
+            // This prevents the identification timeout from disconnecting the client.
+            // The client stays connected and can retry with the correct password.
+            info.role = 'pending_auth'
+            info.channel = data.channel
             socket.emit('auth-failed', { reason: 'session_password_required' })
             return
           }
@@ -289,8 +312,11 @@ function startSocketServer(): Promise<void> {
 
       socket.on('lan-message', (payload: { event: string; data: any }) => {
         const info = clientRegistry.get(socket.id)
-        if (!info || info.role === 'unknown') {
-          console.warn(`[SAATIRIL] Unidentified client ${socket.id} tried to relay message — ignoring`)
+        if (!info || info.role === 'unknown' || info.role === 'pending_auth') {
+          // Only fully authenticated clients can relay messages
+          if (info?.role === 'pending_auth') {
+            console.warn(`[SAATIRIL] Pending-auth client ${socket.id} tried to relay message — ignoring (needs password)`)
+          }
           return
         }
         socket.broadcast.emit('lan-message', payload)

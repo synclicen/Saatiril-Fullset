@@ -13,9 +13,31 @@ const listeners: Record<string, LocalNetworkCallback[]> = {}
 // Stored locally so we can re-identify on reconnect
 let currentSessionPasswordHash: string | null = null
 
+// ─── Pending session password (plaintext) ──────────────────────────────────
+// When the admin sets a password before the socket is connected, we store it
+// here and send it once the socket connects.
+let pendingSessionPassword: string | null = null
+
 // ─── Auth state ─────────────────────────────────────────────────────────────
 let isAuthenticated: boolean = false
 let authRequiredByServer: boolean = false
+
+// ─── Auth state snapshot ──────────────────────────────────────────────────
+// Exposed via getAuthState() so that components mounting after socket
+// connection can read the current auth state without missing events.
+export interface AuthState {
+  connected: boolean
+  authenticated: boolean
+  passwordRequired: boolean
+}
+
+export function getAuthState(): AuthState {
+  return {
+    connected: socket?.connected ?? false,
+    authenticated: isAuthenticated,
+    passwordRequired: authRequiredByServer,
+  }
+}
 
 // ─── SHA-256 hash helper (browser native) ──────────────────────────────────
 async function sha256(text: string): Promise<string> {
@@ -249,6 +271,18 @@ function flushEventQueue() {
   }
 }
 
+/**
+ * Send any pending session password to the server.
+ * Called when the socket connects.
+ */
+async function flushPendingSessionPassword() {
+  if (!pendingSessionPassword || !socket?.connected) return
+  const password = pendingSessionPassword
+  pendingSessionPassword = null
+  await setSessionPassword(password)
+  console.log('[SAATIRIL] Flushed pending session password to server')
+}
+
 // ─── Connect Socket ───────────────────────────────────────────────────────
 export function connectSocket(): Socket {
   if (socket?.connected) return socket
@@ -320,6 +354,19 @@ export function connectSocket(): Socket {
     // (auth-success handler will flush)
     if (role === 'admin' || !authRequiredByServer) {
       flushEventQueue()
+    }
+
+    // Send any pending session password (admin set password before socket connected)
+    flushPendingSessionPassword()
+
+    // Notify local listeners that the socket is connected
+    // This is used by the "ensure session password" hook in main-app.tsx
+    if (listeners['__SOCKET_CONNECTED__']) {
+      listeners['__SOCKET_CONNECTED__'].forEach(cb => {
+        try { cb({}) } catch (err) {
+          console.error('[SAATIRIL] Error in __SOCKET_CONNECTED__ listener:', err)
+        }
+      })
     }
 
     // Start ping measurement for latency tracking
@@ -487,11 +534,21 @@ export function offLocal(event: string, callback?: LocalNetworkCallback) {
 /**
  * Admin: set the session password on the server.
  * Sends the SHA-256 hash so the password is never transmitted in plaintext.
+ *
+ * If the socket is not connected yet, the password is stored as pending
+ * and will be sent once the socket connects.
  */
 export async function setSessionPassword(password: string): Promise<void> {
-  if (!socket?.connected) return
   const hash = await sha256(password)
   currentSessionPasswordHash = hash
+
+  if (!socket?.connected) {
+    // Socket not connected yet — store as pending and send on connect
+    pendingSessionPassword = password
+    console.log('[SAATIRIL] Session password queued (socket not connected)')
+    return
+  }
+
   socket.emit('SET_SESSION_PASSWORD', { passwordHash: hash })
   console.log('[SAATIRIL] Session password set on server')
 }
@@ -500,8 +557,9 @@ export async function setSessionPassword(password: string): Promise<void> {
  * Admin: clear the session password on the server.
  */
 export function clearSessionPassword(): void {
-  if (!socket?.connected) return
   currentSessionPasswordHash = null
+  pendingSessionPassword = null
+  if (!socket?.connected) return
   socket.emit('CLEAR_SESSION_PASSWORD')
   console.log('[SAATIRIL] Session password cleared on server')
 }

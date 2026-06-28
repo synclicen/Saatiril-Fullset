@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useSaatirilStore, type AppTab, type Role, type Project, type CameraMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync, preservePhotoHistoryOnSync, isDualMode, isPhotoshootMode } from '@/store/use-saatiril-store'
-import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth, setSessionPassword, clearSessionPassword, reidentifyWithPassword } from '@/lib/socket'
+import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth, setSessionPassword, clearSessionPassword, reidentifyWithPassword, getAuthState } from '@/lib/socket'
 
 import AdminDashboard from '@/components/saatiril/admin-dashboard'
 import { McPanel } from '@/components/saatiril/mc-panel'
@@ -83,14 +83,20 @@ export function MainApp() {
   const loadProjectsFromStorage = useSaatirilStore((s) => s.loadProjectsFromStorage)
 
   // ── Local state ────────────────────────────────────────────────────────────
-  const [serverConnected, setServerConnected] = useState(false)
-  const [connectionQuality, setConnectionQuality] = useState<'good' | 'degraded' | 'disconnected'>('disconnected')
+  // CRITICAL: Initialize auth state from the socket module's current state.
+  // This handles the case where the socket is already connected when MainApp
+  // mounts (e.g., React remount, or socket connected by a previous screen).
+  // Without this, auth events that fired before mount are missed, causing
+  // MC/Operator to skip the password prompt entirely.
+  const [initialAuthState] = useState(() => getAuthState())
+  const [serverConnected, setServerConnected] = useState(initialAuthState.connected)
+  const [connectionQuality, setConnectionQuality] = useState<'good' | 'degraded' | 'disconnected'>(initialAuthState.connected ? 'good' : 'disconnected')
   const [lanIP, setLanIP] = useState<string>('')
   const [copiedIP, setCopiedIP] = useState(false)
   const [sessionPasswordInput, setSessionPasswordInput] = useState('')
-  const [sessionPasswordVerified, setSessionPasswordVerified] = useState(false)
+  const [sessionPasswordVerified, setSessionPasswordVerified] = useState(initialAuthState.authenticated)
   const [sessionPasswordError, setSessionPasswordError] = useState(false)
-  const [serverRequiresPassword, setServerRequiresPassword] = useState(false)
+  const [serverRequiresPassword, setServerRequiresPassword] = useState(initialAuthState.passwordRequired)
   const [authFailedReason, setAuthFailedReason] = useState<string | null>(null)
   const [connectionFailed, setConnectionFailed] = useState(false)
 
@@ -189,6 +195,13 @@ export function MainApp() {
       setConnectionQuality('good')
       setConnectionFailed(false)  // Reset connection failed state on successful connect
 
+      // CRITICAL: Reset auth state on reconnection — we must re-authenticate
+      // On reconnect, socket.ts re-sends `identify`, so we'll get either
+      // auth-success or auth-failed. Until then, we're unverified.
+      if (myRoleRef.current !== 'admin') {
+        setSessionPasswordVerified(false)
+      }
+
       // On (re)connection, re-request state sync from admin to ensure we have latest data
       const role = myRoleRef.current
       if (role !== 'admin') {
@@ -206,6 +219,11 @@ export function MainApp() {
     const handleDisconnect = () => {
       setServerConnected(false)
       setConnectionQuality('disconnected')
+      // CRITICAL: On disconnect, mark auth as unverified for non-admin
+      // so the join screen reappears on reconnect
+      if (myRoleRef.current !== 'admin') {
+        setSessionPasswordVerified(false)
+      }
     }
 
     // ── Auth event handlers ────────────────────────────────────────────────
@@ -214,6 +232,13 @@ export function MainApp() {
       if (data.passwordRequired && myRoleRef.current !== 'admin') {
         // Server requires password — show prompt if not yet verified
         setSessionPasswordVerified(false)
+      } else if (!data.passwordRequired && myRoleRef.current !== 'admin') {
+        // Server does NOT require password — this can happen when:
+        // 1. No password was set (admin chose no password)
+        // 2. Password was cleared
+        // In this case, the initial identify (without password) should succeed,
+        // and we'll get auth-success. But we need to wait for it.
+        // Don't set verified=true here — wait for auth-success.
       }
     }
 
@@ -239,10 +264,38 @@ export function MainApp() {
     socket.on('auth-success', handleAuthSuccess)
     socket.on('auth-failed', handleAuthFailed)
 
+    // ── Handle already-connected socket on mount ──────────────────────────
+    // If the socket was already connected before this useEffect ran
+    // (e.g., from a previous mount or React Strict Mode), we need to
+    // sync our React state with the socket's current state.
+    //
+    // CRITICAL: We use getAuthState() to get the current auth state from
+    // the socket module, which tracks auth events globally. This ensures
+    // we don't miss auth-success or auth-failed events that fired before
+    // our React handlers were registered.
+    //
+    // We also re-emit identify to trigger a fresh auth flow, ensuring
+    // the server sends us a new auth-success or auth-failed.
     queueMicrotask(() => {
       if (socket.connected) {
+        const authState = getAuthState()
+        console.log('[SAATIRIL] Socket already connected on mount. Auth state:', authState)
         setServerConnected(true)
         setConnectionQuality('good')
+        setServerRequiresPassword(authState.passwordRequired)
+        setSessionPasswordVerified(authState.authenticated)
+
+        // For non-admin: if not authenticated, re-emit identify to get a fresh response
+        // This handles the case where auth events were missed before our handlers registered
+        if (myRoleRef.current !== 'admin' && !authState.authenticated) {
+          console.log('[SAATIRIL] Non-admin not authenticated on mount — re-emitting identify')
+          // Re-emit identify to trigger auth-success or auth-failed
+          // This is safe because the server allows re-identification
+          const params = new URLSearchParams(window.location.search)
+          const role = params.get('role') || 'unknown'
+          const channel = parseInt(params.get('channel') || '1', 10)
+          socket.emit('identify', { role, channel })
+        }
       }
     })
 
@@ -320,13 +373,23 @@ export function MainApp() {
     // Check immediately
     checkAndSend()
 
-    // Also check on connect events
+    // Also check on connect events (emitted by socket.ts on connect)
     const unsubscribe = onLocal('__SOCKET_CONNECTED__', () => {
       setTimeout(checkAndSend, 500) // Small delay to ensure identify is sent first
     })
 
+    // Belt-and-suspenders: also check periodically (every 3 seconds for 15 seconds)
+    // This handles edge cases where the socket connects but the event is missed
+    let checks = 0
+    const interval = setInterval(() => {
+      checkAndSend()
+      checks++
+      if (checks >= 5) clearInterval(interval) // Stop after 15 seconds
+    }, 3000)
+
     return () => {
       unsubscribe()
+      clearInterval(interval)
     }
   }, [myRole, currentProject?.config?.sessionPassword])
 
@@ -463,16 +526,17 @@ export function MainApp() {
   // 2. Password required (server requires authentication)
   // 3. Connection error (socket failed to connect)
   //
-  // CRITICAL: This must appear BEFORE the sync waiting screen. Previously,
-  // MC/Operator would see "Sinkronisasi Data" instead of the password prompt
-  // because `serverRequiresPassword` was false until the socket connected.
-  // Now, we always show this screen for unauthenticated MC/Operator, even
-  // before the socket connects.
-  const showJoinScreen = myRole !== 'admin' && !sessionPasswordVerified && (
-    !serverConnected ||           // Socket not connected — show connecting state
-    serverRequiresPassword ||     // Server requires password — show prompt
-    sessionPasswordError          // Auth failed — show error + retry
-  )
+  // CRITICAL FIX: Previously, the join screen only showed when
+  // `serverRequiresPassword` was true OR `sessionPasswordError` was true.
+  // But there was a race condition: between the `connect` event and the
+  // `auth-requirement` event, both flags were false, causing the join
+  // screen to disappear and the sync screen to show instead.
+  //
+  // Now, the join screen shows for ALL non-admin clients that haven't
+  // received auth-success yet. The only way to pass the join screen is
+  // to receive auth-success from the server (with or without a password).
+  // This ensures the password prompt ALWAYS appears when needed.
+  const showJoinScreen = myRole !== 'admin' && !sessionPasswordVerified
 
   if (showJoinScreen) {
     const isConnecting = !serverConnected && !sessionPasswordError && !connectionFailed
