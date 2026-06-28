@@ -8,8 +8,6 @@ import {
   Loader2,
   Lock,
   ShieldCheck,
-  AlertTriangle,
-  Clock,
   Infinity,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -190,8 +188,7 @@ export function LicenseGate({ onLicenseValid }: Props) {
     )
   }
 
-  // ── Grace period banner (valid but not yet activated) ──────────────────
-  const isGracePeriod = status?.isGracePeriod && !status?.isValid === false
+  // Grace period is disabled — always require activation code
 
   // ── Main activation UI ─────────────────────────────────────────────────
   return (
@@ -216,40 +213,8 @@ export function LicenseGate({ onLicenseValid }: Props) {
           </p>
         </div>
 
-        {/* ── Grace Period Warning ──────────────────────────────────────── */}
-        {isGracePeriod && (
-          <div
-            className="mb-6 rounded-lg border p-3"
-            style={{
-              backgroundColor: `${THEME.gold}11`,
-              borderColor: `${THEME.gold}44`,
-            }}
-          >
-            <div className="flex items-start gap-2">
-              <Clock className="mt-0.5 size-4 shrink-0" style={{ color: THEME.gold }} />
-              <div>
-                <p className="text-sm font-semibold" style={{ color: THEME.gold }}>
-                  Masa Percobaan — {status?.graceDaysRemaining} hari tersisa
-                </p>
-                <p className="mt-0.5 text-xs" style={{ color: THEME.muted }}>
-                  Anda memiliki {status?.graceDaysRemaining} hari untuk mengaktifkan lisensi.
-                  Setelah itu, aplikasi akan terkunci hingga dimasukkan kode aktivasi.
-                </p>
-                <Button
-                  size="sm"
-                  className="mt-2 h-7 text-xs"
-                  style={{ backgroundColor: THEME.gold, color: THEME.bg }}
-                  onClick={onLicenseValid}
-                >
-                  Lanjutkan Tanpa Aktivasi
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── Expired Warning ────────────────────────────────────────────── */}
-        {status?.isExpired && !status?.isGracePeriod && (
+        {/* ── No License Warning (replaces grace period) ──────────────── */}
+        {status?.isExpired && !status?.licenseType && (
           <div
             className="mb-6 rounded-lg border p-3"
             style={{
@@ -258,13 +223,14 @@ export function LicenseGate({ onLicenseValid }: Props) {
             }}
           >
             <div className="flex items-start gap-2">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0" style={{ color: THEME.red }} />
+              <Lock className="mt-0.5 size-4 shrink-0" style={{ color: THEME.red }} />
               <div>
                 <p className="text-sm font-semibold" style={{ color: THEME.red }}>
-                  Lisensi Diperlukan
+                  Aplikasi Terkunci
                 </p>
                 <p className="mt-0.5 text-xs" style={{ color: THEME.muted }}>
-                  Masa percobaan telah berakhir. Masukkan kode aktivasi untuk melanjutkan.
+                  Masukkan kode aktivasi untuk membuka SAATIRIL.
+                  Hubungi pengembang untuk mendapatkan kode.
                 </p>
               </div>
             </div>
@@ -272,7 +238,7 @@ export function LicenseGate({ onLicenseValid }: Props) {
         )}
 
         {/* ── Active License Info ────────────────────────────────────────── */}
-        {status?.isValid && !status?.isGracePeriod && status?.licenseType && (
+        {status?.isValid && status?.licenseType && (
           <div
             className="mb-6 rounded-lg border p-3"
             style={{

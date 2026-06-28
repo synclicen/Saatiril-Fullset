@@ -13,7 +13,7 @@
  * - Machine ID = SHA256(cpuInfo + macAddress + hostname + platform + arch)
  * - Activation Code = SHA256(machineId + ":" + licenseType + ":" + expiry + ":" + SECRET)
  * - License data is HMAC-signed to prevent tampering
- * - 7-day grace period for first-time use
+ * - No grace period — activation required immediately
  */
 
 import * as crypto from 'crypto'
@@ -23,7 +23,7 @@ import * as path from 'path'
 import { app } from 'electron'
 
 // ─── Configuration ─────────────────────────────────────────────────────────
-const GRACE_PERIOD_DAYS = 7 // Days of free use before activation required
+const GRACE_PERIOD_DAYS = 0 // No grace period — activation required immediately
 
 // IMPORTANT: This secret is used for code generation AND verification.
 // The same secret must be used in tools/generate-license.ts
@@ -344,25 +344,15 @@ export function checkLicenseStatus(): LicenseStatus {
     }
   }
 
-  // 2. No license file — check grace period
-  let firstRunDate = getFirstRunDate()
-  if (!firstRunDate) {
-    // First time ever — record it
-    firstRunDate = recordFirstRun()
-  }
-
-  const now = new Date()
-  const firstRun = new Date(firstRunDate)
-  const daysSinceFirstRun = Math.floor((now.getTime() - firstRun.getTime()) / (1000 * 60 * 60 * 24))
-  const graceDaysRemaining = Math.max(0, GRACE_PERIOD_DAYS - daysSinceFirstRun)
-  const isGracePeriod = graceDaysRemaining > 0
+  // 2. No license file — NO grace period, app is locked
+  const firstRunDate = getFirstRunDate() || recordFirstRun()
 
   return {
-    isValid: isGracePeriod, // Valid during grace period
-    isGracePeriod,
-    isExpired: !isGracePeriod,
+    isValid: false, // Always locked without activation code
+    isGracePeriod: false,
+    isExpired: true, // Treated as expired = locked
     daysRemaining: 0,
-    graceDaysRemaining,
+    graceDaysRemaining: 0,
     licenseType: null,
     expiresAt: null,
     machineId,
