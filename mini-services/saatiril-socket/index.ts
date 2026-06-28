@@ -90,11 +90,15 @@ const io = new Server(httpServer, {
   pingInterval: PING_INTERVAL,
   pingTimeout: PING_TIMEOUT,
   maxHttpBufferSize: MAX_HTTP_BUFFER,
-  // Connection state recovery — if client reconnects within 2min,
-  // it gets missed events automatically
-  connectionStateRecovery: {
-    maxDisconnectionDuration: 2 * 60 * 1000, // 2 minutes
-  },
+  // NOTE: connectionStateRecovery is DISABLED because it causes the server
+  // process to crash (segfault) when running behind the Caddy reverse proxy
+  // in sandbox mode. The crash happens on the first proxied connection.
+  // Disabling this feature fixes the crash without affecting core functionality
+  // (clients simply reconnect manually after a disconnection instead of
+  // recovering missed events automatically).
+  // connectionStateRecovery: {
+  //   maxDisconnectionDuration: 2 * 60 * 1000,
+  // },
   // Transport order: websocket first (lower latency), polling as fallback
   transports: ['websocket', 'polling'],
   // Allow upgrading from polling to websocket

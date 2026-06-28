@@ -102,8 +102,10 @@ export function MainApp() {
 
   // ── Refs for stable event handlers ─────────────────────────────────────────
   const myRoleRef = useRef(myRole)
+  const myChannelRef = useRef(myChannel)
   const currentProjectRef = useRef(currentProject)
   useEffect(() => { myRoleRef.current = myRole }, [myRole])
+  useEffect(() => { myChannelRef.current = myChannel }, [myChannel])
   useEffect(() => { currentProjectRef.current = currentProject }, [currentProject])
 
   // ── Derived values ─────────────────────────────────────────────────────────
@@ -204,7 +206,22 @@ export function MainApp() {
 
       // On (re)connection: admin sends password; non-admin waits for auth-success
       const role = myRoleRef.current
+
+      // CRITICAL FIX: Re-identify with the correct role from the Zustand store.
+      // socket.ts's connectSocket() reads the role from URL params, which works
+      // for MC/Operator (who have ?role=mc in the URL) but NOT for Admin
+      // (who accesses the page without a role param). Without this re-identify,
+      // the Admin registers as 'unknown' on the socket server, which:
+      // 1. Gets disconnected after 15s identification timeout
+      // 2. Can't relay messages (SYNC_DB responses are blocked)
+      // This was the root cause of MC getting stuck on "Sinkronisasi Data" —
+      // the admin couldn't respond to REQUEST_STATE because it was 'unknown'.
       if (role === 'admin') {
+        const sock = getSocket()
+        if (sock?.connected) {
+          sock.emit('identify', { role: 'admin', channel: myChannelRef.current })
+          console.log('[SAATIRIL] Admin re-identified with role=admin on socket server')
+        }
         // Admin: if project has a session password, set it on the server
         const curProj = useSaatirilStore.getState().currentProject
         if (curProj?.config?.sessionPassword && curProj.config.sessionPassword !== '__PASSWORD_SET__') {
@@ -536,22 +553,32 @@ export function MainApp() {
   )
 
   // ── Render: Password Join screen for MC/Operator ──────────────────────────
-  // This screen is ONLY shown when the server requires a session password
-  // or when authentication has failed. It does NOT block MC/Operator from
-  // accessing the app when no password is set — they proceed directly to
-  // the main app (same behavior as before the password feature was added).
+  // This screen is shown when:
+  // 1. Socket is not yet connected (connecting state)
+  // 2. Server requires a session password
+  // 3. Authentication has failed
+  // 4. Connection has failed (timeout)
   //
   // Flow when NO password is set:
   //   Socket connects → identify (no hash) → server sends auth-success → done
-  //   The join screen never appears. MC/Operator go straight to the main app.
+  //   The join screen briefly shows "Menghubungkan..." then disappears after auth.
   //
   // Flow when password IS set:
   //   Socket connects → identify (no hash) → server sends auth-failed →
   //   Join screen appears → user enters password → reidentify → auth-success → done
   //
-  // This ensures the password feature is truly OPTIONAL and doesn't break
-  // the ceremony flow when no password is configured.
-  const showJoinScreen = myRole !== 'admin' && !sessionPasswordVerified && (serverRequiresPassword || sessionPasswordError)
+  // Flow when connection fails:
+  //   Socket never connects → join screen shows "Menghubungkan..." →
+  //   After 15s timeout → shows "Gagal Terhubung ke Server" with retry button
+  //
+  // CRITICAL FIX: Previously, the condition was:
+  //   !sessionPasswordVerified && (serverRequiresPassword || sessionPasswordError)
+  // This meant the join screen was NOT shown when the socket wasn't connected
+  // AND no password was required. The MC would fall through to the "Sinkronisasi
+  // Data" screen, which shows no connection status — confusing the user who
+  // thinks the admin just hasn't sent data yet, when in reality the socket
+  // connection itself has failed.
+  const showJoinScreen = myRole !== 'admin' && !sessionPasswordVerified && (serverRequiresPassword || sessionPasswordError || !serverConnected)
 
   if (showJoinScreen) {
     const isConnecting = !serverConnected && !sessionPasswordError && !connectionFailed
@@ -699,6 +726,14 @@ export function MainApp() {
 
   // ── Render: Sync waiting screen ───────────────────────────────────────────
   if (!isSynced && myRole !== 'admin') {
+    // Show connection status — if the socket disconnected during sync,
+    // the user needs to know that the issue is connectivity, not admin data.
+    const connectionStatus = serverConnected
+      ? null
+      : connectionFailed
+        ? 'Koneksi terputus — mencoba menghubungkan kembali...'
+        : 'Menghubungkan ke server...'
+
     return (
       <div
         className="flex h-full flex-col items-center justify-center gap-6 px-6"
@@ -715,6 +750,11 @@ export function MainApp() {
           <p className="mt-1 text-xs" style={{ color: `${THEME.muted}88` }}>
             Pastikan Admin sudah membuka proyek di jaringan LAN yang sama.
           </p>
+          {connectionStatus && (
+            <p className="mt-2 text-xs font-medium" style={{ color: connectionFailed ? THEME.red : THEME.cyan }}>
+              {connectionStatus}
+            </p>
+          )}
         </div>
         <Badge
           className="gap-1.5 border-[#533485] bg-[#2a164a] px-3 py-1 text-xs"

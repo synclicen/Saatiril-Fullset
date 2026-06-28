@@ -267,17 +267,22 @@ function handlePong(timestamp: number) {
  *    - Read socketPort from URL query parameter (passed by Electron main process)
  *    - Connect directly to localhost:PORT (always HTTP)
  *
- * 2. LAN device (MC or Operator) with explicit socketPort:
- *    - socketPort is the HTTP Socket.io port (3003)
+ * 2. Direct LAN access (port 3000/3001):
+ *    - User accessed the Next.js app directly on its port
+ *    - Socket.io is on a different port (default 3003) on the same host
  *    - Connect via http://hostname:socketPort
  *    - All connections use HTTP (no HTTPS server)
  *
- * 3. LAN device WITHOUT socketPort (user typed URL manually):
- *    - Auto-detect: if accessing directly on port 3000, assume Socket.io on port 3003
- *    - Connect via http://hostname:3003
+ * 3. Web/sandbox mode (Caddy proxy or any other reverse proxy):
+ *    - User accessed through a reverse proxy (e.g., Caddy on port 81)
+ *    - Socket.io port is NOT directly accessible from the browser
+ *    - Use XTransformPort=PORT query parameter for Caddy gateway routing
+ *    - Connect via window.location.origin (same origin, Caddy handles routing)
  *
- * 4. Web/sandbox mode (development through Caddy proxy):
- *    - Use XTransformPort=3003 for Caddy gateway routing
+ * IMPORTANT: The detection is based on the ACCESS PORT, not the presence of
+ * the socketPort URL parameter. The socketPort param tells us WHICH port the
+ * Socket.io server runs on, but the connection METHOD (direct vs proxy) depends
+ * on how the user accessed the page (direct port 3000 vs proxy port 81).
  */
 function getSocketUrl(): string {
   if (typeof window === 'undefined') return '/'
@@ -293,28 +298,22 @@ function getSocketUrl(): string {
     return `http://localhost:${port}`
   }
 
-  // LAN device: explicit socketPort in URL (from admin dashboard copy link)
-  if (socketPortParam) {
-    const hostname = window.location.hostname
-    return `http://${hostname}:${socketPortParam}`
-  }
-
-  // Auto-detect LAN vs sandbox:
-  // If accessing directly on port 3000 (Next.js default), assume Socket.io is on
-  // port 3003 on the same host. This handles the case where MC/Operator manually
-  // types the URL without the socketPort parameter.
+  // Determine if this is a direct LAN access (port 3000/3001) or proxy access
+  // This is the KEY distinction: direct LAN can reach the socket port directly,
+  // while proxy access (Caddy) must route through the proxy.
   const currentPort = window.location.port
   const isDirectLanAccess = currentPort === '3000' || currentPort === '3001'
 
   if (isDirectLanAccess) {
-    // Real LAN: Socket.io server is on port 3003 on the same host
-    return `http://${window.location.hostname}:3003`
+    // Direct LAN access: connect directly to the Socket.io server
+    const port = socketPortParam || '3003'
+    return `http://${window.location.hostname}:${port}`
   }
 
-  // Web/sandbox mode: use Caddy gateway with XTransformPort
-  // The socket.io client needs the query param in its transport requests
-  // so Caddy can route them to port 3003. We pass it via the `query` option
-  // in connectSocket() and use the current origin as the base URL.
+  // Web/sandbox/proxy mode: go through the reverse proxy (Caddy)
+  // The socket.io client will include XTransformPort in its query params
+  // (set in connectSocket()) so Caddy can route to the correct port.
+  // We use the current origin as the base URL — Caddy handles the rest.
   return window.location.origin
 }
 
@@ -408,17 +407,32 @@ export function connectSocket(): Socket {
     timeout: 15000,                    // 15s connection timeout
   }
 
-  // For sandbox/web mode, add XTransformPort as a query parameter
+  // For sandbox/web/proxy mode, add XTransformPort as a query parameter
   // so Caddy gateway can route requests to the correct port.
-  // Sandbox mode = not Electron, no socketPort param, AND not direct LAN access (port 3000)
+  // Sandbox mode = not Electron AND not direct LAN access (port 3000/3001)
+  //
+  // IMPORTANT: We check ONLY the access port to determine sandbox mode,
+  // NOT whether socketPort is in the URL. The socketPort param tells us
+  // which port the Socket.io server runs on, but the connection METHOD
+  // (direct vs proxy) depends on how the user accessed the page.
+  //
+  // Previously, the check was:
+  //   !isElectron && !socketPortParam && !isDirectLanAccess
+  // This was WRONG because when MC copies a link from the admin dashboard
+  // (which always includes socketPort), the socketPort param is set, and
+  // isSandboxMode would be false even in sandbox mode. The socket would
+  // try to connect directly to hostname:3003, which is not accessible
+  // through Caddy, causing MC to be stuck on "Sinkronisasi Data" forever.
   const currentPort = typeof window !== 'undefined' ? window.location.port : ''
   const isDirectLanAccess = currentPort === '3000' || currentPort === '3001'
-  const isSandboxMode = !isElectron && !new URLSearchParams(window.location.search).get('socketPort') && !isDirectLanAccess
+  const isSandboxMode = !isElectron && !isDirectLanAccess
+  // Use the socketPort from URL params, or default to 3003
+  const socketPort = new URLSearchParams(window.location.search).get('socketPort') || '3003'
   const finalOptions = isSandboxMode
-    ? { ...socketOptions, query: { ...socketOptions.query, XTransformPort: '3003' } }
+    ? { ...socketOptions, query: { ...socketOptions.query, XTransformPort: socketPort } }
     : socketOptions
 
-  console.log('[SAATIRIL] Connecting to Socket.io server...', socketUrl, isSandboxMode ? '(sandbox mode with XTransformPort=3003)' : '')
+  console.log('[SAATIRIL] Connecting to Socket.io server...', socketUrl, isSandboxMode ? `(sandbox mode with XTransformPort=${socketPort})` : '(direct connection)')
   socket = io(socketUrl, finalOptions)
 
   // ── Connection lifecycle ──────────────────────────────────────────────
