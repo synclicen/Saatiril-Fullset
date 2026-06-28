@@ -724,3 +724,27 @@ Stage Summary:
 - Both standalone socket server AND embedded Electron socket server enforce passwords
 - Activation code generator tool allows developer to generate codes from Machine IDs
 - App verified working via Agent Browser (hub page renders correctly)
+
+---
+Task ID: 1
+Agent: main
+Task: Fix MC/Operator cannot join LAN session - no password prompt appears
+
+Work Log:
+- Investigated the root cause by reading page.tsx, license-gate.tsx, main-app.tsx, socket.ts, and socket server code
+- Identified two root causes:
+  1. The `needsPassword` condition in main-app.tsx required `serverRequiresPassword` to be true, but this was only set after the socket connected and received the `auth-requirement` event. Before that, MC/Operator saw the "Sinkronisasi Data" waiting screen instead of the password prompt.
+  2. The `getSocketUrl()` function in socket.ts defaulted to sandbox mode (Caddy proxy) when `socketPort` was not in the URL, which doesn't work in real LAN environments.
+- Fixed main-app.tsx: Replaced the `needsPassword` logic with a unified "Join Session" screen that handles three states: connecting, password required, and connection error.
+- Fixed socket.ts: Added auto-detection for LAN mode - when accessing directly on port 3000 (not through Caddy), the socket client automatically connects to port 3003 on the same hostname.
+- Added connection failure timeout (15 seconds) with helpful error messages including firewall tips.
+- Added "Coba Hubungkan Kembali" (Reconnect) button for connection errors.
+- Verified with Agent Browser: MC and Operator both see the password prompt correctly.
+- Tested the full flow: MC enters password "test123" and successfully authenticates, then sees the sync waiting screen.
+
+Stage Summary:
+- Root cause: `needsPassword` condition was false until socket connected + `auth-requirement` received
+- Fix: Show "Join Session" screen for MC/Operator immediately (before socket connects)
+- Also fixed: Auto-detect LAN mode when `socketPort` not in URL (port 3000 → socket on 3003)
+- Files changed: src/components/saatiril/main-app.tsx, src/lib/socket.ts
+- Browser-verified: Password prompt appears for MC and Operator, password entry works correctly

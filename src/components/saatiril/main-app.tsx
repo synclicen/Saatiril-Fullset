@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useSaatirilStore, type AppTab, type Role, type Project, type CameraMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync, preservePhotoHistoryOnSync, isDualMode, isPhotoshootMode } from '@/store/use-saatiril-store'
-import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth, setSessionPassword, clearSessionPassword, reidentifyWithPassword, isSocketAuthenticated, isServerPasswordRequired } from '@/lib/socket'
+import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth, setSessionPassword, clearSessionPassword, reidentifyWithPassword } from '@/lib/socket'
 
 import AdminDashboard from '@/components/saatiril/admin-dashboard'
 import { McPanel } from '@/components/saatiril/mc-panel'
@@ -92,6 +92,7 @@ export function MainApp() {
   const [sessionPasswordError, setSessionPasswordError] = useState(false)
   const [serverRequiresPassword, setServerRequiresPassword] = useState(false)
   const [authFailedReason, setAuthFailedReason] = useState<string | null>(null)
+  const [connectionFailed, setConnectionFailed] = useState(false)
 
   // ── Refs for stable event handlers ─────────────────────────────────────────
   const myRoleRef = useRef(myRole)
@@ -186,6 +187,7 @@ export function MainApp() {
     const handleConnect = () => {
       setServerConnected(true)
       setConnectionQuality('good')
+      setConnectionFailed(false)  // Reset connection failed state on successful connect
 
       // On (re)connection, re-request state sync from admin to ensure we have latest data
       const role = myRoleRef.current
@@ -267,6 +269,35 @@ export function MainApp() {
     }, 5000)
     return () => clearInterval(monitor)
   }, [])
+
+  // ── Connection failure timeout ────────────────────────────────────────────
+  // After 15 seconds without a successful connection, show a more helpful
+  // error message on the join screen (firewall tips, etc.)
+  const connectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (myRole === 'admin') return
+
+    // Clear any existing timer
+    if (connectionTimerRef.current) {
+      clearTimeout(connectionTimerRef.current)
+      connectionTimerRef.current = null
+    }
+
+    if (serverConnected) return
+
+    // Start a 15-second timer to show connection error
+    connectionTimerRef.current = setTimeout(() => {
+      setConnectionFailed(true)
+    }, 15000)
+
+    return () => {
+      if (connectionTimerRef.current) {
+        clearTimeout(connectionTimerRef.current)
+        connectionTimerRef.current = null
+      }
+    }
+  }, [myRole, serverConnected])
 
   // ── Ensure session password is sent to server when admin has a project ────
   // This is critical: project-setup.tsx calls setSessionPassword() but the socket
@@ -426,70 +457,156 @@ export function MainApp() {
     [setMyChannel],
   )
 
-  // ── Render: Session password prompt (non-admin, when server requires password) ─
-  // Server-side validation: show prompt when server says password is required
-  // OR when we have a __PASSWORD_SET__ marker and haven't authenticated yet
-  const needsPassword = myRole !== 'admin' && !sessionPasswordVerified && (
-    serverRequiresPassword ||
-    (currentProject?.config?.sessionPassword && currentProject.config.sessionPassword !== '__PASSWORD_SET__') ||
-    (currentProject?.config?.sessionPassword === '__PASSWORD_SET__' && !isSocketAuthenticated())
+  // ── Render: Unified Join Session screen for MC/Operator ──────────────────
+  // This screen handles three states for non-admin clients:
+  // 1. Connecting to server (socket not connected yet)
+  // 2. Password required (server requires authentication)
+  // 3. Connection error (socket failed to connect)
+  //
+  // CRITICAL: This must appear BEFORE the sync waiting screen. Previously,
+  // MC/Operator would see "Sinkronisasi Data" instead of the password prompt
+  // because `serverRequiresPassword` was false until the socket connected.
+  // Now, we always show this screen for unauthenticated MC/Operator, even
+  // before the socket connects.
+  const showJoinScreen = myRole !== 'admin' && !sessionPasswordVerified && (
+    !serverConnected ||           // Socket not connected — show connecting state
+    serverRequiresPassword ||     // Server requires password — show prompt
+    sessionPasswordError          // Auth failed — show error + retry
   )
-  if (needsPassword) {
+
+  if (showJoinScreen) {
+    const isConnecting = !serverConnected && !sessionPasswordError && !connectionFailed
+    const needsPasswordInput = serverConnected && (serverRequiresPassword || sessionPasswordError)
+    const showConnectionError = connectionFailed && !serverConnected
+
     return (
       <div
         className="flex h-dvh flex-col items-center justify-center gap-6 px-6"
         style={{ backgroundColor: THEME.bg }}
       >
+        {/* ── Icon: changes based on state ──────────────────────────────── */}
         <div
           className="flex size-20 items-center justify-center rounded-full"
-          style={{ backgroundColor: `${THEME.gold}15`, borderWidth: 1, borderColor: `${THEME.gold}33` }}
+          style={{
+            backgroundColor: (sessionPasswordError || showConnectionError) ? `${THEME.red}15` : `${THEME.gold}15`,
+            borderWidth: 1,
+            borderColor: (sessionPasswordError || showConnectionError) ? `${THEME.red}33` : `${THEME.gold}33`,
+          }}
         >
-          <Lock className="size-10" style={{ color: THEME.gold }} />
-        </div>
-        <div className="text-center">
-          <h2 className="text-xl font-bold text-white">Password Sesi Diperlukan</h2>
-          <p className="mt-2 text-sm" style={{ color: THEME.muted }}>
-            Admin telah mengatur password untuk sesi ini.
-            Masukkan password untuk bergabung.
-          </p>
-        </div>
-        <div className="w-full max-w-xs space-y-3">
-          <Input
-            type="password"
-            placeholder="Masukkan password sesi..."
-            value={sessionPasswordInput}
-            onChange={(e) => { setSessionPasswordInput(e.target.value); setSessionPasswordError(false) }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && sessionPasswordInput.trim()) {
-                reidentifyWithPassword(sessionPasswordInput.trim())
-              }
-            }}
-            className="h-10 text-center font-mono text-sm"
-            style={{
-              backgroundColor: THEME.bg,
-              borderColor: sessionPasswordError ? THEME.red : THEME.border,
-              color: THEME.gold,
-            }}
-          />
-          {sessionPasswordError && (
-            <p className="text-center text-xs font-medium" style={{ color: THEME.red }}>
-              {authFailedReason === 'session_password_required'
-                ? 'Password salah. Coba lagi.'
-                : 'Gagal mengautentikasi. Coba lagi.'}
-            </p>
+          {isConnecting ? (
+            <Loader2 className="size-10 animate-spin" style={{ color: THEME.gold }} />
+          ) : showConnectionError ? (
+            <Wifi className="size-10" style={{ color: THEME.red }} />
+          ) : (
+            <Lock className="size-10" style={{ color: THEME.gold }} />
           )}
+        </div>
+
+        {/* ── Title & description ─────────────────────────────────────── */}
+        <div className="text-center">
+          {isConnecting ? (
+            <>
+              <h2 className="text-xl font-bold text-white">Menghubungkan ke Server</h2>
+              <p className="mt-2 text-sm" style={{ color: THEME.muted }}>
+                Mencoba terhubung ke sesi Admin di jaringan LAN...
+              </p>
+            </>
+          ) : showConnectionError ? (
+            <>
+              <h2 className="text-xl font-bold text-white">Gagal Terhubung ke Server</h2>
+              <p className="mt-2 text-sm" style={{ color: THEME.muted }}>
+                Tidak dapat terhubung ke server SAATIRIL. Pastikan:
+              </p>
+              <div className="mt-3 text-left text-xs space-y-1.5" style={{ color: THEME.muted }}>
+                <p>• Admin sudah membuka proyek di jaringan LAN yang sama</p>
+                <p>• Port <strong>3003</strong> tidak diblokir oleh firewall</p>
+                <p>• URL yang digunakan sudah benar (termasuk port)</p>
+              </div>
+            </>
+          ) : needsPasswordInput ? (
+            <>
+              <h2 className="text-xl font-bold text-white">Password Sesi Diperlukan</h2>
+              <p className="mt-2 text-sm" style={{ color: THEME.muted }}>
+                Admin telah mengatur password untuk sesi ini.
+                Masukkan password untuk bergabung.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2 className="text-xl font-bold text-white">Mengautentikasi...</h2>
+              <p className="mt-2 text-sm" style={{ color: THEME.muted }}>
+                Memverifikasi koneksi ke server...
+              </p>
+            </>
+          )}
+        </div>
+
+        {/* ── Password input (shown when connected + password required) ── */}
+        {needsPasswordInput && (
+          <div className="w-full max-w-xs space-y-3">
+            <Input
+              type="password"
+              placeholder="Masukkan password sesi..."
+              value={sessionPasswordInput}
+              onChange={(e) => { setSessionPasswordInput(e.target.value); setSessionPasswordError(false) }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && sessionPasswordInput.trim()) {
+                  reidentifyWithPassword(sessionPasswordInput.trim())
+                }
+              }}
+              className="h-10 text-center font-mono text-sm"
+              style={{
+                backgroundColor: THEME.bg,
+                borderColor: sessionPasswordError ? THEME.red : THEME.border,
+                color: THEME.gold,
+              }}
+              autoFocus
+            />
+            {sessionPasswordError && (
+              <p className="text-center text-xs font-medium" style={{ color: THEME.red }}>
+                {authFailedReason === 'session_password_required'
+                  ? 'Password salah. Coba lagi.'
+                  : 'Gagal mengautentikasi. Coba lagi.'}
+              </p>
+            )}
+            <Button
+              className="w-full h-10 font-semibold"
+              style={{ backgroundColor: THEME.gold, color: THEME.bg }}
+              onClick={() => {
+                if (sessionPasswordInput.trim()) {
+                  reidentifyWithPassword(sessionPasswordInput.trim())
+                }
+              }}
+            >
+              Bergabung
+            </Button>
+          </div>
+        )}
+
+        {/* ── Retry button for connection errors ─────────────────────────── */}
+        {showConnectionError && (
           <Button
-            className="w-full h-10 font-semibold"
-            style={{ backgroundColor: THEME.gold, color: THEME.bg }}
+            variant="outline"
+            className="gap-2"
+            style={{ borderColor: THEME.border, color: THEME.muted }}
             onClick={() => {
-              if (sessionPasswordInput.trim()) {
-                reidentifyWithPassword(sessionPasswordInput.trim())
+              setConnectionFailed(false)
+              // Force socket reconnect
+              const sock = getSocket()
+              if (sock) {
+                sock.disconnect()
+                sock.connect()
+              } else {
+                connectSocket()
               }
             }}
           >
-            Bergabung
+            <Wifi className="size-4" />
+            Coba Hubungkan Kembali
           </Button>
-        </div>
+        )}
+
+        {/* ── Role badge ─────────────────────────────────────────────────── */}
         <Badge
           className="gap-1.5 border-[#533485] bg-[#2a164a] px-3 py-1 text-xs"
           style={{ color: THEME.muted }}

@@ -146,13 +146,16 @@ function handlePong(timestamp: number) {
  *    - Read socketPort from URL query parameter (passed by Electron main process)
  *    - Connect directly to localhost:PORT (always HTTP)
  *
- * 2. LAN device (MC or Operator):
+ * 2. LAN device (MC or Operator) with explicit socketPort:
  *    - socketPort is the HTTP Socket.io port (3003)
  *    - Connect via http://hostname:socketPort
  *    - All connections use HTTP (no HTTPS server)
- *    - Operator needs Chrome Flag for camera access
  *
- * 3. Web/sandbox mode (development):
+ * 3. LAN device WITHOUT socketPort (user typed URL manually):
+ *    - Auto-detect: if accessing directly on port 3000, assume Socket.io on port 3003
+ *    - Connect via http://hostname:3003
+ *
+ * 4. Web/sandbox mode (development through Caddy proxy):
  *    - Use XTransformPort=3003 for Caddy gateway routing
  */
 function getSocketUrl(): string {
@@ -169,10 +172,22 @@ function getSocketUrl(): string {
     return `http://localhost:${port}`
   }
 
-  // LAN device: always use HTTP to connect to Socket.io server
+  // LAN device: explicit socketPort in URL (from admin dashboard copy link)
   if (socketPortParam) {
     const hostname = window.location.hostname
     return `http://${hostname}:${socketPortParam}`
+  }
+
+  // Auto-detect LAN vs sandbox:
+  // If accessing directly on port 3000 (Next.js default), assume Socket.io is on
+  // port 3003 on the same host. This handles the case where MC/Operator manually
+  // types the URL without the socketPort parameter.
+  const currentPort = window.location.port
+  const isDirectLanAccess = currentPort === '3000' || currentPort === '3001'
+
+  if (isDirectLanAccess) {
+    // Real LAN: Socket.io server is on port 3003 on the same host
+    return `http://${window.location.hostname}:3003`
   }
 
   // Web/sandbox mode: use Caddy gateway with XTransformPort
@@ -262,7 +277,10 @@ export function connectSocket(): Socket {
 
   // For sandbox/web mode, add XTransformPort as a query parameter
   // so Caddy gateway can route requests to the correct port.
-  const isSandboxMode = !isElectron && !new URLSearchParams(window.location.search).get('socketPort')
+  // Sandbox mode = not Electron, no socketPort param, AND not direct LAN access (port 3000)
+  const currentPort = typeof window !== 'undefined' ? window.location.port : ''
+  const isDirectLanAccess = currentPort === '3000' || currentPort === '3001'
+  const isSandboxMode = !isElectron && !new URLSearchParams(window.location.search).get('socketPort') && !isDirectLanAccess
   const finalOptions = isSandboxMode
     ? { ...socketOptions, query: { ...socketOptions.query, XTransformPort: '3003' } }
     : socketOptions
