@@ -72,8 +72,8 @@ export function LicenseGate({ onLicenseValid }: Props) {
       setStatus(result)
 
       if (result.isValid && !result.isGracePeriod) {
-        // Fully licensed — proceed
-        // Don't call onLicenseValid immediately; let user see the success screen briefly
+        // Fully licensed — auto-proceed after brief delay so user sees the status
+        setTimeout(() => onLicenseValid(), 800)
       }
     } catch (err) {
       console.error('[SAATIRIL LICENSE] Failed to check status:', err)

@@ -1,0 +1,1263 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manual Petugas SAATIRIL</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
+<style>
+@page {
+    size: 720px 1020px;
+    margin: 0;
+}
+:root {
+    --c-bg: #1a0b2e;
+    --c-surface: #2a164a;
+    --c-surface2: #351e5c;
+    --c-border: #533485;
+    --c-text: #e8e6e3;
+    --c-text-muted: #c4b5fd;
+    --c-accent: #d4af37;
+    --c-accent2: #a78bfa;
+    --c-emerald: #22c55e;
+    --c-red: #ef4444;
+    --c-cyan: #06b6d4;
+    --c-admin: #d4af37;
+    --c-mc: #22c55e;
+    --c-operator: #06b6d4;
+    --c-dev: #a78bfa;
+}
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 720px;
+    background: var(--c-bg);
+    color: var(--c-text);
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    line-height: 1.65;
+}
+@media screen {
+    html {
+        height: auto;
+        display: flex;
+        justify-content: center;
+        background: #111;
+    }
+    body {
+        transform-origin: top center;
+        margin: 20px auto;
+    }
+}
+
+/* ── Cover ──────────────────────────────────────── */
+.cover {
+    width: 720px;
+    height: 1020px;
+    box-sizing: border-box;
+    break-after: page;
+    overflow: hidden;
+    background: var(--c-bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 80px 60px;
+    position: relative;
+}
+.cover::before {
+    content: '';
+    position: absolute;
+    top: 0px;
+    right: 0px;
+    width: 360px;
+    height: 360px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(212,175,55,0.1) 0%, transparent 70%);
+}
+.cover::after {
+    content: '';
+    position: absolute;
+    bottom: 0px;
+    left: 0px;
+    width: 280px;
+    height: 280px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(83,52,133,0.3) 0%, transparent 70%);
+}
+.cover-badge {
+    background: rgba(212,175,55,0.12);
+    border: 1px solid rgba(212,175,55,0.35);
+    border-radius: 20px;
+    padding: 6px 22px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--c-accent);
+    margin-bottom: 48px;
+    z-index: 1;
+}
+.cover-title {
+    font-size: 52px;
+    font-weight: 900;
+    letter-spacing: -1px;
+    color: #ffffff;
+    text-align: center;
+    line-height: 1.05;
+    margin-bottom: 44px;
+    z-index: 1;
+}
+.cover-subtitle {
+    font-size: 13px;
+    color: var(--c-accent);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-bottom: 44px;
+    text-align: center;
+    z-index: 1;
+}
+.cover-line {
+    width: 60px;
+    height: 2px;
+    background: var(--c-accent);
+    margin: 0 auto 44px;
+    z-index: 1;
+}
+.cover-desc {
+    font-size: 15px;
+    color: var(--c-text-muted);
+    text-align: center;
+    max-width: 460px;
+    line-height: 1.7;
+    margin-bottom: 60px;
+    z-index: 1;
+}
+.cover-meta {
+    display: flex;
+    gap: 40px;
+    font-size: 12px;
+    color: var(--c-text-muted);
+    z-index: 1;
+}
+.cover-meta-item { text-align: center; }
+.cover-meta-label {
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.35);
+    margin-bottom: 4px;
+}
+.cover-meta-value { color: var(--c-text); font-weight: 600; }
+.cover-corner-tl, .cover-corner-br {
+    position: absolute;
+    width: 40px;
+    height: 40px;
+    z-index: 1;
+}
+.cover-corner-tl {
+    top: 40px; left: 40px;
+    border-top: 1px solid rgba(212,175,55,0.3);
+    border-left: 1px solid rgba(212,175,55,0.3);
+}
+.cover-corner-br {
+    bottom: 40px; right: 40px;
+    border-bottom: 1px solid rgba(212,175,55,0.3);
+    border-right: 1px solid rgba(212,175,55,0.3);
+}
+
+/* ── Main Content ───────────────────────────────── */
+.main-content {
+    padding: 50px 60px 40px 60px;
+}
+
+/* ── Chapter Header ─────────────────────────────── */
+.chapter-header {
+    break-after: avoid;
+    break-inside: avoid;
+    margin-top: 28px;
+    margin-bottom: 24px;
+}
+.chapter-tag {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--c-accent);
+    margin-bottom: 6px;
+}
+.chapter-title {
+    font-size: 28px;
+    font-weight: 800;
+    color: #ffffff;
+    margin-bottom: 40px;
+    line-height: 1.2;
+}
+.chapter-divider {
+    width: 40px;
+    height: 2px;
+    background: var(--c-accent);
+    margin-top: 6px;
+    margin-bottom: 42px;
+}
+
+/* ── Body Text ──────────────────────────────────── */
+.body-text {
+    margin-bottom: 14px;
+    color: var(--c-text);
+    line-height: 1.7;
+}
+.body-text-muted {
+    color: var(--c-text-muted);
+}
+
+/* ── Section Title ──────────────────────────────── */
+.section-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #ffffff;
+    margin-top: 28px;
+    margin-bottom: 12px;
+}
+
+/* ── Cards ──────────────────────────────────────── */
+.card {
+    break-inside: avoid;
+    background: var(--c-surface);
+    border: 1px solid var(--c-border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 12px;
+}
+.card-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #ffffff;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.card-body {
+    font-size: 13px;
+    color: var(--c-text-muted);
+    line-height: 1.65;
+}
+
+/* ── Role Cards ─────────────────────────────────── */
+.role-admin { border-left: 3px solid var(--c-admin); }
+.role-mc { border-left: 3px solid var(--c-mc); }
+.role-operator { border-left: 3px solid var(--c-operator); }
+.role-dev { border-left: 3px solid var(--c-dev); }
+.role-admin .card-title { color: var(--c-admin); }
+.role-mc .card-title { color: var(--c-mc); }
+.role-operator .card-title { color: var(--c-operator); }
+.role-dev .card-title { color: var(--c-dev); }
+
+/* ── Step List ──────────────────────────────────── */
+.step-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.step-item {
+    break-inside: avoid;
+    display: flex;
+    gap: 14px;
+    margin-bottom: 12px;
+    align-items: flex-start;
+}
+.step-num {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: rgba(212,175,55,0.15);
+    border: 1px solid rgba(212,175,55,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--c-accent);
+}
+.step-content { flex: 1; padding-top: 3px; }
+.step-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #ffffff;
+    margin-bottom: 2px;
+}
+.step-desc {
+    font-size: 13px;
+    color: var(--c-text-muted);
+    line-height: 1.6;
+}
+
+/* ── Warning Box ────────────────────────────────── */
+.warning-box {
+    break-inside: avoid;
+    background: rgba(239,68,68,0.08);
+    border: 1px solid rgba(239,68,68,0.3);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 12px;
+}
+.warning-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--c-red);
+    margin-bottom: 4px;
+}
+.warning-body {
+    font-size: 13px;
+    color: var(--c-text-muted);
+    line-height: 1.6;
+}
+
+/* ── Info Box ────────────────────────────────────── */
+.info-box {
+    break-inside: avoid;
+    background: rgba(6,182,212,0.08);
+    border: 1px solid rgba(6,182,212,0.3);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 12px;
+}
+.info-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--c-cyan);
+    margin-bottom: 4px;
+}
+.info-body {
+    font-size: 13px;
+    color: var(--c-text-muted);
+    line-height: 1.6;
+}
+
+/* ── Tip Box ────────────────────────────────────── */
+.tip-box {
+    break-inside: avoid;
+    background: rgba(34,197,94,0.08);
+    border: 1px solid rgba(34,197,94,0.3);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 12px;
+}
+.tip-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--c-emerald);
+    margin-bottom: 4px;
+}
+.tip-body {
+    font-size: 13px;
+    color: var(--c-text-muted);
+    line-height: 1.6;
+}
+
+/* ── Gold Box (License) ─────────────────────────── */
+.gold-box {
+    break-inside: avoid;
+    background: rgba(212,175,55,0.08);
+    border: 1px solid rgba(212,175,55,0.3);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 12px;
+}
+.gold-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--c-accent);
+    margin-bottom: 4px;
+}
+.gold-body {
+    font-size: 13px;
+    color: var(--c-text-muted);
+    line-height: 1.6;
+}
+
+/* ── Code Block ─────────────────────────────────── */
+.code-block {
+    break-inside: avoid;
+    background: #0d0520;
+    border: 1px solid var(--c-border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 12px;
+    font-family: 'Liberation Mono', 'DejaVu Sans Mono', monospace;
+    font-size: 12px;
+    color: var(--c-accent);
+    line-height: 1.6;
+    overflow-x: auto;
+}
+
+/* ── Flow Diagram ───────────────────────────────── */
+.flow-diagram {
+    break-inside: avoid;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin: 16px 0;
+}
+.flow-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+}
+.flow-box {
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: center;
+    min-width: 120px;
+}
+.flow-box-admin {
+    background: rgba(212,175,55,0.15);
+    border: 1px solid rgba(212,175,55,0.4);
+    color: var(--c-admin);
+}
+.flow-box-dev {
+    background: rgba(167,139,250,0.15);
+    border: 1px solid rgba(167,139,250,0.4);
+    color: var(--c-dev);
+}
+.flow-box-user {
+    background: rgba(6,182,212,0.15);
+    border: 1px solid rgba(6,182,212,0.4);
+    color: var(--c-cyan);
+}
+.flow-box-server {
+    background: rgba(34,197,94,0.15);
+    border: 1px solid rgba(34,197,94,0.4);
+    color: var(--c-emerald);
+}
+.flow-arrow {
+    color: var(--c-text-muted);
+    font-size: 18px;
+    padding: 0 8px;
+    flex-shrink: 0;
+}
+.flow-arrow-down {
+    text-align: center;
+    color: var(--c-text-muted);
+    font-size: 18px;
+    padding: 2px 0;
+}
+
+/* ── Checklist ──────────────────────────────────── */
+.checklist {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 14px 0;
+}
+.checklist li {
+    break-inside: avoid;
+    padding: 5px 0;
+    font-size: 13px;
+    color: var(--c-text);
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+.check-icon {
+    color: var(--c-emerald);
+    font-weight: 700;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+/* ── Ending Page ────────────────────────────────── */
+.ending {
+    width: 720px;
+    height: 1020px;
+    box-sizing: border-box;
+    break-before: page;
+    overflow: hidden;
+    background: var(--c-bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 80px 60px;
+    position: relative;
+}
+.ending::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 500px;
+    height: 500px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(212,175,55,0.06) 0%, transparent 70%);
+}
+.ending-text {
+    font-size: 24px;
+    font-weight: 700;
+    color: #ffffff;
+    text-align: center;
+    margin-bottom: 16px;
+    z-index: 1;
+}
+.ending-sub {
+    font-size: 14px;
+    color: var(--c-text-muted);
+    text-align: center;
+    line-height: 1.7;
+    max-width: 400px;
+    z-index: 1;
+}
+.ending-line {
+    width: 60px;
+    height: 2px;
+    background: var(--c-accent);
+    margin: 24px auto 40px;
+    z-index: 1;
+}
+
+/* ── TOC ────────────────────────────────────────── */
+.toc { margin-bottom: 20px; }
+.toc-item {
+    break-inside: avoid;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 12px 0;
+}
+.toc-left {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+}
+.toc-num {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--c-accent);
+    min-width: 24px;
+}
+.toc-label {
+    font-size: 14px;
+    font-weight: 500;
+    color: #ffffff;
+}
+.toc-dots {
+    flex: 1;
+    margin: 0 12px;
+    min-width: 20px;
+}
+
+/* ── Inline badge ───────────────────────────────── */
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+.badge-admin { background: rgba(212,175,55,0.15); color: var(--c-admin); }
+.badge-mc { background: rgba(34,197,94,0.15); color: var(--c-mc); }
+.badge-operator { background: rgba(6,182,212,0.15); color: var(--c-operator); }
+.badge-dev { background: rgba(167,139,250,0.15); color: var(--c-dev); }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════
+     COVER PAGE
+     ═══════════════════════════════════════════════════ -->
+<div class="cover">
+    <div class="cover-corner-tl"></div>
+    <div class="cover-corner-br"></div>
+    <div class="cover-badge">Manual Petugas</div>
+    <div class="cover-title">SAATIRIL</div>
+    <div class="cover-subtitle">Sistem Auto Track Input, Raw Into Live</div>
+    <div class="cover-line"></div>
+    <div class="cover-desc">
+        Panduan lengkap operasional aplikasi SAATIRIL untuk pengelolaan foto wisuda
+        UIN Antasari Banjarmasin berbasis LAN. Mencakup persiapan, aktivasi lisensi,
+        konfigurasi jaringan, dan panduan operasional untuk seluruh petugas.
+    </div>
+    <div class="cover-meta">
+        <div class="cover-meta-item">
+            <div class="cover-meta-label">Versi</div>
+            <div class="cover-meta-value">1.0.0</div>
+        </div>
+        <div class="cover-meta-item">
+            <div class="cover-meta-label">Platform</div>
+            <div class="cover-meta-value">Windows</div>
+        </div>
+        <div class="cover-meta-item">
+            <div class="cover-meta-label">Instansi</div>
+            <div class="cover-meta-value">UIN Antasari</div>
+        </div>
+        <div class="cover-meta-item">
+            <div class="cover-meta-label">Tahun</div>
+            <div class="cover-meta-value">2026</div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     MAIN CONTENT
+     ═══════════════════════════════════════════════════ -->
+<div class="main-content">
+
+<!-- ── TOC ──────────────────────────────────────────── -->
+<div class="chapter-header">
+    <div class="chapter-tag">Navigasi</div>
+    <div class="chapter-title">Daftar Isi</div>
+    <div class="chapter-divider"></div>
+</div>
+<div class="toc">
+    <div class="toc-item"><div class="toc-left"><span class="toc-num">01</span><span class="toc-label">Pengantar</span></div><div class="toc-dots"></div></div>
+    <div class="toc-item"><div class="toc-left"><span class="toc-num">02</span><span class="toc-label">Persiapan Sebelum Acara</span></div><div class="toc-dots"></div></div>
+    <div class="toc-item"><div class="toc-left"><span class="toc-num">03</span><span class="toc-label">Alur Kerja Pengembang</span></div><div class="toc-dots"></div></div>
+    <div class="toc-item"><div class="toc-left"><span class="toc-num">04</span><span class="toc-label">Alur Kerja Admin</span></div><div class="toc-dots"></div></div>
+    <div class="toc-item"><div class="toc-left"><span class="toc-num">05</span><span class="toc-label">Alur Kerja MC</span></div><div class="toc-dots"></div></div>
+    <div class="toc-item"><div class="toc-left"><span class="toc-num">06</span><span class="toc-label">Alur Kerja Operator</span></div><div class="toc-dots"></div></div>
+    <div class="toc-item"><div class="toc-left"><span class="toc-num">07</span><span class="toc-label">Sistem Lisensi</span></div><div class="toc-dots"></div></div>
+    <div class="toc-item"><div class="toc-left"><span class="toc-num">08</span><span class="toc-label">Troubleshooting</span></div><div class="toc-dots"></div></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     BAB 1: PENGANTAR
+     ═══════════════════════════════════════════════════ -->
+<div class="chapter-header">
+    <div class="chapter-tag">Bab 01</div>
+    <div class="chapter-title">Pengantar</div>
+    <div class="chapter-divider"></div>
+</div>
+
+<div class="section-title">Apa itu SAATIRIL?</div>
+<div class="body-text">
+    SAATIRIL (<strong>S</strong>istem <strong>A</strong>uto <strong>T</strong>rack <strong>I</strong>nput, <strong>R</strong>aw <strong>I</strong>nto <strong>L</strong>ive) adalah aplikasi desktop berbasis LAN yang dirancang khusus untuk mengelola proses foto wisuda di UIN Antasari Banjarmasin secara real-time. Aplikasi ini menghubungkan Pengembang, Admin, Master of Ceremony (MC), dan Operator Kamera dalam satu jaringan lokal yang terkoordinasi, sehingga setiap tahapan dari pemanggilan wisudawan hingga penyimpanan foto dapat berjalan dengan lancar dan terdokumentasi.
+</div>
+<div class="body-text">
+    Sistem ini bekerja sepenuhnya offline tanpa memerlukan koneksi internet. Komunikasi antar perangkat dilakukan melalui jaringan LAN menggunakan Socket.io pada port 3003, sehingga keamanan data terjaga dan tidak bergantung pada kualitas koneksi internet. Hal ini sangat penting mengingat acara wisuda membutuhkan keandalan tinggi dan tidak boleh terganggu oleh masalah konektivitas eksternal.
+</div>
+<div class="body-text">
+    Aplikasi SAATIRIL dilengkapi dengan sistem lisensi bulanan yang terikat ke hardware perangkat Admin, sehingga setiap instalasi hanya dapat diaktifkan dengan kode aktivasi yang valid. Selain itu, keamanan sesi LAN dijaga melalui session password yang harus dimasukkan oleh setiap MC dan Operator sebelum dapat bergabung ke dalam sesi. Dengan kombinasi keamanan ini, data dan proses wisuda tetap terlindungi dari akses yang tidak berwenang.
+</div>
+
+<div class="section-title">Empat Peran Utama</div>
+<div class="card role-dev">
+    <div class="card-title"><span>&#9670;</span> Pengembang (Developer)</div>
+    <div class="card-body">
+        Bertanggung jawab menghasilkan kode aktivasi lisensi menggunakan CLI tool yang tersedia di repositori proyek. Pengembang tidak perlu hadir di lokasi acara, namun harus siap dihubungi ketika Admin memerlukan kode aktivasi baru, baik saat pertama kali aktivasi maupun saat perpanjangan lisensi bulanan.
+    </div>
+</div>
+<div class="card role-admin">
+    <div class="card-title"><span>&#9670;</span> Admin</div>
+    <div class="card-body">
+        Menjalankan aplikasi Electron di laptop/PC utama. Bertanggung jawab mengaktivasi lisensi, membuat proyek wisuda, mengatur session password untuk LAN, menyimpan foto ke disk, dan mengontrol keseluruhan sesi. Admin adalah pusat koordinasi seluruh sistem dan satu-satunya peran yang menjalankan aplikasi desktop.
+    </div>
+</div>
+<div class="card role-mc">
+    <div class="card-title"><span>&#9670;</span> MC (Master of Ceremony)</div>
+    <div class="card-body">
+        Mengakses panel MC melalui browser di perangkat terpisah atau tab browser di laptop yang sama dengan Admin. Bertugas memanggil nama wisudawan dan mengatur ritme acara dari layar yang terhubung real-time ke sistem. MC memiliki dua channel yang dapat digunakan secara bersamaan untuk mendukung jalur wisuda paralel.
+    </div>
+</div>
+<div class="card role-operator">
+    <div class="card-title"><span>&#9670;</span> Operator Kamera</div>
+    <div class="card-body">
+        Mengakses panel Operator melalui browser di perangkat yang terhubung kamera. Bertugas mengambil foto wisudawan, melakukan retake jika diperlukan, dan mengirimkan foto ke Admin untuk disimpan secara otomatis. Operator berkomunikasi secara real-time dengan Admin melalui jaringan LAN.
+    </div>
+</div>
+
+<div class="section-title">Persyaratan Sistem</div>
+<div class="body-text">
+    Sebelum menggunakan SAATIRIL, pastikan perangkat dan lingkungan jaringan memenuhi persyaratan minimum berikut ini. Kegagalan memenuhi persyaratan dapat menyebabkan aplikasi tidak berjalan optimal atau gagal total.
+</div>
+<ul class="checklist">
+    <li><span class="check-icon">&#10003;</span> Sistem operasi: Windows 10 atau 11 (64-bit)</li>
+    <li><span class="check-icon">&#10003;</span> RAM minimal 8 GB, disarankan 16 GB untuk mode dual kamera</li>
+    <li><span class="check-icon">&#10003;</span> Penyimpanan kosong minimal 10 GB untuk folder foto wisuda</li>
+    <li><span class="check-icon">&#10003;</span> Jaringan LAN atau WiFi yang stabil (router yang sama untuk semua perangkat)</li>
+    <li><span class="check-icon">&#10003;</span> Browser modern: Google Chrome atau Microsoft Edge (versi terbaru)</li>
+    <li><span class="check-icon">&#10003;</span> Kamera yang kompatibel dengan browser (USB webcam atau DSLR dengan software capture)</li>
+    <li><span class="check-icon">&#10003;</span> Port 3000 dan 3003 tidak digunakan oleh aplikasi lain</li>
+</ul>
+
+<!-- ═══════════════════════════════════════════════════
+     BAB 2: PERSIAPAN SEBELUM ACARA
+     ═══════════════════════════════════════════════════ -->
+<div class="chapter-header">
+    <div class="chapter-tag">Bab 02</div>
+    <div class="chapter-title">Persiapan Sebelum Acara</div>
+    <div class="chapter-divider"></div>
+</div>
+
+<div class="body-text">
+    Persiapan yang matang sebelum hari acara adalah kunci keberhasilan operasional SAATIRIL. Setiap peran memiliki daftar tugas yang harus diselesaikan sebelum acara dimulai. Pastikan semua checklist berikut terpenuhi untuk menghindari masalah teknis di tengah berlangsungnya wisuda.
+</div>
+
+<div class="section-title">Checklist Pengembang</div>
+<div class="card role-dev">
+    <div class="card-title"><span>&#9670;</span> Persiapan Pengembang</div>
+    <div class="card-body">
+        Pengembang harus memastikan bahwa tools untuk generate kode aktivasi sudah siap dan berfungsi. Periksa kembali bahwa repositori proyek sudah ter-update dan CLI tool <code style="color:var(--c-accent);">generate-license.ts</code> dapat dijalankan tanpa error. Siapkan juga daftar kontak Admin yang dapat menghubungi saat dibutuhkan kode aktivasi baru, terutama mendekati tanggal kadaluarsa lisensi.
+    </div>
+</div>
+<ul class="checklist">
+    <li><span class="check-icon">&#10003;</span> Pastikan CLI tool <code style="color:var(--c-accent);">generate-license.ts</code> berjalan normal</li>
+    <li><span class="check-icon">&#10003;</span> Siapkan Node.js dan TypeScript runtime di komputer pengembang</li>
+    <li><span class="check-icon">&#10003;</span> Catat tanggal kadaluarsa lisensi yang sudah diterbitkan</li>
+    <li><span class="check-icon">&#10003;</span> Siapkan jalur komunikasi cepat dengan Admin (WhatsApp/Telegram)</li>
+</ul>
+
+<div class="section-title">Checklist Admin</div>
+<div class="card role-admin">
+    <div class="card-title"><span>&#9670;</span> Persiapan Admin</div>
+    <div class="card-body">
+        Admin harus menyiapkan laptop utama, memastikan lisensi masih aktif atau meminta kode baru dari pengembang, menyiapkan jaringan LAN/WiFi, menginstal aplikasi SAATIRIL, dan memverifikasi bahwa semua perangkat MC dan Operator dapat terhubung ke jaringan yang sama. Jangan lupa menyiapkan kabel LAN sebagai cadangan jika WiFi bermasalah.
+    </div>
+</div>
+<ul class="checklist">
+    <li><span class="check-icon">&#10003;</span> Instal atau jalankan aplikasi SAATIRIL di laptop utama</li>
+    <li><span class="check-icon">&#10003;</span> Verifikasi lisensi masih aktif (cek tanggal kadaluarsa di aplikasi)</li>
+    <li><span class="check-icon">&#10003;</span> Jika lisensi sudah kadaluarsa, kirim Machine ID ke pengembang untuk kode baru</li>
+    <li><span class="check-icon">&#10003;</span> Siapkan router WiFi dan/atau switch LAN</li>
+    <li><span class="check-icon">&#10003;</span> Catat IP Address laptop Admin (digunakan oleh MC dan Operator untuk koneksi)</li>
+    <li><span class="check-icon">&#10003;</span> Buat proyek wisuda baru di aplikasi</li>
+    <li><span class="check-icon">&#10003;</span> Set session password dan sampaikan ke MC dan Operator</li>
+    <li><span class="check-icon">&#10003;</span> Siapkan folder penyimpanan foto dengan ruang kosong cukup</li>
+</ul>
+
+<div class="section-title">Checklist MC</div>
+<div class="card role-mc">
+    <div class="card-title"><span>&#9670;</span> Persiapan MC</div>
+    <div class="card-body">
+        MC memastikan perangkat browser sudah siap, terhubung ke jaringan yang sama dengan Admin, dan mengetahui IP Address Admin serta session password. Sebaiknya MC juga menyiapkan daftar nama wisudawan yang akan dipanggil agar acara berjalan lancar tanpa jeda.
+    </div>
+</div>
+<ul class="checklist">
+    <li><span class="check-icon">&#10003;</span> Bawa laptop/tablet dengan browser modern (Chrome/Edge)</li>
+    <li><span class="check-icon">&#10003;</span> Dapatkan IP Address Admin dan session password</li>
+    <li><span class="check-icon">&#10003;</span> Pastikan terhubung ke jaringan LAN/WiFi yang sama</li>
+    <li><span class="check-icon">&#10003;</span> Siapkan daftar wisudawan sesuai channel yang ditugaskan</li>
+    <li><span class="check-icon">&#10003;</span> Uji akses ke URL panel MC sebelum acara dimulai</li>
+</ul>
+
+<div class="section-title">Checklist Operator</div>
+<div class="card role-operator">
+    <div class="card-title"><span>&#9670;</span> Persiapan Operator</div>
+    <div class="card-body">
+        Operator harus memastikan kamera berfungsi baik, browser dapat mengakses kamera, dan perangkat terhubung ke jaringan LAN yang sama dengan Admin. Test ambil foto sebelum acara untuk memastikan seluruh rantai (kamera, browser, LAN, Admin) bekerja tanpa hambatan.
+    </div>
+</div>
+<ul class="checklist">
+    <li><span class="check-icon">&#10003;</span> Siapkan laptop dengan kamera USB/DSLR terhubung</li>
+    <li><span class="check-icon">&#10003;</span> Pastikan browser mendeteksi kamera (cek izin akses kamera)</li>
+    <li><span class="check-icon">&#10003;</span> Dapatkan IP Address Admin dan session password</li>
+    <li><span class="check-icon">&#10003;</span> Pastikan terhubung ke jaringan LAN/WiFi yang sama</li>
+    <li><span class="check-icon">&#10003;</span> Uji ambil foto dan verifikasi foto muncul di Admin</li>
+</ul>
+
+<div class="warning-box">
+    <div class="warning-title">Penting: Jaringan LAN yang Sama</div>
+    <div class="warning-body">
+        Semua perangkat (Admin, MC, Operator) harus terhubung ke jaringan LAN atau WiFi yang sama. Jika Admin menggunakan kabel LAN dan MC menggunakan WiFi, pastikan keduanya berada di subnet yang sama (biasanya 192.168.x.x). Jika tidak, perangkat tidak akan dapat saling berkomunikasi.
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     BAB 3: ALUR KERJA PENGEMBANG
+     ═══════════════════════════════════════════════════ -->
+<div class="chapter-header">
+    <div class="chapter-tag">Bab 03</div>
+    <div class="chapter-title">Alur Kerja Pengembang</div>
+    <div class="chapter-divider"></div>
+</div>
+
+<div class="body-text">
+    Pengembang (Developer) memiliki peran krusial dalam menjaga kelangsungan operasional SAATIRIL melalui penerbitan kode aktivasi lisensi. Tanpa kode aktivasi yang valid, aplikasi akan terkunci dan tidak dapat digunakan. Oleh karena itu, pengembang harus responsif terhadap permintaan kode dari Admin, terutama menjelang dan saat acara wisuda berlangsung.
+</div>
+
+<div class="section-title">Mendapatkan Machine ID dari Admin</div>
+<div class="body-text">
+    Ketika Admin membuka aplikasi SAATIRIL untuk pertama kali atau setelah lisensi kadaluarsa, layar LicenseGate akan muncul dengan menampilkan Machine ID perangkat. Machine ID adalah sidik jari hardware unik sepanjang 64 karakter heksadesimal yang dihitung dari kombinasi CPU, MAC address, dan hostname perangkat Admin. Tidak ada dua komputer yang memiliki Machine ID yang sama.
+</div>
+<div class="body-text">
+    Admin dapat menyalin Machine ID tersebut dengan mengklik tombol "Salin" yang tersedia di layar aktivasi. Machine ID inilah yang harus dikirimkan kepada pengembang agar kode aktivasi yang dihasilkan benar-benar cocok untuk perangkat tersebut. Pastikan Admin mengirimkan 64 karakter lengkap, bukan versi yang terpotong.
+</div>
+
+<div class="gold-box">
+    <div class="gold-title">Format Machine ID</div>
+    <div class="gold-body">
+        Machine ID terdiri dari 64 karakter heksadesimal (0-9, a-f). Contoh tampilan di layar Admin:<br>
+        <code style="color:var(--c-accent);">a3f8b2c1d4e5f607890abcdef1234567890abcdef1234567890abcdef12345678</code><br><br>
+        Machine ID dihitung menggunakan SHA-256 dari gabungan CPU identifier + MAC address + hostname perangkat.
+    </div>
+</div>
+
+<div class="section-title">Menjalankan CLI Tool untuk Generate Kode Aktivasi</div>
+<div class="body-text">
+    Setelah menerima Machine ID dari Admin, pengembang menjalankan CLI tool yang tersedia di repositori proyek untuk menghasilkan kode aktivasi. Tool ini menggunakan secret key khusus yang hanya diketahui oleh pengembang untuk memastikan keaslian setiap kode yang diterbitkan.
+</div>
+
+<ol class="step-list">
+    <li class="step-item">
+        <div class="step-num">1</div>
+        <div class="step-content">
+            <div class="step-title">Buka Terminal di Direktori Proyek</div>
+            <div class="step-desc">Navigasikan ke direktori root proyek SAATIRIL di komputer pengembang. Pastikan Node.js dan dependensi proyek sudah terinstal dengan menjalankan <code style="color:var(--c-accent);">npm install</code> jika belum.</div>
+        </div>
+    </li>
+    <li class="step-item">
+        <div class="step-num">2</div>
+        <div class="step-content">
+            <div class="step-title">Jalankan Perintah Generate License</div>
+            <div class="step-desc">Eksekusi perintah berikut dengan mengganti <code style="color:var(--c-accent);">&lt;machineId&gt;</code> dengan Machine ID yang diterima dari Admin:</div>
+        </div>
+    </li>
+</ol>
+
+<div class="code-block">
+npx tsx tools/generate-license.ts &lt;machineId&gt;
+</div>
+
+<ol class="step-list" start="3">
+    <li class="step-item">
+        <div class="step-num">3</div>
+        <div class="step-content">
+            <div class="step-title">Baca Output dan Kirim ke Admin</div>
+            <div class="step-desc">CLI tool akan menampilkan kode aktivasi dalam format XXXX-XXXX-XXXX-XXXX beserta tanggal kadaluarsa. Salin kode tersebut dan kirimkan ke Admin melalui jalur komunikasi yang aman.</div>
+        </div>
+    </li>
+</ol>
+
+<div class="section-title">Contoh Output CLI Tool</div>
+<div class="code-block">
+$ npx tsx tools/generate-license.ts a3f8b2c1d4e5...<br>
+<br>
+Machine ID : a3f8b2c1d4e5f607...<br>
+Code       : A1B2-C3D4-E5F6-7890<br>
+Expires    : 2026-04-15<br>
+Days Left  : 30
+</div>
+
+<div class="body-text">
+    Dari output di atas, kode aktivasi yang harus dikirimkan ke Admin adalah <code style="color:var(--c-accent);">A1B2-C3D4-E5F6-7890</code>. Tanggal kadaluarsa menunjukkan bahwa kode ini berlaku selama 30 hari sejak tanggal penerbitan. Setelah melewati tanggal tersebut, Admin harus meminta kode baru.
+</div>
+
+<div class="warning-box">
+    <div class="warning-title">Peringatan: Satu Kode per Perangkat</div>
+    <div class="warning-body">
+        Setiap kode aktivasi hanya berlaku untuk satu perangkat dengan Machine ID yang spesifik. Jika Admin berganti komputer atau mengganti komponen hardware utama (CPU, kartu jaringan), Machine ID akan berubah dan kode lama tidak akan berfungsi. Pengembang harus menghasilkan kode baru berdasarkan Machine ID yang baru.
+    </div>
+</div>
+
+<div class="tip-box">
+    <div class="tip-title">Tips: Catat Tanggal Kadaluarsa</div>
+    <div class="tip-body">
+        Pengembang disarankan untuk mencatat setiap kode aktivasi yang diterbitkan beserta Machine ID dan tanggal kadaluarsanya. Dengan demikian, pengembang dapat proaktif mengingatkan Admin sebelum lisensi habis, terutama jika ada jadwal acara wisuda yang mendekat.
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     BAB 4: ALUR KERJA ADMIN
+     ═══════════════════════════════════════════════════ -->
+<div class="chapter-header">
+    <div class="chapter-tag">Bab 04</div>
+    <div class="chapter-title">Alur Kerja Admin</div>
+    <div class="chapter-divider"></div>
+</div>
+
+<div class="body-text">
+    Admin adalah pengguna utama yang menjalankan aplikasi SAATIRIL di laptop/PC. Seluruh proses dimulai dari Admin: mulai dari aktivasi lisensi, pembuatan proyek, pengaturan session password, hingga monitoring dan penyimpanan foto. Berikut adalah langkah-langkah lengkap yang harus dilakukan Admin secara berurutan.
+</div>
+
+<div class="section-title">Langkah 1: Buka Aplikasi SAATIRIL</div>
+<div class="body-text">
+    Jalankan aplikasi SAATIRIL di laptop utama. Jika lisensi belum aktif atau sudah kadaluarsa, layar LicenseGate akan muncul secara otomatis. Layar ini menampilkan banner merah "Aplikasi Terkunci" yang menandakan bahwa Anda harus memasukkan kode aktivasi sebelum dapat menggunakan aplikasi.
+</div>
+
+<div class="section-title">Langkah 2: Salin Machine ID dan Kirim ke Pengembang</div>
+<div class="body-text">
+    Di layar LicenseGate, Anda akan melihat Machine ID yang terdiri dari 64 karakter heksadesimal. Klik tombol "Salin" di samping Machine ID untuk menyalinnya ke clipboard. Kemudian kirimkan Machine ID tersebut kepada pengembang melalui WhatsApp, Telegram, atau media komunikasi lainnya. Pastikan 64 karakter lengkap terkirim tanpa terpotong.
+</div>
+
+<div class="info-box">
+    <div class="info-title">Info: Machine ID Unik per Perangkat</div>
+    <div class="info-body">
+        Machine ID dihitung dari kombinasi CPU, MAC address, dan hostname perangkat Anda. Jika Anda menggunakan komputer yang berbeda, Machine ID akan berbeda pula dan kode aktivasi lama tidak akan berlaku. Selalu salin Machine ID dari komputer yang akan digunakan saat acara.
+    </div>
+</div>
+
+<div class="section-title">Langkah 3: Masukkan Kode Aktivasi</div>
+<div class="body-text">
+    Setelah menerima kode aktivasi dari pengembang, masukkan kode tersebut di field yang tersedia pada layar LicenseGate. Kode aktivasi memiliki format XXXX-XXXX-XXXX-XXXX (16 karakter dengan pemisah tanda hubung). Ketik kode dengan teliti, pastikan huruf besar/kecil sesuai karena kode bersifat case-sensitive. Setelah memasukkan kode, klik tombol "Aktivasi" untuk memvalidasi.
+</div>
+
+<div class="warning-box">
+    <div class="warning-title">Peringatan: Format Kode Aktivasi</div>
+    <div class="warning-body">
+        Kode aktivasi harus dimasukkan persis dalam format XXXX-XXXX-XXXX-XXXX. Jika salah satu karakter salah atau terlewat, validasi akan gagal dan muncul pesan "Kode aktivasi tidak valid". Periksa kembali kode yang diterima dari pengembang sebelum memasukkannya.
+    </div>
+</div>
+
+<div class="section-title">Langkah 4: Buat Proyek Baru</div>
+<div class="body-text">
+    Setelah lisensi berhasil diaktivasi, aplikasi akan terbuka dan Anda dapat mulai menggunakan fitur-fiturnya. Langkah pertama setelah masuk adalah membuat proyek wisuda baru. Klik tombol "Buat Proyek Baru" dan isi informasi yang diperlukan seperti nama acara, tanggal, dan lokasi penyimpanan foto. Setelah proyek dibuat, sistem akan secara otomatis memulai server LAN.
+</div>
+
+<div class="section-title">Langkah 5: Atur Session Password</div>
+<div class="body-text">
+    Sebelum MC dan Operator dapat bergabung ke sesi, Anda harus mengatur session password. Buka pengaturan session password di aplikasi dan masukkan password yang diinginkan. Password ini akan di-hash menggunakan SHA-256 sebelum disimpan, sehingga tidak tersimpan dalam bentuk plain text. Sampaikan password ini kepada MC dan Operator melalui jalur komunikasi yang aman.
+</div>
+
+<div class="tip-box">
+    <div class="tip-title">Tips: Password yang Mudah Dikomunikasikan</div>
+    <div class="tip-body">
+        Gunakan password yang mudah disampaikan secara lisan, misalnya "wisuda2026" atau "uantasari26". Hindari karakter spesial yang membingungkan saat diucapkan. Password bersifat case-sensitive, jadi pastikan MC dan Operator mengetahui huruf besar/kecil yang tepat.
+    </div>
+</div>
+
+<div class="section-title">Langkah 6: Bagikan LAN URL</div>
+<div class="body-text">
+    Setelah session password diatur, berikan informasi berikut kepada MC dan Operator agar mereka dapat bergabung ke sesi:
+</div>
+
+<div class="card">
+    <div class="card-title">URL LAN untuk MC dan Operator</div>
+    <div class="card-body">
+        <strong>MC Channel 1:</strong> <code style="color:var(--c-accent);">http://&lt;admin-ip&gt;:3000/?role=mc&amp;channel=1</code><br><br>
+        <strong>MC Channel 2:</strong> <code style="color:var(--c-accent);">http://&lt;admin-ip&gt;:3000/?role=mc&amp;channel=2</code><br><br>
+        <strong>Operator:</strong> <code style="color:var(--c-accent);">http://&lt;admin-ip&gt;:3000/?role=operator</code><br><br>
+        Ganti <code style="color:var(--c-accent);">&lt;admin-ip&gt;</code> dengan IP Address laptop Admin di jaringan lokal (contoh: <code style="color:var(--c-accent);">192.168.1.100</code>).
+    </div>
+</div>
+
+<div class="warning-box">
+    <div class="warning-title">Peringatan: Lisensi Kadaluarsa 30 Hari</div>
+    <div class="warning-body">
+        Setiap kode aktivasi hanya berlaku selama 30 hari sejak tanggal penerbitan. Jika masa berlaku lisensi tinggal 7 hari atau kurang, aplikasi akan menampilkan peringatan berwarna kuning. Segera hubungi pengembang untuk mendapatkan kode baru sebelum lisensi benar-benar kadaluarsa dan aplikasi terkunci.
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     BAB 5: ALUR KERJA MC
+     ═══════════════════════════════════════════════════ -->
+<div class="chapter-header">
+    <div class="chapter-tag">Bab 05</div>
+    <div class="chapter-title">Alur Kerja MC</div>
+    <div class="chapter-divider"></div>
+</div>
+
+<div class="body-text">
+    Master of Ceremony (MC) mengakses SAATIRIL melalui browser di perangkat yang terhubung ke jaringan LAN yang sama dengan laptop Admin. MC tidak perlu menginstal aplikasi apapun; cukup menggunakan browser modern seperti Google Chrome atau Microsoft Edge. Berikut adalah langkah-langkah lengkap yang harus dilakukan MC untuk bergabung dan mengoperasikan panel MC.
+</div>
+
+<div class="section-title">Langkah 1: Buka Browser dan Akses URL Panel MC</div>
+<div class="body-text">
+    Buka browser di perangkat Anda (laptop, tablet, atau perangkat lain yang terhubung ke jaringan yang sama dengan Admin). Ketik URL berikut di address bar browser sesuai dengan channel yang ditugaskan kepada Anda:
+</div>
+
+<div class="card">
+    <div class="card-title">URL Panel MC</div>
+    <div class="card-body">
+        <strong>Channel 1:</strong> <code style="color:var(--c-accent);">http://&lt;admin-ip&gt;:3000/?role=mc&amp;channel=1</code><br><br>
+        <strong>Channel 2:</strong> <code style="color:var(--c-accent);">http://&lt;admin-ip&gt;:3000/?role=mc&amp;channel=2</code><br><br>
+        Ganti <code style="color:var(--c-accent);">&lt;admin-ip&gt;</code> dengan IP Address laptop Admin yang telah disampaikan sebelumnya. Misalnya, jika IP Admin adalah 192.168.1.100 dan Anda ditugaskan di Channel 1, maka URL-nya adalah: <code style="color:var(--c-accent);">http://192.168.1.100:3000/?role=mc&amp;channel=1</code>
+    </div>
+</div>
+
+<div class="info-box">
+    <div class="info-title">Info: MC Buka di Laptop yang Sama dengan Admin</div>
+    <div class="info-body">
+        Jika MC berjalan di laptop yang sama dengan Admin, gunakan URL <code style="color:var(--c-accent);">http://localhost:3000/?role=mc&amp;channel=1</code>. Buka di tab browser terpisah dari aplikasi Admin. Pastikan browser dalam mode normal (bukan incognito) agar koneksi Socket.io stabil.
+    </div>
+</div>
+
+<div class="section-title">Langkah 2: Masukkan Session Password</div>
+<div class="body-text">
+    Setelah halaman dimuat, Anda akan diminta untuk memasukkan session password. Password ini telah diset oleh Admin dan harus Anda ketahui sebelumnya. Ketik password dengan teliti, ingat bahwa password bersifat case-sensitive (huruf besar dan kecil berpengaruh). Jika password salah, Anda tidak akan dapat bergabung ke sesi dan perlu memasukkan ulang.
+</div>
+
+<div class="section-title">Langkah 3: Kontrol Panel MC</div>
+<div class="body-text">
+    Setelah berhasil bergabung, panel MC akan menampilkan antarmuka yang terhubung secara real-time dengan sistem Admin. Anda dapat memanggil nama wisudawan, melihat status foto (sudah diambil atau belum), dan mengatur ritme acara. Setiap aksi yang dilakukan di panel MC akan langsung terlihat di dashboard Admin dan panel Operator tanpa delay yang signifikan.
+</div>
+<div class="body-text">
+    Panel MC juga menampilkan indikator koneksi ke server sehingga Anda dapat memantau apakah koneksi LAN masih aktif. Jika koneksi terputus, sistem akan secara otomatis mencoba menyambung kembali. Namun jika koneksi tidak pulih dalam waktu lama, segera koordinasi dengan Admin untuk memeriksa jaringan.
+</div>
+
+<div class="tip-box">
+    <div class="tip-title">Tips: Siapkan Daftar Wisudawan</div>
+    <div class="tip-body">
+        Sebelum acara dimulai, pastikan Anda sudah memiliki daftar wisudawan yang akan dipanggil sesuai urutan. Hal ini akan mempercepat proses pemanggilan dan mengurangi jeda antar wisudawan. Koordinasikan dengan Admin mengenai channel yang digunakan jika ada dua jalur wisuda yang berjalan paralel.
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     BAB 6: ALUR KERJA OPERATOR
+     ═══════════════════════════════════════════════════ -->
+<div class="chapter-header">
+    <div class="chapter-tag">Bab 06</div>
+    <div class="chapter-title">Alur Kerja Operator</div>
+    <div class="chapter-divider"></div>
+</div>
+
+<div class="body-text">
+    Operator Kamera mengakses SAATIRIL melalui browser di perangkat yang terhubung ke kamera dan jaringan LAN. Sama seperti MC, Operator tidak perlu menginstal aplikasi khusus; cukup menggunakan browser modern. Namun, perangkat Operator harus memiliki kamera yang terhubung dan diizinkan untuk diakses oleh browser. Berikut adalah langkah-langkah lengkap untuk Operator.
+</div>
+
+<div class="section-title">Langkah 1: Buka Browser dan Akses URL Panel Operator</div>
+<div class="body-text">
+    Buka browser di laptop/perangkat yang terhubung ke kamera. Ketik URL berikut di address bar:
+</div>
+
+<div class="card">
+    <div class="card-title">URL Panel Operator</div>
+    <div class="card-body">
+        <code style="color:var(--c-accent);">http://&lt;admin-ip&gt;:3000/?role=operator</code><br><br>
+        Ganti <code style="color:var(--c-accent);">&lt;admin-ip&gt;</code> dengan IP Address laptop Admin. Misalnya: <code style="color:var(--c-accent);">http://192.168.1.100:3000/?role=operator</code>
+    </div>
+</div>
+
+<div class="section-title">Langkah 2: Izinkan Akses Kamera</div>
+<div class="body-text">
+    Saat pertama kali membuka panel Operator, browser akan meminta izin untuk mengakses kamera. Klik "Allow" atau "Izinkan" untuk memberikan akses. Jika Anda menolak izin ini, kamera tidak akan terdeteksi oleh panel dan Anda tidak dapat mengambil foto. Jika tidak muncul permintaan izin, periksa pengaturan browser dan pastikan akses kamera diizinkan untuk situs tersebut.
+</div>
+
+<div class="warning-box">
+    <div class="warning-title">Peringatan: Kamera Digunakan Aplikasi Lain</div>
+    <div class="warning-body">
+        Jika kamera sedang digunakan oleh aplikasi lain (misalnya Zoom, Skype, atau OBS Studio), browser tidak akan dapat mengaksesnya. Tutup terlebih dahulu semua aplikasi yang menggunakan kamera sebelum membuka panel Operator. Jika kamera tetap tidak terdeteksi, restart browser dan coba lagi.
+    </div>
+</div>
+
+<div class="section-title">Langkah 3: Masukkan Session Password</div>
+<div class="body-text">
+    Sama seperti MC, Anda akan diminta memasukkan session password setelah halaman dimuat. Ketik password yang telah diberikan oleh Admin. Password bersifat case-sensitive, jadi pastikan huruf besar/kecil sudah benar. Jika password salah, Anda tidak akan dapat bergabung dan perlu memasukkan ulang.
+</div>
+
+<div class="section-title">Langkah 4: Kontrol Kamera</div>
+<div class="body-text">
+    Setelah berhasil bergabung dan kamera aktif, panel Operator akan menampilkan preview kamera secara real-time beserta kontrol-kontrol yang tersedia. Anda dapat mengambil foto wisudawan dengan mengklik tombol "Capture", melakukan retake jika hasil foto kurang memuaskan, dan memilih kamera dari dropdown jika ada lebih dari satu kamera yang terhubung.
+</div>
+<div class="body-text">
+    Foto yang diambil akan otomatis dikirim ke Admin melalui jaringan LAN dan disimpan ke disk oleh aplikasi Admin. Nama file foto mengikuti format NIM_Nama.jpg, dan jika dilakukan retake, versi baru akan diberi suffix (v2, v3, dan seterusnya). Anda tidak perlu khawatir tentang penyimpanan karena seluruh proses dilakukan secara otomatis.
+</div>
+
+<div class="tip-box">
+    <div class="tip-title">Tips: Posisi Kamera yang Optimal</div>
+    <div class="tip-body">
+        Pastikan kamera berada pada posisi dan sudut yang optimal sebelum acara dimulai. Gunakan tripod untuk stabilitas. Atur resolusi kamera ke tingkat tertinggi yang didukung oleh browser. Jika menggunakan mode dual, pastikan kedua kamera sudah terdeteksi dan berfungsi dengan baik di panel Operator.
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     BAB 7: SISTEM LISENSI
+     ═══════════════════════════════════════════════════ -->
+<div class="chapter-header">
+    <div class="chapter-tag">Bab 07</div>
+    <div class="chapter-title">Sistem Lisensi</div>
+    <div class="chapter-divider"></div>
+</div>
+
+<div class="body-text">
+    SAATIRIL menggunakan sistem lisensi bulanan yang dirancang untuk melindungi penggunaan aplikasi dan memastikan setiap instalasi terautentikasi. Sistem ini terikat ke hardware perangkat Admin melalui Machine ID, sehingga setiap kode aktivasi hanya berlaku untuk satu perangkat tertentu. Berikut adalah penjelasan detail mengenai cara kerja sistem lisensi.
+</div>
+
+<div class="section-title">Cara Kerja Lisensi</div>
+<div class="body-text">
+    Ketika aplikasi SAATIRIL dibuka di laptop Admin, sistem akan memeriksa apakah ada lisensi yang valid tersimpan di perangkat. Lisensi disimpan secara terenkripsi dalam file <code style="color:var(--c-accent);">license.dat</code> yang terletak di folder <code style="color:var(--c-accent);">%APPDATA%/SAATIRIL/</code> pada sistem Windows. File ini berisi informasi kode aktivasi, tanggal penerbitan, dan tanggal kadaluarsa yang dienkripsi untuk mencegah manipulasi.
+</div>
+<div class="body-text">
+    Jika tidak ada lisensi yang valid atau lisensi sudah kadaluarsa, aplikasi akan langsung menampilkan layar LicenseGate dengan banner merah "Aplikasi Terkunci". Tidak ada masa tenggang (grace period) yang diberikan; aplikasi sepenuhnya terkunci sampai kode aktivasi yang valid dimasukkan. Hal ini memastikan bahwa hanya pengguna dengan lisensi aktif yang dapat mengoperasikan aplikasi.
+</div>
+
+<div class="section-title">Proses Pembuatan Kode Aktivasi</div>
+<div class="body-text">
+    Kode aktivasi dihasilkan melalui proses kriptografis yang melibatkan Machine ID, waktu penerbitan, dan secret key khusus. Secara teknis, kode aktivasi adalah 16 karakter pertama dari SHA-256(machineId:monthly:expiryHex:SECRET), yang kemudian diformat dalam pola XXXX-XXXX-XXXX-XXXX. Secret key yang digunakan adalah SAATIRIL-2026-HUMAS-UIN-ANTASARI-BANJARMASIN, yang hanya diketahui oleh pengembang.
+</div>
+<div class="body-text">
+    Proses validasi kode dilakukan secara lokal di perangkat Admin tanpa perlu koneksi internet. Aplikasi akan menghitung ulang hash berdasarkan Machine ID perangkat dan membandingkannya dengan kode yang dimasukkan. Jika cocok dan belum melewati tanggal kadaluarsa, lisensi akan dianggap valid dan aplikasi terbuka.
+</div>
+
+<div class="section-title">Masa Berlaku Lisensi</div>
+<div class="card">
+    <div class="card-title">Detail Masa Berlaku</div>
+    <div class="card-body">
+        <strong>Tipe Lisensi:</strong> Bulanan (Monthly) saja. Setiap kode aktivasi berlaku tepat 30 hari sejak tanggal penerbitan.<br><br>
+        <strong>Peringatan Kadaluarsa:</strong> Jika masa berlaku lisensi tinggal 7 hari atau kurang, aplikasi akan menampilkan peringatan berwarna kuning di bagian atas layar. Peringatan ini mengingatkan Admin untuk segera menghubungi pengembang.<br><br>
+        <strong>Setelah Kadaluarsa:</strong> Aplikasi akan terkunci sepenuhnya. Banner merah "Aplikasi Terkunci" akan muncul dan semua fitur tidak dapat diakses sampai kode aktivasi baru dimasukkan.
+    </div>
+</div>
+
+<div class="section-title">Perpanjangan Lisensi</div>
+<div class="body-text">
+    Untuk memperpanjang lisensi, Admin harus mengulangi proses yang sama seperti saat aktivasi pertama: salin Machine ID dari layar LicenseGate, kirimkan ke pengembang, terima kode aktivasi baru, dan masukkan ke aplikasi. Kode aktivasi lama tidak dapat diperpanjang; pengembang harus menerbitkan kode baru yang berbeda untuk setiap periode 30 hari.
+</div>
+
+<div class="warning-box">
+    <div class="warning-title">Peringatan: Jangan Tunggu Habis</div>
+    <div class="warning-body">
+        Jangan menunggu lisensi benar-benar kadaluarsa untuk meminta kode baru. Jika ada acara wisuda yang dijadwalkan, pastikan lisensi masih aktif setidaknya 7 hari setelah tanggal acara. Perpanjanglah lisensi sebelum peringatan kuning muncul untuk menghindari kendala teknis di hari H.
+    </div>
+</div>
+
+<div class="section-title">Machine ID dan Perubahan Hardware</div>
+<div class="body-text">
+    Machine ID dihitung dari sidik jari hardware perangkat yang mencakup CPU identifier, MAC address kartu jaringan, dan hostname komputer. Jika terjadi perubahan pada salah satu komponen ini, Machine ID akan berubah dan lisensi yang tersimpan menjadi tidak valid. Beberapa skenario yang dapat menyebabkan perubahan Machine ID antara lain:
+</div>
+<ul class="checklist">
+    <li><span class="check-icon">&#10003;</span> Mengganti komputer atau laptop yang digunakan</li>
+    <li><span class="check-icon">&#10003;</span> Upgrade atau penggantian prosesor (CPU)</li>
+    <li><span class="check-icon">&#10003;</span> Mengganti kartu jaringan (NIC) atau menggunakan adapter USB LAN yang berbeda</li>
+    <li><span class="check-icon">&#10003;</span> Mengubah hostname komputer</li>
+</ul>
+<div class="body-text">
+    Jika Machine ID berubah, Anda harus menghubungi pengembang untuk mendapatkan kode aktivasi baru. Kode lama tidak akan berfungsi pada Machine ID yang baru.
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     BAB 8: TROUBLESHOOTING
+     ═══════════════════════════════════════════════════ -->
+<div class="chapter-header">
+    <div class="chapter-tag">Bab 08</div>
+    <div class="chapter-title">Troubleshooting</div>
+    <div class="chapter-divider"></div>
+</div>
+
+<div class="body-text">
+    Bagian ini membahas masalah-masalah umum yang mungkin ditemui saat menggunakan SAATIRIL beserta langkah-langkah penyelesaiannya. Jika Anda mengalami masalah yang tidak tercakup di bawah ini, hubungi pengembang untuk bantuan lebih lanjut.
+</div>
+
+<div class="section-title">Masalah Lisensi</div>
+
+<div class="card">
+    <div class="card-title">"Aplikasi Terkunci" muncul saat membuka aplikasi</div>
+    <div class="card-body">
+        <strong>Penyebab:</strong> Lisensi belum diaktivasi atau sudah kadaluarsa. Aplikasi langsung terkunci tanpa masa tenggang jika tidak ditemukan lisensi yang valid.<br><br>
+        <strong>Solusi:</strong> Salin Machine ID dari layar LicenseGate (klik tombol "Salin"), kirimkan ke pengembang, dan masukkan kode aktivasi yang diterima. Pastikan kode dimasukkan dalam format XXXX-XXXX-XXXX-XXXX dengan benar.
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-title">"Kode aktivasi tidak valid"</div>
+    <div class="card-body">
+        <strong>Penyebab:</strong> Kode aktivasi yang dimasukkan tidak cocok dengan Machine ID perangkat ini. Kemungkinan kode dibuat untuk komputer lain, atau ada kesalahan saat menyalin Machine ID atau kode aktivasi.<br><br>
+        <strong>Solusi:</strong> Salin ulang Machine ID lengkap dari layar aktivasi (pastikan 64 karakter penuh) dan kirimkan ke pengembang. Minta pengembang untuk menghasilkan ulang kode berdasarkan Machine ID yang benar. Juga periksa apakah kode aktivasi diketik dengan benar termasuk huruf besar/kecil.
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-title">"Kode sudah kadaluarsa"</div>
+    <div class="card-body">
+        <strong>Penyebab:</strong> Kode aktivasi yang dimasukkan sudah melewati masa berlaku 30 hari. Setiap kode hanya berlaku selama satu bulan dan tidak dapat diperpanjang.<br><br>
+        <strong>Solusi:</strong> Hubungi pengembang untuk mendapatkan kode aktivasi baru. Prosesnya sama dengan aktivasi pertama: kirim Machine ID, terima kode baru, masukkan ke aplikasi. Kode lama tidak bisa digunakan lagi setelah kadaluarsa.
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-title">Peringatan kuning "Lisensi segera berakhir" (sisa 7 hari)</div>
+    <div class="card-body">
+        <strong>Penyebab:</strong> Masa berlaku lisensi tinggal 7 hari atau kurang. Peringatan ini muncul sebagai pengingat agar Admin segera memperpanjang lisensi sebelum terkunci.<br><br>
+        <strong>Solusi:</strong> Segera hubungi pengembang dan minta kode aktivasi baru. Jangan tunda hingga lisensi benar-benar habis, terutama jika ada acara wisuda yang dijadwalkan dalam waktu dekat.
+    </div>
+</div>
+
+<div class="section-title">Masalah Koneksi LAN</div>
+
+<div class="card">
+    <div class="card-title">"Gagal menyambung ke sesi" di panel MC/Operator</div>
+    <div class="card-body">
+        <strong>Penyebab:</strong> Perangkat MC/Operator tidak dapat terhubung ke server SAATIRIL yang berjalan di laptop Admin.<br><br>
+        <strong>Langkah Pengecekan:</strong><br>
+        1. Pastikan perangkat terhubung ke jaringan LAN/WiFi yang sama dengan Admin<br>
+        2. Pastikan aplikasi SAATIRIL sudah berjalan di laptop Admin<br>
+        3. Periksa apakah IP Address yang dimasukkan di URL benar<br>
+        4. Coba akses <code style="color:var(--c-accent);">http://[IP-ADMIN]:3000</code> langsung di browser<br>
+        5. Nonaktifkan firewall Windows sementara untuk testing<br>
+        6. Pastikan port 3000 dan 3003 tidak diblokir oleh antivirus<br>
+        7. Pastikan tidak ada aplikasi lain yang menggunakan port tersebut
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-title">"Password salah" saat MC/Operator mencoba bergabung</div>
+    <div class="card-body">
+        <strong>Penyebab:</strong> Session password yang dimasukkan tidak cocok dengan yang diset oleh Admin.<br><br>
+        <strong>Solusi:</strong> Verifikasi kembali password dengan Admin. Password bersifat case-sensitive (huruf besar/kecil berpengaruh). Jika lupa password, Admin bisa mengatur ulang session password dari aplikasi SAATIRIL. Setelah direset, sampaikan password baru kepada semua MC dan Operator.
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-title">Koneksi sering terputus di tengah acara</div>
+    <div class="card-body">
+        <strong>Penyebab:</strong> Sinyal WiFi lemah, interferensi, atau beban jaringan terlalu tinggi.<br><br>
+        <strong>Solusi:</strong> Gunakan kabel LAN untuk koneksi yang lebih stabil. Jika harus menggunakan WiFi, pastikan perangkat dekat dengan router dan tidak ada hambatan fisik. Kurangi jumlah perangkat yang terhubung ke router jika memungkinkan. Sistem akan otomatis mencoba menyambung kembali saat koneksi pulih.
+    </div>
+</div>
+
+<div class="section-title">Masalah Kamera</div>
+
+<div class="card">
+    <div class="card-title">Kamera tidak terdeteksi di browser Operator</div>
+    <div class="card-body">
+        <strong>Langkah Pengecekan:</strong><br>
+        1. Pastikan kamera terhubung dan dikenali oleh Windows (cek Device Manager)<br>
+        2. Berikan izin akses kamera saat browser meminta (klik "Allow")<br>
+        3. Jika kamera digunakan aplikasi lain (Zoom, OBS), tutup aplikasi tersebut terlebih dahulu<br>
+        4. Coba ganti kamera dari dropdown di panel Operator<br>
+        5. Restart browser dan coba lagi<br>
+        6. Pastikan menggunakan browser Chrome atau Edge versi terbaru
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-title">Foto tidak tersimpan di folder</div>
+    <div class="card-body">
+        <strong>Penyebab:</strong> Hanya Admin (Electron app) yang bisa menyimpan foto ke disk. Operator di browser tidak menyimpan secara langsung; foto dikirim melalui LAN ke Admin untuk disimpan.<br><br>
+        <strong>Solusi:</strong> Pastikan aplikasi SAATIRIL di laptop Admin berjalan dan terhubung ke jaringan. Periksa koneksi antara Operator dan Admin. Jika koneksi terputus saat foto dikirim, foto mungkin hilang dan perlu di-retake setelah koneksi pulih.
+    </div>
+</div>
+
+<div class="section-title">Masalah Lainnya</div>
+
+<div class="card">
+    <div class="card-title">Aplikasi SAATIRIL tidak mau terbuka (Windows)</div>
+    <div class="card-body">
+        <strong>Langkah Pengecekan:</strong><br>
+        1. Untuk versi Portable: klik kanan file .exe, pilih "Run as Administrator"<br>
+        2. Untuk versi Installer: jalankan dari shortcut Desktop atau Start Menu<br>
+        3. Nonaktifkan antivirus sementara (Windows Defender kadang memblokir aplikasi baru)<br>
+        4. Pastikan tidak ada instance SAATIRIL lain yang sedang berjalan (cek Task Manager)<br>
+        5. Coba restart komputer dan jalankan ulang aplikasi
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-title">Data sinkronisasi tidak muncul di perangkat lain</div>
+    <div class="card-body">
+        <strong>Penyebab:</strong> Koneksi terputus saat data dikirim, atau perangkat belum terautentikasi dengan session password yang benar.<br><br>
+        <strong>Solusi:</strong> Pastikan semua perangkat sudah memasukkan session password dengan benar. Periksa indikator koneksi di header masing-masing panel. Jika koneksi pulih setelah terputus, data akan otomatis tersinkronisasi melalui mekanisme SYNC_DB. Jika masih tidak muncul, refresh halaman browser dan masukkan ulang password.
+    </div>
+</div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     ENDING PAGE
+     ═══════════════════════════════════════════════════ -->
+<div class="ending">
+    <div class="ending-text">SAATIRIL</div>
+    <div class="ending-line"></div>
+    <div class="ending-sub">
+        Sistem Auto Track Input, Raw Into Live<br><br>
+        Pengelolaan Foto Wisuda<br>
+        UIN Antasari Banjarmasin<br><br>
+        <span style="color: rgba(255,255,255,0.3); font-size: 12px;">Edisi 2026 &mdash; Versi 1.0.0</span>
+    </div>
+</div>
+
+</body>
+</html>

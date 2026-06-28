@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useCallback, useLayoutEffect, Component, ReactNode } from 'react'
+import { useEffect, useCallback, useLayoutEffect, useState, Component, ReactNode } from 'react'
 import { useSaatirilStore, sanitizeProject } from '@/store/use-saatiril-store'
 import { ProjectHub } from '@/components/saatiril/project-hub'
 import ProjectSetup from '@/components/saatiril/project-setup'
 import { MainApp } from '@/components/saatiril/main-app'
+import { LicenseGate } from '@/components/saatiril/license-gate'
 import { Button } from '@/components/ui/button'
 import { AlertTriangle, Wrench, Home as HomeIcon } from 'lucide-react'
 
@@ -130,6 +131,7 @@ class ScreenErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySta
 export default function Home() {
   const currentScreen = useSaatirilStore((s) => s.currentScreen)
   const loadProjectsFromStorage = useSaatirilStore((s) => s.loadProjectsFromStorage)
+  const [licenseValid, setLicenseValid] = useState(false)
 
   // ── URL parameter routing for LAN clients (MC/Operator) ─────────────────
   // Detect role from URL and bypass hub/setup screens for non-admin clients.
@@ -179,6 +181,13 @@ export default function Home() {
     window.addEventListener('error', handler)
     return () => window.removeEventListener('error', handler)
   }, [])
+
+  // ── License gate: show lock screen until license is valid ──────────────
+  // In Electron: LicenseGate checks license status, shows activation UI if invalid
+  // In browser (LAN client): LicenseGate auto-bypasses (no Electron API available)
+  if (!licenseValid) {
+    return <LicenseGate onLicenseValid={() => setLicenseValid(true)} />
+  }
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden">
