@@ -71,3 +71,36 @@ Stage Summary:
 - Key fix: Removed premature REQUEST_STATE that server would ignore
 - Key improvement: Comprehensive auth debug logging for LAN diagnosis
 - Commit: bfaca75 "fix: SHA-256 fallback for HTTP LAN, better auth debug logging, fix premature REQUEST_STATE"
+
+---
+Task ID: FIX-MC-SYNC-STUCK
+Agent: Main Agent
+Task: Fix MC stuck on "Sinkronisasi Data — Menunggu data proyek dari Admin..." when accessing via LAN link
+
+Work Log:
+- Investigated the full MC connection flow: page load → socket connect → auth → REQUEST_STATE → admin responds SYNC_DB
+- Identified 4 root causes:
+  1. socket.ts isSandboxMode detection broken: included !socketPortParam which made it false when MC opens link with ?socketPort=3003 from admin dashboard
+  2. main-app.tsx Admin identifies as 'unknown' on socket server because socket.ts reads role from URL params, admin has no ?role=admin
+  3. main-app.tsx Join screen only showed for password issues, not for connection failures — MC fell through to confusing sync screen
+  4. saatiril-socket/index.ts connectionStateRecovery option caused Node.js segfault when behind Caddy reverse proxy
+- Fixed socket.ts: isSandboxMode = !isElectron && !isDirectLanAccess (based on access port, not URL params)
+- Fixed socket.ts: getSocketUrl() returns window.location.origin in sandbox mode regardless of socketPort param
+- Fixed main-app.tsx: Admin re-identifies with role='admin' from Zustand store on socket connect
+- Fixed main-app.tsx: Added !serverConnected to showJoinScreen condition for better UX
+- Fixed main-app.tsx: Added connection status indicator on sync screen when connection drops
+- Fixed saatiril-socket/index.ts: Disabled connectionStateRecovery (causes crash behind Caddy proxy)
+- Added myChannelRef for stable channel access in event handlers
+- Added dev:all script in package.json to start both servers together
+- Tested: Caddy proxy to socket.io server works correctly (polling + websocket)
+- Tested: MC connects, authenticates, and sends REQUEST_STATE successfully through Caddy proxy
+- Lint: clean
+- Committed and pushed to main
+
+Stage Summary:
+- 4 root causes identified and fixed for MC stuck on "Sinkronisasi Data"
+- Socket sandbox mode detection now based on access port, not URL params
+- Admin properly identifies as 'admin' on socket server
+- MC shows useful connection states (connecting/failed) instead of stuck on sync screen
+- connectionStateRecovery disabled to prevent Caddy proxy crash
+- Commit: 688d115 - pushed to main
