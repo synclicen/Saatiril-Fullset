@@ -325,6 +325,10 @@ export default function AdminDashboard() {
 
   // ── Copy link handler ────────────────────────────────────────────
   // All links use HTTP. Operator needs Chrome Flag for camera access.
+  //
+  // CRITICAL: When the admin accesses via localhost, generated links also
+  // use localhost — which doesn't work on other devices (phones, other laptops).
+  // We detect the LAN IP via WebRTC and substitute it in the URL when needed.
   const copyLink = useCallback(
     async (role: string, channel: number) => {
       const api = window.saatirilAPI
@@ -347,7 +351,45 @@ export default function AdminDashboard() {
       } else {
         // Web/sandbox mode: include socketPort so LAN clients can connect to the Socket.io server
         const socketPort = new URLSearchParams(window.location.search).get('socketPort') || '3003'
-        url = `${window.location.origin}/?role=${role}&channel=${channel}&socketPort=${socketPort}`
+        let origin = window.location.origin
+
+        // CRITICAL FIX: If accessing via localhost/127.0.0.1, the generated link
+        // won't work on other devices (phones, other laptops). Try to detect the
+        // LAN IP and substitute it so cross-device access works.
+        const hostname = window.location.hostname
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+          try {
+            // Detect LAN IP via WebRTC (same technique as main-app.tsx)
+            const pc = new RTCPeerConnection({ iceServers: [] })
+            pc.createDataChannel('')
+            const offer = await pc.createOffer()
+            await pc.setLocalDescription(offer)
+
+            const lanIP = await new Promise<string | null>((resolve) => {
+              const timeout = setTimeout(() => { pc.close(); resolve(null) }, 3000)
+              pc.onicecandidate = (e) => {
+                if (!e.candidate) return
+                const parts = e.candidate.candidate.split(' ')
+                const ip = parts[4]
+                if (ip && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip) && !ip.startsWith('0.') && ip !== '0.0.0.0') {
+                  clearTimeout(timeout)
+                  pc.close()
+                  resolve(ip)
+                }
+              }
+            })
+
+            if (lanIP) {
+              const port = window.location.port || '3000'
+              origin = `http://${lanIP}:${port}`
+              console.log(`[SAATIRIL] LAN IP detected for link: ${lanIP}`)
+            }
+          } catch {
+            // WebRTC not available — keep localhost URL
+          }
+        }
+
+        url = `${origin}/?role=${role}&channel=${channel}&socketPort=${socketPort}`
       }
       try {
         if (navigator.clipboard) {
