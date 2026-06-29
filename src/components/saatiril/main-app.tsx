@@ -194,7 +194,12 @@ export function MainApp() {
       // On (re)connection, re-request state sync from admin to ensure we have latest data
       const role = myRoleRef.current
       if (role !== 'admin') {
-        emitLocal('REQUEST_STATE', { role, channel: useSaatirilStore.getState().myChannel })
+        // Only request state if authenticated — if password is required,
+        // the REQUEST_STATE would be blocked by the server anyway.
+        // After successful auth, handleAuthSuccess will send REQUEST_STATE.
+        if (isSocketAuthenticated()) {
+          emitLocal('REQUEST_STATE', { role, channel: useSaatirilStore.getState().myChannel })
+        }
       } else {
         // Admin: if project has a session password, (re-)set it on the server
         // This is critical for reconnection — the server may have restarted or
@@ -308,15 +313,18 @@ export function MainApp() {
       }
       if (authState.passwordRequired) {
         setServerRequiresPassword(true)
-        // If password is required and we're not authenticated, mark as unverified
-        if (!authState.authenticated && myRole !== 'admin') {
+        // CRITICAL FIX: If server requires password, non-admin clients
+        // must NOT be considered verified, even if authState.authenticated
+        // is true from a previous session. The server may have just received
+        // a new password from the admin, invalidating previous auth.
+        if (myRoleRef.current !== 'admin') {
           setSessionPasswordVerified(false)
         }
-      }
-      // If already authenticated (e.g., admin or non-admin with correct password),
-      // mark as verified
-      if (authState.authenticated) {
-        setSessionPasswordVerified(true)
+      } else {
+        // No password required — if authenticated, mark as verified
+        if (authState.authenticated && myRoleRef.current !== 'admin') {
+          setSessionPasswordVerified(true)
+        }
       }
     })
 
@@ -401,10 +409,27 @@ export function MainApp() {
         // SECURITY: Strip the session password from REQUEST_STATE — the server now handles
         // password validation, so we never send the actual password over the LAN.
         // Instead, we send a flag so clients know a password is required.
+
+        // Ensure frame data is actual base64, not '__FRAME_SAVED__' marker.
+        // The store's setCurrentProject/updateCurrentProject should restore from
+        // separate localStorage, but as a safety net, check and restore here too.
+        let frameToSend = curProj.config.frame
+        if (frameToSend === '__FRAME_SAVED__') {
+          const savedFrame = typeof window !== 'undefined'
+            ? localStorage.getItem(`saatiril_frame_${curProj.id}`)
+            : null
+          if (savedFrame) {
+            frameToSend = savedFrame
+          } else {
+            frameToSend = null // No frame available — don't send marker
+          }
+        }
+
         const safeProject = {
           ...curProj,
           config: {
             ...curProj.config,
+            frame: frameToSend,
             sessionPassword: curProj.config.sessionPassword ? '__PASSWORD_SET__' : undefined,
           },
           // Strip photo history photos (they're already sent via PHOTOS_SAVED events)
@@ -432,12 +457,15 @@ export function MainApp() {
     // Try to recover project from localStorage first (for reconnection/recovery)
     loadProjectsFromStorage()
 
-    // Request state from admin via socket
-    emitLocal('REQUEST_STATE', { role: myRole, channel: myChannel })
+    // Request state from admin via socket (only if authenticated)
+    if (isSocketAuthenticated()) {
+      emitLocal('REQUEST_STATE', { role: myRole, channel: myChannel })
+    }
 
-    // Periodic retry while we don't have a project
+    // Periodic retry while we don't have a project AND we're authenticated
+    // (unauthenticated clients can't relay messages, so REQUEST_STATE would be blocked)
     const requestInterval = setInterval(() => {
-      if (!useSaatirilStore.getState().currentProject) {
+      if (!useSaatirilStore.getState().currentProject && isSocketAuthenticated()) {
         emitLocal('REQUEST_STATE', { role: myRole, channel: myChannel })
       }
     }, 3000)

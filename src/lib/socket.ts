@@ -17,13 +17,108 @@ let currentSessionPasswordHash: string | null = null
 let isAuthenticated: boolean = false
 let authRequiredByServer: boolean = false
 
-// ─── SHA-256 hash helper (browser native) ──────────────────────────────────
+// ─── SHA-256 hash helper (browser native with fallback) ────────────────────
+// crypto.subtle is not available in insecure contexts (HTTP non-localhost).
+// LAN clients (MC/Operator) connect via HTTP LAN IP, so we need a fallback.
 async function sha256(text: string): Promise<string> {
   const encoder = new TextEncoder()
   const data = encoder.encode(text)
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+
+  // Try native crypto.subtle first (available in secure contexts & modern browsers)
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    try {
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+      const hashArray = Array.from(new Uint8Array(hashBuffer))
+      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+    } catch {
+      // Fall through to pure JS implementation
+    }
+  }
+
+  // Pure JavaScript SHA-256 fallback for insecure HTTP contexts
+  // This ensures LAN clients can hash passwords even without crypto.subtle
+  return sha256Fallback(data)
+}
+
+/**
+ * Pure JavaScript SHA-256 implementation for insecure contexts.
+ * Used when crypto.subtle is not available (e.g., HTTP LAN connections).
+ */
+function sha256Fallback(data: Uint8Array): string {
+  // SHA-256 constants
+  const K = new Uint32Array([
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ])
+
+  // Pre-processing: adding padding bits
+  const msgLen = data.length
+  const bitLen = msgLen * 8
+  // Calculate padded length: message + 1 (0x80) + padding zeros + 8 bytes for length
+  // Must be multiple of 64 bytes (512 bits)
+  let paddedLen = msgLen + 1
+  while (paddedLen % 64 !== 56) paddedLen++
+  paddedLen += 8
+
+  const padded = new Uint8Array(paddedLen)
+  padded.set(data)
+  padded[msgLen] = 0x80
+  // Append original length in bits as 64-bit big-endian
+  const view = new DataView(padded.buffer)
+  view.setUint32(paddedLen - 8, 0, false) // high 32 bits
+  view.setUint32(paddedLen - 4, bitLen, false) // low 32 bits
+
+  // Initialize hash values
+  let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a
+  let h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19
+
+  // Process each 64-byte chunk
+  for (let offset = 0; offset < paddedLen; offset += 64) {
+    const w = new Uint32Array(64)
+    for (let i = 0; i < 16; i++) {
+      w[i] = view.getUint32(offset + i * 4, false)
+    }
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotR(w[i - 15], 7) ^ rotR(w[i - 15], 18) ^ (w[i - 15] >>> 3)
+      const s1 = rotR(w[i - 2], 17) ^ rotR(w[i - 2], 19) ^ (w[i - 2] >>> 10)
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0
+    }
+
+    let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, hh = h7
+    for (let i = 0; i < 64; i++) {
+      const S1 = rotR(e, 6) ^ rotR(e, 11) ^ rotR(e, 25)
+      const ch = (e & f) ^ (~e & g)
+      const temp1 = (hh + S1 + ch + K[i] + w[i]) | 0
+      const S0 = rotR(a, 2) ^ rotR(a, 13) ^ rotR(a, 22)
+      const maj = (a & b) ^ (a & c) ^ (b & c)
+      const temp2 = (S0 + maj) | 0
+      hh = g; g = f; f = e; e = (d + temp1) | 0
+      d = c; c = b; b = a; a = (temp1 + temp2) | 0
+    }
+
+    h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0
+    h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + hh) | 0
+  }
+
+  // Produce the final hash value (big-endian)
+  const hashArray = new Uint8Array(32)
+  const hashView = new DataView(hashArray.buffer)
+  hashView.setUint32(0, h0, false); hashView.setUint32(4, h1, false)
+  hashView.setUint32(8, h2, false); hashView.setUint32(12, h3, false)
+  hashView.setUint32(16, h4, false); hashView.setUint32(20, h5, false)
+  hashView.setUint32(24, h6, false); hashView.setUint32(28, h7, false)
+
+  return Array.from(hashArray).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+function rotR(x: number, n: number): number {
+  return (x >>> n) | (x << (32 - n))
 }
 
 // ─── Connection health tracking ───────────────────────────────────────────
@@ -287,10 +382,16 @@ export function connectSocket(): Socket {
     isAuthenticated = false
 
     // Identify ourselves to the server (with session password hash if available)
+    // IMPORTANT: Default role is 'admin' when no URL param is present.
+    // The admin accesses the app directly (without ?role=... URL param),
+    // while MC/Operator always have ?role=mc or ?role=operator in their URLs.
+    // Using 'unknown' as default would break the server's role-based access control:
+    // - Server blocks lan-message relay from 'unknown' role clients
+    // - Server rejects SET_SESSION_PASSWORD from non-'admin' role clients
     const identifyPayload: Record<string, any> = {
       role: typeof window !== 'undefined'
-        ? new URLSearchParams(window.location.search).get('role') || 'unknown'
-        : 'unknown',
+        ? new URLSearchParams(window.location.search).get('role') || 'admin'
+        : 'admin',
       channel: typeof window !== 'undefined'
         ? parseInt(new URLSearchParams(window.location.search).get('channel') || '1', 10)
         : 1,
@@ -301,6 +402,8 @@ export function connectSocket(): Socket {
     if (role !== 'admin' && currentSessionPasswordHash) {
       identifyPayload.sessionPasswordHash = currentSessionPasswordHash
     }
+
+    console.log(`[SAATIRIL] Identifying as role=${role}, channel=${identifyPayload.channel}, hasPasswordHash=${!!identifyPayload.sessionPasswordHash}`)
 
     socket?.emit('identify', identifyPayload)
 
@@ -315,9 +418,10 @@ export function connectSocket(): Socket {
       pendingSessionPasswordHash = null
     }
 
-    // Flush any queued events from when we were disconnected
-    // Only flush after we know we're authenticated
-    // (auth-success handler will flush)
+    // CRITICAL FIX: Flush event queue for admin role or when no password required.
+    // For admin: always flush (admin is the source of truth).
+    // For non-admin: only flush if no password is required; otherwise,
+    // flushing is handled by the auth-success handler after authentication.
     if (role === 'admin' || !authRequiredByServer) {
       flushEventQueue()
     }
@@ -542,24 +646,34 @@ export function clearSessionPassword(): void {
  * Called after the user enters the password in the prompt.
  * Hashes the password and sends it to the server for validation.
  */
-export async function reidentifyWithPassword(password: string): Promise<void> {
-  if (!socket?.connected) return
-  const hash = await sha256(password)
-  currentSessionPasswordHash = hash
+export async function reidentifyWithPassword(password: string): Promise<{ success: boolean; error?: string }> {
+  if (!socket?.connected) {
+    console.error('[SAATIRIL] Cannot re-identify: socket not connected')
+    return { success: false, error: 'Socket tidak terhubung' }
+  }
+  try {
+    const hash = await sha256(password)
+    currentSessionPasswordHash = hash
 
-  const role = typeof window !== 'undefined'
-    ? new URLSearchParams(window.location.search).get('role') || 'unknown'
-    : 'unknown'
-  const channel = typeof window !== 'undefined'
-    ? parseInt(new URLSearchParams(window.location.search).get('channel') || '1', 10)
-    : 1
+    // Same default role logic as connect handler: 'admin' when no URL param
+    const role = typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('role') || 'admin'
+      : 'admin'
+    const channel = typeof window !== 'undefined'
+      ? parseInt(new URLSearchParams(window.location.search).get('channel') || '1', 10)
+      : 1
 
-  socket.emit('identify', {
-    role,
-    channel,
-    sessionPasswordHash: hash,
-  })
-  console.log(`[SAATIRIL] Re-identifying with session password (role: ${role})`)
+    socket.emit('identify', {
+      role,
+      channel,
+      sessionPasswordHash: hash,
+    })
+    console.log(`[SAATIRIL] Re-identifying with session password (role: ${role})`)
+    return { success: true }
+  } catch (err) {
+    console.error('[SAATIRIL] Failed to re-identify with password:', err)
+    return { success: false, error: 'Gagal memproses password' }
+  }
 }
 
 /**
