@@ -193,6 +193,7 @@ export function MainApp() {
 
       // On (re)connection, re-request state sync from admin to ensure we have latest data
       const role = myRoleRef.current
+      console.log('[SAATIRIL] Socket connected — role:', role, 'authenticated:', isSocketAuthenticated(), 'passwordRequired:', isServerPasswordRequired())
       if (role !== 'admin') {
         // Only request state if authenticated — if password is required,
         // the REQUEST_STATE would be blocked by the server anyway.
@@ -231,6 +232,7 @@ export function MainApp() {
 
     // ── Auth event handlers ────────────────────────────────────────────────
     const handleAuthRequirement = (data: { passwordRequired: boolean }) => {
+      console.log('[SAATIRIL] auth-requirement received:', data.passwordRequired, 'role:', myRoleRef.current)
       setServerRequiresPassword(data.passwordRequired)
       if (data.passwordRequired && myRoleRef.current !== 'admin') {
         // Server requires password — show prompt if not yet verified
@@ -247,6 +249,7 @@ export function MainApp() {
     }
 
     const handleAuthSuccess = (data: { role: string; channel: number }) => {
+      console.log('[SAATIRIL] auth-success received:', data.role, 'Ch.' + data.channel)
       setSessionPasswordVerified(true)
       setSessionPasswordError(false)
       setAuthFailedReason(null)
@@ -257,6 +260,7 @@ export function MainApp() {
     }
 
     const handleAuthFailed = (data: { reason: string }) => {
+      console.log('[SAATIRIL] auth-failed received:', data.reason, 'role:', myRoleRef.current)
       setSessionPasswordVerified(false)
       setSessionPasswordError(true)
       setAuthFailedReason(data.reason)
@@ -283,6 +287,12 @@ export function MainApp() {
     // socket state we're reading is already settled.
     queueMicrotask(() => {
       const authState = getSocketAuthState()
+      console.log('[SAATIRIL] Mount sync — authState:', {
+        connected: authState.connected,
+        authenticated: authState.authenticated,
+        passwordRequired: authState.passwordRequired,
+        role: myRoleRef.current,
+      })
       if (authState.connected) {
         setServerConnected(true)
         setConnectionQuality('good')
@@ -307,8 +317,13 @@ export function MainApp() {
             }
           }
         } else {
-          // Non-admin: request state sync
-          emitLocal('REQUEST_STATE', { role, channel: useSaatirilStore.getState().myChannel })
+          // Non-admin: only request state sync if authenticated
+          // FIX: Don't send REQUEST_STATE if not authenticated — the server
+          // would block it anyway (role='auth-pending'), and it creates
+          // confusing log messages.
+          if (authState.authenticated) {
+            emitLocal('REQUEST_STATE', { role, channel: useSaatirilStore.getState().myChannel })
+          }
         }
       }
       if (authState.passwordRequired) {
@@ -336,6 +351,42 @@ export function MainApp() {
       socket.off('auth-failed', handleAuthFailed)
     }
   }, [])
+
+  // ── Periodic auth state sync (safety net for missed events) ──────────────
+  // Every 2 seconds, sync the React state with the socket module state.
+  // This ensures the password prompt shows even if the 'auth-requirement'
+  // event was missed or arrived before the React handlers were registered.
+  // This is CRITICAL for the password flow — without it, MC can get stuck
+  // at the "Menunggu data proyek" screen when admin uses a password.
+  useEffect(() => {
+    const syncInterval = setInterval(() => {
+      if (myRole === 'admin') return // Skip for admin
+
+      const socketPasswordRequired = isServerPasswordRequired()
+      const socketAuthenticated = isSocketAuthenticated()
+
+      // Sync serverRequiresPassword from socket module
+      if (socketPasswordRequired !== serverRequiresPassword) {
+        console.log(`[SAATIRIL] Auth state sync: serverRequiresPassword ${serverRequiresPassword} → ${socketPasswordRequired}`)
+        setServerRequiresPassword(socketPasswordRequired)
+      }
+
+      // If server requires password and we're not verified, ensure we're not
+      // incorrectly marked as verified
+      if (socketPasswordRequired && !socketAuthenticated && sessionPasswordVerified) {
+        console.log('[SAATIRIL] Auth state sync: resetting sessionPasswordVerified (server requires password, not authenticated)')
+        setSessionPasswordVerified(false)
+      }
+
+      // If server does NOT require password and we ARE authenticated, mark as verified
+      if (!socketPasswordRequired && socketAuthenticated && !sessionPasswordVerified) {
+        console.log('[SAATIRIL] Auth state sync: marking verified (no password required, authenticated)')
+        setSessionPasswordVerified(true)
+        setSessionPasswordError(false)
+      }
+    }, 2000)
+    return () => clearInterval(syncInterval)
+  }, [myRole, serverRequiresPassword, sessionPasswordVerified])
 
   // ── Connection quality monitor ────────────────────────────────────────────
   useEffect(() => {
@@ -376,7 +427,26 @@ export function MainApp() {
             config: mergedConfig,
           })
         } else {
-          updateCurrentProject(data.project)
+          // First-time project data for MC/Operator
+          // SAFETY: If the incoming project has a __FRAME_SAVED__ marker (shouldn't happen
+          // on first SYNC_DB from REQUEST_STATE, but can happen from broadcast SYNC_DB),
+          // try to restore from localStorage. If not found, strip the marker to prevent
+          // render issues (operator panel checks for __FRAME_SAVED__ and treats as null).
+          let projectToSet = data.project
+          if (projectToSet.config.frame === '__FRAME_SAVED__') {
+            const savedFrame = typeof window !== 'undefined'
+              ? localStorage.getItem(`saatiril_frame_${projectToSet.id}`)
+              : null
+            projectToSet = {
+              ...projectToSet,
+              config: {
+                ...projectToSet.config,
+                frame: savedFrame || null, // Replace marker with actual data or null
+              },
+            }
+            console.log('[SAATIRIL] SYNC_DB first-time: __FRAME_SAVED__ marker replaced with', savedFrame ? 'actual frame data' : 'null')
+          }
+          updateCurrentProject(projectToSet)
         }
       } else if (role === 'admin' && data.project) {
         // For admin: merge database with incoming (prevents channel data overwrite in dual mode)
@@ -420,10 +490,14 @@ export function MainApp() {
             : null
           if (savedFrame) {
             frameToSend = savedFrame
+            console.log('[SAATIRIL] REQUEST_STATE: Restored frame from localStorage for sync')
           } else {
             frameToSend = null // No frame available — don't send marker
+            console.warn('[SAATIRIL] REQUEST_STATE: Frame marker __FRAME_SAVED__ found but no data in localStorage — sending null')
           }
         }
+
+        console.log('[SAATIRIL] REQUEST_STATE: Sending project to client — frame:', frameToSend ? `${Math.round((frameToSend.length / 1024))}KB` : 'none', 'password:', curProj.config.sessionPassword ? '__PASSWORD_SET__' : 'none')
 
         const safeProject = {
           ...curProj,

@@ -366,6 +366,15 @@ export default function ProjectSetup() {
       })
     }
 
+    // Set session password on the socket server FIRST (before SYNC_DB).
+    // CRITICAL ORDERING: The password must be set on the server BEFORE
+    // the SYNC_DB is broadcast. Otherwise, MC/Operator could connect
+    // between the SYNC_DB and the password setting, receiving project
+    // data without needing to authenticate.
+    if (sessionPassword.trim()) {
+      setSessionPassword(sessionPassword.trim(), projectId)
+    }
+
     // Sync database over LAN — strip photo history (already sent via PHOTOS_SAVED)
     // but KEEP frame data so newly connecting clients get the frame overlay.
     // (stripFrameForSync removes frame which breaks first-time clients)
@@ -378,11 +387,6 @@ export default function ProjectSetup() {
       },
       photoHistory: project.photoHistory.map(h => ({ ...h, photos: [] })),
     }})
-
-    // Set session password on the socket server (so non-admin clients must validate)
-    if (sessionPassword.trim()) {
-      setSessionPassword(sessionPassword.trim(), projectId)
-    }
 
     // Small delay to ensure state is persisted before navigation
     setTimeout(() => {
