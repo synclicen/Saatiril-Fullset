@@ -468,8 +468,9 @@ export function MainApp() {
     }
 
     const handleRequestState = () => {
-      const role = myRoleRef.current
-      // Read from store directly (not ref) to get the latest frame data
+      // Use getState() for synchronous, always-fresh reads — refs can be stale
+      // if the handler fires before the next React render cycle updates them.
+      const role = useSaatirilStore.getState().myRole
       const curProj = useSaatirilStore.getState().currentProject
       if (role === 'admin' && curProj) {
         // DO NOT strip frame for REQUEST_STATE responses — new clients need the full frame data.
