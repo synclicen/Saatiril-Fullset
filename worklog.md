@@ -756,3 +756,29 @@ Stage Summary:
 - Server notifies existing clients when password requirement changes
 - Clients have 30s to enter password instead of 10s
 - Auth-pending clients are not disconnected by timeout
+
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix MC stuck at "Sinkronisasi Data" when Admin initializes project with password + fix frame auto-frame
+
+Work Log:
+- Investigated the full password authentication flow across 4 key files
+- Identified root cause: setSessionPassword() silently returned when socket not connected (admin creates project before MainApp mounts)
+- Identified secondary cause: event queue flushed SYNC_DB before SET_SESSION_PASSWORD was sent to server
+- Identified tertiary cause: React state not synced with socket module state on MainApp mount (stale serverRequiresPassword)
+- Identified quaternary cause: needsPassword check didn't use isServerPasswordRequired() as fallback
+- Fixed socket.ts: added pendingSessionPasswordHash queue, sent before flushEventQueue, added getSocketAuthState()
+- Fixed main-app.tsx: sync React state from socket module on mount via queueMicrotask, added isServerPasswordRequired() to needsPassword
+- Fixed socket server: changed socket.broadcast.emit to io.emit for auth-requirement (ensures all clients get notification)
+- Fixed use-saatiril-store.ts: strip sessionPassword to __PASSWORD_SET__ in localStorage saves
+- Frame issue resolved as side effect: MC/Operator properly receives project data (including frame) after authenticating
+- Ran lint check - all clean
+- Committed and pushed to main branch
+
+Stage Summary:
+- 4 files changed, 128 insertions, 16 deletions
+- Key fix: setSessionPassword() now queues hash when socket not connected, sends BEFORE SYNC_DB on connect
+- Key fix: MainApp reads socket module auth state on mount to avoid stale React state
+- Key fix: Socket server broadcasts auth-requirement to ALL clients (not just others)
+- Committed as e2d2f13, pushed to https://github.com/synclicen/Saatiril-Fullset.git
