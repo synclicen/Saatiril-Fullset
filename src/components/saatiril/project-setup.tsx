@@ -33,7 +33,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 
-import { useSaatirilStore, type CameraMode, type Student, isPhotoshootMode, isDualMode } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type CameraMode, type Student, stripFrameForSync, isPhotoshootMode, isDualMode } from '@/store/use-saatiril-store'
 import { emitLocal, setSessionPassword } from '@/lib/socket'
 import { useToast } from '@/hooks/use-toast'
 
@@ -366,24 +366,22 @@ export default function ProjectSetup() {
       })
     }
 
-    // Sync database over LAN — DO NOT strip frame for initial project creation!
-    // New clients receiving this as their first SYNC_DB have no existing frame
-    // data to preserve, so stripping would permanently lose the frame on their side.
-    // Instead, send the full project (like handleRequestState does) and only
-    // strip the session password for security.
-    emitLocal('SYNC_DB', {
-      project: {
-        ...project,
-        config: {
-          ...project.config,
-          sessionPassword: project.config.sessionPassword ? '__PASSWORD_SET__' : undefined,
-        },
+    // Sync database over LAN — strip photo history (already sent via PHOTOS_SAVED)
+    // but KEEP frame data so newly connecting clients get the frame overlay.
+    // (stripFrameForSync removes frame which breaks first-time clients)
+    emitLocal('SYNC_DB', { project: {
+      ...project,
+      config: {
+        ...project.config,
+        // Strip the actual password but keep the marker
+        sessionPassword: project.config.sessionPassword ? '__PASSWORD_SET__' : undefined,
       },
-    })
+      photoHistory: project.photoHistory.map(h => ({ ...h, photos: [] })),
+    }})
 
     // Set session password on the socket server (so non-admin clients must validate)
     if (sessionPassword.trim()) {
-      setSessionPassword(sessionPassword.trim())
+      setSessionPassword(sessionPassword.trim(), projectId)
     }
 
     // Small delay to ensure state is persisted before navigation

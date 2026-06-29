@@ -13,138 +13,17 @@ const listeners: Record<string, LocalNetworkCallback[]> = {}
 // Stored locally so we can re-identify on reconnect
 let currentSessionPasswordHash: string | null = null
 
-// ─── Pending session password (plaintext) ──────────────────────────────────
-// When the admin sets a password before the socket is connected, we store it
-// here and send it once the socket connects.
-let pendingSessionPassword: string | null = null
-
 // ─── Auth state ─────────────────────────────────────────────────────────────
 let isAuthenticated: boolean = false
 let authRequiredByServer: boolean = false
 
-// ─── Auth state snapshot ──────────────────────────────────────────────────
-// Exposed via getAuthState() so that components mounting after socket
-// connection can read the current auth state without missing events.
-export interface AuthState {
-  connected: boolean
-  authenticated: boolean
-  passwordRequired: boolean
-}
-
-export function getAuthState(): AuthState {
-  return {
-    connected: socket?.connected ?? false,
-    authenticated: isAuthenticated,
-    passwordRequired: authRequiredByServer,
-  }
-}
-
-// ─── SHA-256 hash helper ────────────────────────────────────────────────────
-// Uses crypto.subtle when available (secure contexts / HTTPS / localhost).
-// Falls back to a pure JS implementation for insecure HTTP LAN contexts
-// (e.g., http://192.168.x.x:3000) where crypto.subtle is not available.
+// ─── SHA-256 hash helper (browser native) ──────────────────────────────────
 async function sha256(text: string): Promise<string> {
-  // Try native crypto.subtle first (fast, secure)
-  if (typeof crypto !== 'undefined' && crypto.subtle) {
-    try {
-      const encoder = new TextEncoder()
-      const data = encoder.encode(text)
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-      const hashArray = Array.from(new Uint8Array(hashBuffer))
-      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-    } catch (err) {
-      console.warn('[SAATIRIL] crypto.subtle.digest failed, using JS fallback:', err)
-    }
-  }
-
-  // Pure JS SHA-256 fallback for insecure HTTP contexts
-  // (http://192.168.x.x — crypto.subtle unavailable)
-  return sha256JS(text)
-}
-
-// ─── Pure JS SHA-256 (fallback for HTTP LAN) ────────────────────────────────
-// Tested against known test vectors to match crypto.subtle output exactly.
-function sha256JS(msg: string): string {
-  // Precompute round constants
-  const K = new Uint32Array([
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
-  ])
-
-  // Encode string to bytes (UTF-8)
-  const bytes: number[] = []
-  for (let i = 0; i < msg.length; i++) {
-    const c = msg.charCodeAt(i)
-    if (c < 0x80) {
-      bytes.push(c)
-    } else if (c < 0x800) {
-      bytes.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f))
-    } else {
-      bytes.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f))
-    }
-  }
-
-  // Pre-processing: pad message
-  const bitLen = bytes.length * 8
-  bytes.push(0x80)
-  while ((bytes.length % 64) !== 56) bytes.push(0)
-  // Append length as 64-bit big-endian (we only use low 32 bits for JS string lengths)
-  bytes.push(0, 0, 0, 0)
-  bytes.push((bitLen >>> 24) & 0xff, (bitLen >>> 16) & 0xff, (bitLen >>> 8) & 0xff, bitLen & 0xff)
-
-  // Initial hash values
-  let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a
-  let h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19
-
-  // Process each 512-bit (64-byte) block
-  const w = new Uint32Array(64)
-  for (let offset = 0; offset < bytes.length; offset += 64) {
-    // Create message schedule
-    for (let t = 0; t < 16; t++) {
-      const i = offset + t * 4
-      w[t] = (bytes[i] << 24) | (bytes[i + 1] << 16) | (bytes[i + 2] << 8) | bytes[i + 3]
-    }
-    for (let t = 16; t < 64; t++) {
-      const s0 = rotr(w[t - 15], 7) ^ rotr(w[t - 15], 18) ^ (w[t - 15] >>> 3)
-      const s1 = rotr(w[t - 2], 17) ^ rotr(w[t - 2], 19) ^ (w[t - 2] >>> 10)
-      w[t] = (w[t - 16] + s0 + w[t - 7] + s1) | 0
-    }
-
-    // Working variables
-    let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7
-
-    // Compression
-    for (let t = 0; t < 64; t++) {
-      const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)
-      const ch = (e & f) ^ (~e & g)
-      const temp1 = (h + S1 + ch + K[t] + w[t]) | 0
-      const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)
-      const maj = (a & b) ^ (a & c) ^ (b & c)
-      const temp2 = (S0 + maj) | 0
-
-      h = g; g = f; f = e; e = (d + temp1) | 0
-      d = c; c = b; b = a; a = (temp1 + temp2) | 0
-    }
-
-    // Update hash
-    h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0
-    h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + h) | 0
-  }
-
-  // Produce final hash
-  return [h0, h1, h2, h3, h4, h5, h6, h7]
-    .map(v => (v >>> 0).toString(16).padStart(8, '0'))
-    .join('')
-}
-
-function rotr(x: number, n: number): number {
-  return (x >>> n) | (x << (32 - n))
+  const encoder = new TextEncoder()
+  const data = encoder.encode(text)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
 // ─── Connection health tracking ───────────────────────────────────────────
@@ -267,22 +146,14 @@ function handlePong(timestamp: number) {
  *    - Read socketPort from URL query parameter (passed by Electron main process)
  *    - Connect directly to localhost:PORT (always HTTP)
  *
- * 2. Direct LAN access (port 3000/3001):
- *    - User accessed the Next.js app directly on its port
- *    - Socket.io is on a different port (default 3003) on the same host
+ * 2. LAN device (MC or Operator):
+ *    - socketPort is the HTTP Socket.io port (3003)
  *    - Connect via http://hostname:socketPort
  *    - All connections use HTTP (no HTTPS server)
+ *    - Operator needs Chrome Flag for camera access
  *
- * 3. Web/sandbox mode (Caddy proxy or any other reverse proxy):
- *    - User accessed through a reverse proxy (e.g., Caddy on port 81)
- *    - Socket.io port is NOT directly accessible from the browser
- *    - Use XTransformPort=PORT query parameter for Caddy gateway routing
- *    - Connect via window.location.origin (same origin, Caddy handles routing)
- *
- * IMPORTANT: The detection is based on the ACCESS PORT, not the presence of
- * the socketPort URL parameter. The socketPort param tells us WHICH port the
- * Socket.io server runs on, but the connection METHOD (direct vs proxy) depends
- * on how the user accessed the page (direct port 3000 vs proxy port 81).
+ * 3. Web/sandbox mode (development):
+ *    - Use XTransformPort=3003 for Caddy gateway routing
  */
 function getSocketUrl(): string {
   if (typeof window === 'undefined') return '/'
@@ -298,22 +169,16 @@ function getSocketUrl(): string {
     return `http://localhost:${port}`
   }
 
-  // Determine if this is a direct LAN access (port 3000/3001) or proxy access
-  // This is the KEY distinction: direct LAN can reach the socket port directly,
-  // while proxy access (Caddy) must route through the proxy.
-  const currentPort = window.location.port
-  const isDirectLanAccess = currentPort === '3000' || currentPort === '3001'
-
-  if (isDirectLanAccess) {
-    // Direct LAN access: connect directly to the Socket.io server
-    const port = socketPortParam || '3003'
-    return `http://${window.location.hostname}:${port}`
+  // LAN device: always use HTTP to connect to Socket.io server
+  if (socketPortParam) {
+    const hostname = window.location.hostname
+    return `http://${hostname}:${socketPortParam}`
   }
 
-  // Web/sandbox/proxy mode: go through the reverse proxy (Caddy)
-  // The socket.io client will include XTransformPort in its query params
-  // (set in connectSocket()) so Caddy can route to the correct port.
-  // We use the current origin as the base URL — Caddy handles the rest.
+  // Web/sandbox mode: use Caddy gateway with XTransformPort
+  // The socket.io client needs the query param in its transport requests
+  // so Caddy can route them to port 3003. We pass it via the `query` option
+  // in connectSocket() and use the current origin as the base URL.
   return window.location.origin
 }
 
@@ -369,18 +234,6 @@ function flushEventQueue() {
   }
 }
 
-/**
- * Send any pending session password to the server.
- * Called when the socket connects.
- */
-async function flushPendingSessionPassword() {
-  if (!pendingSessionPassword || !socket?.connected) return
-  const password = pendingSessionPassword
-  pendingSessionPassword = null
-  await setSessionPassword(password)
-  console.log('[SAATIRIL] Flushed pending session password to server')
-}
-
 // ─── Connect Socket ───────────────────────────────────────────────────────
 export function connectSocket(): Socket {
   if (socket?.connected) return socket
@@ -407,32 +260,14 @@ export function connectSocket(): Socket {
     timeout: 15000,                    // 15s connection timeout
   }
 
-  // For sandbox/web/proxy mode, add XTransformPort as a query parameter
+  // For sandbox/web mode, add XTransformPort as a query parameter
   // so Caddy gateway can route requests to the correct port.
-  // Sandbox mode = not Electron AND not direct LAN access (port 3000/3001)
-  //
-  // IMPORTANT: We check ONLY the access port to determine sandbox mode,
-  // NOT whether socketPort is in the URL. The socketPort param tells us
-  // which port the Socket.io server runs on, but the connection METHOD
-  // (direct vs proxy) depends on how the user accessed the page.
-  //
-  // Previously, the check was:
-  //   !isElectron && !socketPortParam && !isDirectLanAccess
-  // This was WRONG because when MC copies a link from the admin dashboard
-  // (which always includes socketPort), the socketPort param is set, and
-  // isSandboxMode would be false even in sandbox mode. The socket would
-  // try to connect directly to hostname:3003, which is not accessible
-  // through Caddy, causing MC to be stuck on "Sinkronisasi Data" forever.
-  const currentPort = typeof window !== 'undefined' ? window.location.port : ''
-  const isDirectLanAccess = currentPort === '3000' || currentPort === '3001'
-  const isSandboxMode = !isElectron && !isDirectLanAccess
-  // Use the socketPort from URL params, or default to 3003
-  const socketPort = new URLSearchParams(window.location.search).get('socketPort') || '3003'
+  const isSandboxMode = !isElectron && !new URLSearchParams(window.location.search).get('socketPort')
   const finalOptions = isSandboxMode
-    ? { ...socketOptions, query: { ...socketOptions.query, XTransformPort: socketPort } }
+    ? { ...socketOptions, query: { ...socketOptions.query, XTransformPort: '3003' } }
     : socketOptions
 
-  console.log('[SAATIRIL] Connecting to Socket.io server...', socketUrl, isSandboxMode ? `(sandbox mode with XTransformPort=${socketPort})` : '(direct connection)')
+  console.log('[SAATIRIL] Connecting to Socket.io server...', socketUrl, isSandboxMode ? '(sandbox mode with XTransformPort=3003)' : '')
   socket = io(socketUrl, finalOptions)
 
   // ── Connection lifecycle ──────────────────────────────────────────────
@@ -467,19 +302,6 @@ export function connectSocket(): Socket {
     // (auth-success handler will flush)
     if (role === 'admin' || !authRequiredByServer) {
       flushEventQueue()
-    }
-
-    // Send any pending session password (admin set password before socket connected)
-    flushPendingSessionPassword()
-
-    // Notify local listeners that the socket is connected
-    // This is used by the "ensure session password" hook in main-app.tsx
-    if (listeners['__SOCKET_CONNECTED__']) {
-      listeners['__SOCKET_CONNECTED__'].forEach(cb => {
-        try { cb({}) } catch (err) {
-          console.error('[SAATIRIL] Error in __SOCKET_CONNECTED__ listener:', err)
-        }
-      })
     }
 
     // Start ping measurement for latency tracking
@@ -647,36 +469,42 @@ export function offLocal(event: string, callback?: LocalNetworkCallback) {
 /**
  * Admin: set the session password on the server.
  * Sends the SHA-256 hash so the password is never transmitted in plaintext.
- *
- * If the socket is not connected yet, the password is stored as pending
- * and will be sent once the socket connects.
+ * Also saves the hash to a separate localStorage key (keyed by projectId)
+ * so the admin can re-send it on reconnection.
  */
-export async function setSessionPassword(password: string): Promise<void> {
-  try {
-    const hash = await sha256(password)
-    currentSessionPasswordHash = hash
-
-    if (!socket?.connected) {
-      // Socket not connected yet — store as pending and send on connect
-      pendingSessionPassword = password
-      console.log('[SAATIRIL] Session password queued (socket not connected)')
-      return
+export async function setSessionPassword(password: string, projectId?: string): Promise<void> {
+  if (!socket?.connected) return
+  const hash = await sha256(password)
+  currentSessionPasswordHash = hash
+  socket.emit('SET_SESSION_PASSWORD', { passwordHash: hash })
+  // Save hash to separate localStorage for reconnection
+  if (projectId && typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(`saatiril_pwdhash_${projectId}`, hash)
+    } catch (e) {
+      console.error('[SAATIRIL] Failed to save password hash to storage:', e)
     }
-
-    socket.emit('SET_SESSION_PASSWORD', { passwordHash: hash })
-    console.log('[SAATIRIL] Session password set on server')
-  } catch (err) {
-    console.error('[SAATIRIL] Failed to set session password:', err)
   }
+  console.log('[SAATIRIL] Session password set on server')
+}
+
+/**
+ * Admin: re-send a previously stored password hash to the server.
+ * Used on reconnection when the password was already set in a previous session.
+ */
+export function resendSessionPasswordHash(hash: string): void {
+  if (!socket?.connected) return
+  currentSessionPasswordHash = hash
+  socket.emit('SET_SESSION_PASSWORD', { passwordHash: hash })
+  console.log('[SAATIRIL] Session password hash re-sent to server')
 }
 
 /**
  * Admin: clear the session password on the server.
  */
 export function clearSessionPassword(): void {
-  currentSessionPasswordHash = null
-  pendingSessionPassword = null
   if (!socket?.connected) return
+  currentSessionPasswordHash = null
   socket.emit('CLEAR_SESSION_PASSWORD')
   console.log('[SAATIRIL] Session password cleared on server')
 }
@@ -685,35 +513,25 @@ export function clearSessionPassword(): void {
  * Non-admin: re-identify with a session password.
  * Called after the user enters the password in the prompt.
  * Hashes the password and sends it to the server for validation.
- *
- * IMPORTANT: Uses sha256() which has a pure JS fallback for insecure
- * HTTP contexts (crypto.subtle unavailable on http://192.168.x.x).
  */
 export async function reidentifyWithPassword(password: string): Promise<void> {
-  if (!socket?.connected) {
-    console.warn('[SAATIRIL] Cannot re-identify: socket not connected')
-    return
-  }
-  try {
-    const hash = await sha256(password)
-    currentSessionPasswordHash = hash
+  if (!socket?.connected) return
+  const hash = await sha256(password)
+  currentSessionPasswordHash = hash
 
-    const role = typeof window !== 'undefined'
-      ? new URLSearchParams(window.location.search).get('role') || 'unknown'
-      : 'unknown'
-    const channel = typeof window !== 'undefined'
-      ? parseInt(new URLSearchParams(window.location.search).get('channel') || '1', 10)
-      : 1
+  const role = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('role') || 'unknown'
+    : 'unknown'
+  const channel = typeof window !== 'undefined'
+    ? parseInt(new URLSearchParams(window.location.search).get('channel') || '1', 10)
+    : 1
 
-    socket.emit('identify', {
-      role,
-      channel,
-      sessionPasswordHash: hash,
-    })
-    console.log(`[SAATIRIL] Re-identifying with session password (role: ${role})`)
-  } catch (err) {
-    console.error('[SAATIRIL] Failed to re-identify with password:', err)
-  }
+  socket.emit('identify', {
+    role,
+    channel,
+    sessionPasswordHash: hash,
+  })
+  console.log(`[SAATIRIL] Re-identifying with session password (role: ${role})`)
 }
 
 /**

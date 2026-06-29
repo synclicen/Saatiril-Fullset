@@ -24,12 +24,13 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useSaatirilStore, type AppTab, type Role, type Project, type CameraMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync, preservePhotoHistoryOnSync, isDualMode, isPhotoshootMode } from '@/store/use-saatiril-store'
-import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth, setSessionPassword, clearSessionPassword, reidentifyWithPassword, getAuthState } from '@/lib/socket'
+import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth, setSessionPassword, clearSessionPassword, reidentifyWithPassword, isSocketAuthenticated, isServerPasswordRequired, resendSessionPasswordHash } from '@/lib/socket'
 
 import AdminDashboard from '@/components/saatiril/admin-dashboard'
 import { McPanel } from '@/components/saatiril/mc-panel'
 import OperatorPanel from '@/components/saatiril/operator-panel'
 import { SaatirilFooterLines } from '@/components/saatiril/saatiril-footer'
+import { LicenseGate } from '@/components/saatiril/license-gate'
 
 // ─── Theme constants ──────────────────────────────────────────────────────────
 const THEME = {
@@ -70,6 +71,9 @@ function getModeBadgeText(role: Role, channel: number, mode: CameraMode): string
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export function MainApp() {
+  // ── License gate ─────────────────────────────────────────────────────────
+  const [licenseValid, setLicenseValid] = useState(false)
+
   // ── Store bindings ─────────────────────────────────────────────────────────
   const currentProject = useSaatirilStore((s) => s.currentProject)
   const updateCurrentProject = useSaatirilStore((s) => s.updateCurrentProject)
@@ -83,29 +87,20 @@ export function MainApp() {
   const loadProjectsFromStorage = useSaatirilStore((s) => s.loadProjectsFromStorage)
 
   // ── Local state ────────────────────────────────────────────────────────────
-  // CRITICAL: Initialize auth state from the socket module's current state.
-  // This handles the case where the socket is already connected when MainApp
-  // mounts (e.g., React remount, or socket connected by a previous screen).
-  // Without this, auth events that fired before mount are missed, causing
-  // MC/Operator to skip the password prompt entirely.
-  const [initialAuthState] = useState(() => getAuthState())
-  const [serverConnected, setServerConnected] = useState(initialAuthState.connected)
-  const [connectionQuality, setConnectionQuality] = useState<'good' | 'degraded' | 'disconnected'>(initialAuthState.connected ? 'good' : 'disconnected')
+  const [serverConnected, setServerConnected] = useState(false)
+  const [connectionQuality, setConnectionQuality] = useState<'good' | 'degraded' | 'disconnected'>('disconnected')
   const [lanIP, setLanIP] = useState<string>('')
   const [copiedIP, setCopiedIP] = useState(false)
   const [sessionPasswordInput, setSessionPasswordInput] = useState('')
-  const [sessionPasswordVerified, setSessionPasswordVerified] = useState(initialAuthState.authenticated)
+  const [sessionPasswordVerified, setSessionPasswordVerified] = useState(false)
   const [sessionPasswordError, setSessionPasswordError] = useState(false)
-  const [serverRequiresPassword, setServerRequiresPassword] = useState(initialAuthState.passwordRequired)
+  const [serverRequiresPassword, setServerRequiresPassword] = useState(false)
   const [authFailedReason, setAuthFailedReason] = useState<string | null>(null)
-  const [connectionFailed, setConnectionFailed] = useState(false)
 
   // ── Refs for stable event handlers ─────────────────────────────────────────
   const myRoleRef = useRef(myRole)
-  const myChannelRef = useRef(myChannel)
   const currentProjectRef = useRef(currentProject)
   useEffect(() => { myRoleRef.current = myRole }, [myRole])
-  useEffect(() => { myChannelRef.current = myChannel }, [myChannel])
   useEffect(() => { currentProjectRef.current = currentProject }, [currentProject])
 
   // ── Derived values ─────────────────────────────────────────────────────────
@@ -195,96 +190,68 @@ export function MainApp() {
     const handleConnect = () => {
       setServerConnected(true)
       setConnectionQuality('good')
-      setConnectionFailed(false)  // Reset connection failed state on successful connect
 
-      // CRITICAL: Reset auth state on reconnection — we must re-authenticate
-      // On reconnect, socket.ts re-sends `identify`, so we'll get either
-      // auth-success or auth-failed. Until then, we're unverified.
-      if (myRoleRef.current !== 'admin') {
-        setSessionPasswordVerified(false)
-      }
-
-      // On (re)connection: admin sends password; non-admin waits for auth-success
+      // On (re)connection, re-request state sync from admin to ensure we have latest data
       const role = myRoleRef.current
-
-      // CRITICAL FIX: Re-identify with the correct role from the Zustand store.
-      // socket.ts's connectSocket() reads the role from URL params, which works
-      // for MC/Operator (who have ?role=mc in the URL) but NOT for Admin
-      // (who accesses the page without a role param). Without this re-identify,
-      // the Admin registers as 'unknown' on the socket server, which:
-      // 1. Gets disconnected after 15s identification timeout
-      // 2. Can't relay messages (SYNC_DB responses are blocked)
-      // This was the root cause of MC getting stuck on "Sinkronisasi Data" —
-      // the admin couldn't respond to REQUEST_STATE because it was 'unknown'.
-      if (role === 'admin') {
-        const sock = getSocket()
-        if (sock?.connected) {
-          sock.emit('identify', { role: 'admin', channel: myChannelRef.current })
-          console.log('[SAATIRIL] Admin re-identified with role=admin on socket server')
-        }
-        // Admin: if project has a session password, set it on the server
+      if (role !== 'admin') {
+        emitLocal('REQUEST_STATE', { role, channel: useSaatirilStore.getState().myChannel })
+      } else {
+        // Admin: if project has a session password, (re-)set it on the server
+        // This is critical for reconnection — the server may have restarted or
+        // the password may not have been set yet.
         const curProj = useSaatirilStore.getState().currentProject
-        if (curProj?.config?.sessionPassword && curProj.config.sessionPassword !== '__PASSWORD_SET__') {
-          setSessionPassword(curProj.config.sessionPassword)
+        if (curProj) {
+          if (curProj.config.sessionPassword && curProj.config.sessionPassword !== '__PASSWORD_SET__') {
+            // Plaintext password (fresh from project creation) — hash and send
+            setSessionPassword(curProj.config.sessionPassword, curProj.id)
+          } else if (curProj.config.sessionPassword === '__PASSWORD_SET__') {
+            // Password marker — look up the stored hash and re-send it
+            const storedHash = typeof window !== 'undefined'
+              ? localStorage.getItem(`saatiril_pwdhash_${curProj.id}`)
+              : null
+            if (storedHash && storedHash !== '__PWD_PENDING__') {
+              resendSessionPasswordHash(storedHash)
+              console.log('[SAATIRIL] Admin re-sent stored password hash to server on reconnect')
+            }
+          }
         }
       }
-      // NOTE: Non-admin does NOT send REQUEST_STATE here — they're not
-      // authenticated yet. The server will ignore it. REQUEST_STATE is sent
-      // in handleAuthSuccess after authentication succeeds.
 
-      console.log(`[SAATIRIL] Socket connected — role: ${role}, waiting for auth`)
+      console.log('[SAATIRIL] Connected — requesting state sync')
     }
     const handleDisconnect = () => {
       setServerConnected(false)
       setConnectionQuality('disconnected')
-      // CRITICAL: On disconnect, mark auth as unverified for non-admin
-      // so the join screen reappears on reconnect (if password required)
-      if (myRoleRef.current !== 'admin') {
-        setSessionPasswordVerified(false)
-      }
-      console.log('[SAATIRIL] Socket disconnected')
     }
 
     // ── Auth event handlers ────────────────────────────────────────────────
     const handleAuthRequirement = (data: { passwordRequired: boolean }) => {
-      console.log(`[SAATIRIL] Auth requirement: passwordRequired=${data.passwordRequired}`)
       setServerRequiresPassword(data.passwordRequired)
       if (data.passwordRequired && myRoleRef.current !== 'admin') {
         // Server requires password — show prompt if not yet verified
         setSessionPasswordVerified(false)
+        // If the server now requires a password and we were previously
+        // authenticated, we need to re-authenticate. The server may have
+        // just received the password from the admin.
+        // Don't re-identify here — the user needs to enter the password first.
       } else if (!data.passwordRequired && myRoleRef.current !== 'admin') {
-        // Server does NOT require password — this can happen when:
-        // 1. No password was set (admin chose no password)
-        // 2. Password was cleared by admin
-        //
-        // CRITICAL: Re-identify immediately so the server can send auth-success.
-        // Without this, a client that was previously `pending_auth` (wrong password)
-        // would remain stuck even after the admin clears the password.
-        const sock = getSocket()
-        if (sock?.connected) {
-          const params = new URLSearchParams(window.location.search)
-          const role = params.get('role') || 'unknown'
-          const channel = parseInt(params.get('channel') || '1', 10)
-          sock.emit('identify', { role, channel })
-          console.log('[SAATIRIL] Password cleared — re-identifying to get auth-success')
-        }
+        // Password no longer required — mark as verified so we don't show prompt
+        setSessionPasswordVerified(true)
+        setSessionPasswordError(false)
       }
     }
 
     const handleAuthSuccess = (data: { role: string; channel: number }) => {
-      console.log(`[SAATIRIL] Auth SUCCESS: role=${data.role}, channel=${data.channel}`)
       setSessionPasswordVerified(true)
       setSessionPasswordError(false)
       setAuthFailedReason(null)
-      // Now that we're authenticated, request state sync from admin
+      // Now that we're authenticated, request state sync
       if (data.role !== 'admin') {
         emitLocal('REQUEST_STATE', { role: data.role, channel: data.channel })
-        console.log('[SAATIRIL] Authenticated — requesting state sync from admin')
       }
     }
 
     const handleAuthFailed = (data: { reason: string }) => {
-      console.warn(`[SAATIRIL] Auth FAILED: reason=${data.reason}`)
       setSessionPasswordVerified(false)
       setSessionPasswordError(true)
       setAuthFailedReason(data.reason)
@@ -296,38 +263,10 @@ export function MainApp() {
     socket.on('auth-success', handleAuthSuccess)
     socket.on('auth-failed', handleAuthFailed)
 
-    // ── Handle already-connected socket on mount ──────────────────────────
-    // If the socket was already connected before this useEffect ran
-    // (e.g., from a previous mount or React Strict Mode), we need to
-    // sync our React state with the socket's current state.
-    //
-    // CRITICAL: We use getAuthState() to get the current auth state from
-    // the socket module, which tracks auth events globally. This ensures
-    // we don't miss auth-success or auth-failed events that fired before
-    // our React handlers were registered.
-    //
-    // We also re-emit identify to trigger a fresh auth flow, ensuring
-    // the server sends us a new auth-success or auth-failed.
     queueMicrotask(() => {
       if (socket.connected) {
-        const authState = getAuthState()
-        console.log('[SAATIRIL] Socket already connected on mount. Auth state:', authState)
         setServerConnected(true)
         setConnectionQuality('good')
-        setServerRequiresPassword(authState.passwordRequired)
-        setSessionPasswordVerified(authState.authenticated)
-
-        // For non-admin: if not authenticated, re-emit identify to get a fresh response
-        // This handles the case where auth events were missed before our handlers registered
-        if (myRoleRef.current !== 'admin' && !authState.authenticated) {
-          console.log('[SAATIRIL] Non-admin not authenticated on mount — re-emitting identify')
-          // Re-emit identify to trigger auth-success or auth-failed
-          // This is safe because the server allows re-identification
-          const params = new URLSearchParams(window.location.search)
-          const role = params.get('role') || 'unknown'
-          const channel = parseInt(params.get('channel') || '1', 10)
-          socket.emit('identify', { role, channel })
-        }
       }
     })
 
@@ -354,86 +293,6 @@ export function MainApp() {
     }, 5000)
     return () => clearInterval(monitor)
   }, [])
-
-  // ── Connection failure timeout ────────────────────────────────────────────
-  // After 15 seconds without a successful connection, show a more helpful
-  // error message on the join screen (firewall tips, etc.)
-  const connectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  useEffect(() => {
-    if (myRole === 'admin') return
-
-    // Clear any existing timer
-    if (connectionTimerRef.current) {
-      clearTimeout(connectionTimerRef.current)
-      connectionTimerRef.current = null
-    }
-
-    if (serverConnected) return
-
-    // Start a 15-second timer to show connection error
-    connectionTimerRef.current = setTimeout(() => {
-      setConnectionFailed(true)
-    }, 15000)
-
-    return () => {
-      if (connectionTimerRef.current) {
-        clearTimeout(connectionTimerRef.current)
-        connectionTimerRef.current = null
-      }
-    }
-  }, [myRole, serverConnected])
-
-  // ── Ensure session password is sent to server when admin has a project ────
-  // This is critical: project-setup.tsx calls setSessionPassword() but the socket
-  // may not be connected yet. This useEffect ensures the password is always sent
-  // whenever the admin has a project with a session password AND the socket connects.
-  //
-  // The sessionPassword in currentProject.config may be:
-  // 1. The actual password string (restored from separate localStorage by setCurrentProject)
-  // 2. '__PASSWORD_SET__' marker (if restoration from separate storage failed)
-  // 3. undefined (no password set)
-  //
-  // Only case 1 is actionable — we can send the actual password to the server.
-  // The '__PASSWORD_SET__' marker means the password was set but is not available
-  // (shouldn't happen if separate storage works correctly).
-  useEffect(() => {
-    if (myRole !== 'admin') return
-    const sp = currentProject?.config?.sessionPassword
-    if (!sp || sp === '__PASSWORD_SET__') return
-
-    // Send password to server whenever socket is connected and we have a password
-    const checkAndSend = () => {
-      const socket = getSocket()
-      const currentSP = useSaatirilStore.getState().currentProject?.config?.sessionPassword
-      if (socket?.connected && currentSP && currentSP !== '__PASSWORD_SET__') {
-        setSessionPassword(currentSP)
-        console.log('[SAATIRIL] Session password sent to server (ensure hook)')
-      }
-    }
-
-    // Check immediately
-    checkAndSend()
-
-    // Also check on connect events (emitted by socket.ts on connect)
-    const unsubscribe = onLocal('__SOCKET_CONNECTED__', () => {
-      setTimeout(checkAndSend, 500) // Small delay to ensure identify is sent first
-    })
-
-    // Belt-and-suspenders: also check periodically (every 3 seconds for 15 seconds)
-    // This handles edge cases where the socket connects but the event is missed
-    let checks = 0
-    const interval = setInterval(() => {
-      checkAndSend()
-      checks++
-      if (checks >= 5) clearInterval(interval) // Stop after 15 seconds
-    }, 3000)
-
-    return () => {
-      unsubscribe()
-      clearInterval(interval)
-    }
-  }, [myRole, currentProject?.config?.sessionPassword])
 
   // ── Socket event listeners (stable — no currentProject in deps) ──────────
   useEffect(() => {
@@ -482,7 +341,8 @@ export function MainApp() {
 
     const handleRequestState = () => {
       const role = myRoleRef.current
-      const curProj = currentProjectRef.current
+      // Read from store directly (not ref) to get the latest frame data
+      const curProj = useSaatirilStore.getState().currentProject
       if (role === 'admin' && curProj) {
         // DO NOT strip frame for REQUEST_STATE responses — new clients need the full frame data.
         // stripFrameForSync is only for subsequent SYNC_DB updates where clients already have the frame.
@@ -497,7 +357,11 @@ export function MainApp() {
             ...curProj.config,
             sessionPassword: curProj.config.sessionPassword ? '__PASSWORD_SET__' : undefined,
           },
+          // Strip photo history photos (they're already sent via PHOTOS_SAVED events)
+          photoHistory: curProj.photoHistory.map(h => ({ ...h, photos: [] })),
         }
+        // Remove internal fields that should never be sent over the LAN
+        delete (safeProject as any)._sessionPasswordHash
         emitLocal('SYNC_DB', { project: safeProject })
       }
     }
@@ -562,167 +426,76 @@ export function MainApp() {
     [setMyChannel],
   )
 
-  // ── Render: Password Join screen for MC/Operator ──────────────────────────
-  // This screen is shown when:
-  // 1. Socket is not yet connected (connecting state)
-  // 2. Server requires a session password
-  // 3. Authentication has failed
-  // 4. Connection has failed (timeout)
-  //
-  // Flow when NO password is set:
-  //   Socket connects → identify (no hash) → server sends auth-success → done
-  //   The join screen briefly shows "Menghubungkan..." then disappears after auth.
-  //
-  // Flow when password IS set:
-  //   Socket connects → identify (no hash) → server sends auth-failed →
-  //   Join screen appears → user enters password → reidentify → auth-success → done
-  //
-  // Flow when connection fails:
-  //   Socket never connects → join screen shows "Menghubungkan..." →
-  //   After 15s timeout → shows "Gagal Terhubung ke Server" with retry button
-  //
-  // CRITICAL FIX: Previously, the condition was:
-  //   !sessionPasswordVerified && (serverRequiresPassword || sessionPasswordError)
-  // This meant the join screen was NOT shown when the socket wasn't connected
-  // AND no password was required. The MC would fall through to the "Sinkronisasi
-  // Data" screen, which shows no connection status — confusing the user who
-  // thinks the admin just hasn't sent data yet, when in reality the socket
-  // connection itself has failed.
-  const showJoinScreen = myRole !== 'admin' && !sessionPasswordVerified && (serverRequiresPassword || sessionPasswordError || !serverConnected)
+  // ── Render: License gate (Electron only) ──────────────────────────────────
+  if (!licenseValid) {
+    return <LicenseGate onLicenseValid={() => setLicenseValid(true)} />
+  }
 
-  if (showJoinScreen) {
-    const isConnecting = !serverConnected && !sessionPasswordError && !connectionFailed
-    const needsPasswordInput = serverConnected && (serverRequiresPassword || sessionPasswordError)
-    const showConnectionError = connectionFailed && !serverConnected
-
+  // ── Render: Session password prompt (non-admin, when server requires password) ─
+  // Show prompt when:
+  // 1. Server says password is required (primary check — server-side validation)
+  // 2. OR we have a __PASSWORD_SET__ marker in our project config and we're not authenticated
+  // The serverRequiresPassword flag is set by the 'auth-requirement' event on connect.
+  const needsPassword = myRole !== 'admin' && !sessionPasswordVerified && (
+    serverRequiresPassword ||
+    (currentProject?.config?.sessionPassword === '__PASSWORD_SET__' && !isSocketAuthenticated())
+  )
+  if (needsPassword) {
     return (
       <div
         className="flex h-dvh flex-col items-center justify-center gap-6 px-6"
         style={{ backgroundColor: THEME.bg }}
       >
-        {/* ── Icon: changes based on state ──────────────────────────────── */}
         <div
           className="flex size-20 items-center justify-center rounded-full"
-          style={{
-            backgroundColor: (sessionPasswordError || showConnectionError) ? `${THEME.red}15` : `${THEME.gold}15`,
-            borderWidth: 1,
-            borderColor: (sessionPasswordError || showConnectionError) ? `${THEME.red}33` : `${THEME.gold}33`,
-          }}
+          style={{ backgroundColor: `${THEME.gold}15`, borderWidth: 1, borderColor: `${THEME.gold}33` }}
         >
-          {isConnecting ? (
-            <Loader2 className="size-10 animate-spin" style={{ color: THEME.gold }} />
-          ) : showConnectionError ? (
-            <Wifi className="size-10" style={{ color: THEME.red }} />
-          ) : (
-            <Lock className="size-10" style={{ color: THEME.gold }} />
-          )}
+          <Lock className="size-10" style={{ color: THEME.gold }} />
         </div>
-
-        {/* ── Title & description ─────────────────────────────────────── */}
         <div className="text-center">
-          {isConnecting ? (
-            <>
-              <h2 className="text-xl font-bold text-white">Menghubungkan ke Server</h2>
-              <p className="mt-2 text-sm" style={{ color: THEME.muted }}>
-                Mencoba terhubung ke sesi Admin di jaringan LAN...
-              </p>
-            </>
-          ) : showConnectionError ? (
-            <>
-              <h2 className="text-xl font-bold text-white">Gagal Terhubung ke Server</h2>
-              <p className="mt-2 text-sm" style={{ color: THEME.muted }}>
-                Tidak dapat terhubung ke server SAATIRIL. Pastikan:
-              </p>
-              <div className="mt-3 text-left text-xs space-y-1.5" style={{ color: THEME.muted }}>
-                <p>• Admin sudah membuka proyek di jaringan LAN yang sama</p>
-                <p>• Port <strong>3003</strong> tidak diblokir oleh firewall</p>
-                <p>• URL yang digunakan sudah benar (termasuk port)</p>
-              </div>
-            </>
-          ) : needsPasswordInput ? (
-            <>
-              <h2 className="text-xl font-bold text-white">Password Sesi Diperlukan</h2>
-              <p className="mt-2 text-sm" style={{ color: THEME.muted }}>
-                Admin telah mengatur password untuk sesi ini.
-                Masukkan password untuk bergabung.
-              </p>
-            </>
-          ) : (
-            <>
-              <h2 className="text-xl font-bold text-white">Mengautentikasi...</h2>
-              <p className="mt-2 text-sm" style={{ color: THEME.muted }}>
-                Memverifikasi koneksi ke server...
-              </p>
-            </>
-          )}
+          <h2 className="text-xl font-bold text-white">Password Sesi Diperlukan</h2>
+          <p className="mt-2 text-sm" style={{ color: THEME.muted }}>
+            Admin telah mengatur password untuk sesi ini.
+            Masukkan password untuk bergabung.
+          </p>
         </div>
-
-        {/* ── Password input (shown when connected + password required) ── */}
-        {needsPasswordInput && (
-          <div className="w-full max-w-xs space-y-3">
-            <Input
-              type="password"
-              placeholder="Masukkan password sesi..."
-              value={sessionPasswordInput}
-              onChange={(e) => { setSessionPasswordInput(e.target.value); setSessionPasswordError(false) }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && sessionPasswordInput.trim()) {
-                  reidentifyWithPassword(sessionPasswordInput.trim())
-                }
-              }}
-              className="h-10 text-center font-mono text-sm"
-              style={{
-                backgroundColor: THEME.bg,
-                borderColor: sessionPasswordError ? THEME.red : THEME.border,
-                color: THEME.gold,
-              }}
-              autoFocus
-            />
-            {sessionPasswordError && (
-              <p className="text-center text-xs font-medium" style={{ color: THEME.red }}>
-                {authFailedReason === 'session_password_required'
-                  ? 'Password salah. Coba lagi.'
-                  : 'Gagal mengautentikasi. Coba lagi.'}
-              </p>
-            )}
-            <Button
-              className="w-full h-10 font-semibold"
-              style={{ backgroundColor: THEME.gold, color: THEME.bg }}
-              onClick={() => {
-                if (sessionPasswordInput.trim()) {
-                  reidentifyWithPassword(sessionPasswordInput.trim())
-                }
-              }}
-            >
-              Bergabung
-            </Button>
-          </div>
-        )}
-
-        {/* ── Retry button for connection errors ─────────────────────────── */}
-        {showConnectionError && (
+        <div className="w-full max-w-xs space-y-3">
+          <Input
+            type="password"
+            placeholder="Masukkan password sesi..."
+            value={sessionPasswordInput}
+            onChange={(e) => { setSessionPasswordInput(e.target.value); setSessionPasswordError(false) }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && sessionPasswordInput.trim()) {
+                reidentifyWithPassword(sessionPasswordInput.trim())
+              }
+            }}
+            className="h-10 text-center font-mono text-sm"
+            style={{
+              backgroundColor: THEME.bg,
+              borderColor: sessionPasswordError ? THEME.red : THEME.border,
+              color: THEME.gold,
+            }}
+          />
+          {sessionPasswordError && (
+            <p className="text-center text-xs font-medium" style={{ color: THEME.red }}>
+              {authFailedReason === 'session_password_required'
+                ? 'Password salah. Coba lagi.'
+                : 'Gagal mengautentikasi. Coba lagi.'}
+            </p>
+          )}
           <Button
-            variant="outline"
-            className="gap-2"
-            style={{ borderColor: THEME.border, color: THEME.muted }}
+            className="w-full h-10 font-semibold"
+            style={{ backgroundColor: THEME.gold, color: THEME.bg }}
             onClick={() => {
-              setConnectionFailed(false)
-              // Force socket reconnect
-              const sock = getSocket()
-              if (sock) {
-                sock.disconnect()
-                sock.connect()
-              } else {
-                connectSocket()
+              if (sessionPasswordInput.trim()) {
+                reidentifyWithPassword(sessionPasswordInput.trim())
               }
             }}
           >
-            <Wifi className="size-4" />
-            Coba Hubungkan Kembali
+            Bergabung
           </Button>
-        )}
-
-        {/* ── Role badge ─────────────────────────────────────────────────── */}
+        </div>
         <Badge
           className="gap-1.5 border-[#533485] bg-[#2a164a] px-3 py-1 text-xs"
           style={{ color: THEME.muted }}
@@ -736,14 +509,6 @@ export function MainApp() {
 
   // ── Render: Sync waiting screen ───────────────────────────────────────────
   if (!isSynced && myRole !== 'admin') {
-    // Show connection status — if the socket disconnected during sync,
-    // the user needs to know that the issue is connectivity, not admin data.
-    const connectionStatus = serverConnected
-      ? null
-      : connectionFailed
-        ? 'Koneksi terputus — mencoba menghubungkan kembali...'
-        : 'Menghubungkan ke server...'
-
     return (
       <div
         className="flex h-full flex-col items-center justify-center gap-6 px-6"
@@ -760,11 +525,6 @@ export function MainApp() {
           <p className="mt-1 text-xs" style={{ color: `${THEME.muted}88` }}>
             Pastikan Admin sudah membuka proyek di jaringan LAN yang sama.
           </p>
-          {connectionStatus && (
-            <p className="mt-2 text-xs font-medium" style={{ color: connectionFailed ? THEME.red : THEME.cyan }}>
-              {connectionStatus}
-            </p>
-          )}
         </div>
         <Badge
           className="gap-1.5 border-[#533485] bg-[#2a164a] px-3 py-1 text-xs"

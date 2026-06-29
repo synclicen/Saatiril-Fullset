@@ -10,14 +10,6 @@
  * 4. Server is stateless relay — all state lives in Zustand stores on clients
  * 5. Admin is the source of truth — others sync from Admin via REQUEST_STATE/SYNC_DB
  * 6. Session password enforcement — non-admin clients must provide correct password hash
- *
- * Auth flow:
- * - On connect: server sends `auth-requirement` with passwordRequired flag
- * - Client sends `identify` with role, channel, and optionally sessionPasswordHash
- * - If password required but not provided/incorrect: server sends `auth-failed`
- * - Client stays connected as `pending_auth` (NOT disconnected) and can retry
- * - When admin sets/clears password: server broadcasts `auth-requirement` to ALL clients
- * - After successful auth: client role is updated and `auth-success` is sent
  */
 
 import { createServer } from 'http'
@@ -30,7 +22,7 @@ const MAX_HTTP_BUFFER = 20e6 // 20MB — supports dual-channel photo bursts (4 �
 const PING_INTERVAL = 10000  // 10s — faster detection of disconnected clients (was 15s)
 const PING_TIMEOUT = 20000   // 20s — generous timeout for LAN (was 30s)
 const MAX_CONNECTIONS = 10   // Max concurrent clients (admin + 2×MC + 2×OP + buffer)
-const IDENTIFICATION_TIMEOUT_MS = 15000 // 15s — clients must identify within this time
+const IDENTIFICATION_TIMEOUT_MS = 10000 // 10s — clients must identify within this time
 
 // ─── Health tracking ───────────────────────────────────────────────────────
 let totalMessagesRelayed = 0
@@ -46,17 +38,6 @@ function getUptime(): string {
   const m = Math.floor((seconds % 3600) / 60)
   const s = seconds % 60
   return `${h}h ${m}m ${s}s`
-}
-
-/**
- * Broadcast auth-requirement to ALL connected clients.
- * Called when the session password is set or cleared by admin.
- * This ensures existing clients are notified about the auth requirement change.
- */
-function broadcastAuthRequirement() {
-  const payload = { passwordRequired: sessionPasswordHash !== null }
-  io.emit('auth-requirement', payload)
-  console.log(`[SAATIRIL] Broadcast auth-requirement: passwordRequired=${payload.passwordRequired}`)
 }
 
 // ─── HTTP server + Socket.io ───────────────────────────────────────────────
@@ -90,15 +71,11 @@ const io = new Server(httpServer, {
   pingInterval: PING_INTERVAL,
   pingTimeout: PING_TIMEOUT,
   maxHttpBufferSize: MAX_HTTP_BUFFER,
-  // NOTE: connectionStateRecovery is DISABLED because it causes the server
-  // process to crash (segfault) when running behind the Caddy reverse proxy
-  // in sandbox mode. The crash happens on the first proxied connection.
-  // Disabling this feature fixes the crash without affecting core functionality
-  // (clients simply reconnect manually after a disconnection instead of
-  // recovering missed events automatically).
-  // connectionStateRecovery: {
-  //   maxDisconnectionDuration: 2 * 60 * 1000,
-  // },
+  // Connection state recovery — if client reconnects within 2min,
+  // it gets missed events automatically
+  connectionStateRecovery: {
+    maxDisconnectionDuration: 2 * 60 * 1000, // 2 minutes
+  },
   // Transport order: websocket first (lower latency), polling as fallback
   transports: ['websocket', 'polling'],
   // Allow upgrading from polling to websocket
@@ -119,7 +96,7 @@ io.use((socket, next) => {
 // ─── Client tracking ───────────────────────────────────────────────────────
 interface ClientInfo {
   id: string
-  role: string   // 'unknown' | 'admin' | 'mc' | 'operator' | 'pending_auth'
+  role: string
   channel: number
   connectedAt: number
   lastActivity: number
@@ -150,26 +127,27 @@ io.on('connection', (socket: Socket) => {
     passwordRequired: sessionPasswordHash !== null,
   })
 
-  // ── Identification timeout — disconnect if not identified within timeout ───
-  // CRITICAL: 'pending_auth' clients are NOT disconnected — they're waiting
-  // for the user to enter the session password. Only truly 'unknown' clients
-  // (that never sent an identify at all) are disconnected.
+  // ── Identification timeout — disconnect if not identified within 30s ───
+  // Extended from 10s to 30s to give non-admin clients time to enter
+  // the session password before being disconnected.
   const identificationTimeout = setTimeout(() => {
     const info = clientRegistry.get(socket.id)
     if (info && info.role === 'unknown') {
-      console.warn(`[SAATIRIL] Client ${socket.id} disconnected: failed to identify within ${IDENTIFICATION_TIMEOUT_MS}ms`)
+      console.warn(`[SAATIRIL] Client ${socket.id} disconnected: failed to identify within 30s`)
       socket.disconnect(true)
     }
-  }, IDENTIFICATION_TIMEOUT_MS)
+  }, 30000)
 
   // ── SET_SESSION_PASSWORD — admin sets the session password ─────────────
   socket.on('SET_SESSION_PASSWORD', (data: { passwordHash: string }) => {
     const info = clientRegistry.get(socket.id)
     if (info && info.role === 'admin') {
       sessionPasswordHash = data.passwordHash
-      console.log('[SAATIRIL] Session password set by admin — broadcasting to all clients')
-      // Broadcast auth-requirement to ALL clients so they know password is now required
-      broadcastAuthRequirement()
+      console.log('[SAATIRIL] Session password set by admin')
+      // Notify ALL other clients that a password is now required
+      // This ensures MC/operator clients that connected before the password
+      // was set will now see the password prompt.
+      socket.broadcast.emit('auth-requirement', { passwordRequired: true })
     }
   })
 
@@ -178,9 +156,9 @@ io.on('connection', (socket: Socket) => {
     const info = clientRegistry.get(socket.id)
     if (info && info.role === 'admin') {
       sessionPasswordHash = null
-      console.log('[SAATIRIL] Session password cleared — broadcasting to all clients')
-      // Broadcast auth-requirement to ALL clients so they know password is no longer required
-      broadcastAuthRequirement()
+      console.log('[SAATIRIL] Session password cleared')
+      // Notify ALL other clients that password is no longer required
+      socket.broadcast.emit('auth-requirement', { passwordRequired: false })
     }
   })
 
@@ -193,13 +171,12 @@ io.on('connection', (socket: Socket) => {
     if (data.role !== 'admin' && sessionPasswordHash) {
       if (!data.sessionPasswordHash || data.sessionPasswordHash !== sessionPasswordHash) {
         console.warn(`[SAATIRIL] Client ${socket.id} rejected: invalid session password (role: ${data.role})`)
-        // CRITICAL FIX: Set role to 'pending_auth' instead of leaving as 'unknown'
-        // This prevents the identification timeout from disconnecting the client.
-        // The client stays connected and can retry with the correct password.
-        info.role = 'pending_auth'
+        // Mark as 'auth-pending' so the identification timeout doesn't disconnect them
+        // while they're entering the password in the prompt
+        info.role = 'auth-pending'
         info.channel = data.channel
         socket.emit('auth-failed', { reason: 'session_password_required' })
-        return  // Don't fully register the client yet
+        return  // Don't fully register the client
       }
     }
 
@@ -219,12 +196,8 @@ io.on('connection', (socket: Socket) => {
   // ── Relay LAN messages between clients ──────────────────────────────────
   socket.on('lan-message', (payload: { event: string; data: any }) => {
     const info = clientRegistry.get(socket.id)
-    if (!info || info.role === 'unknown' || info.role === 'pending_auth') {
-      // Only fully authenticated clients can relay messages
-      // 'pending_auth' clients haven't entered the correct password yet
-      if (info?.role === 'pending_auth') {
-        console.warn(`[SAATIRIL] Pending-auth client ${socket.id} tried to relay message — ignoring (needs password)`)
-      }
+    if (!info || info.role === 'unknown' || info.role === 'auth-pending') {
+      console.warn(`[SAATIRIL] Unidentified/unauthenticated client ${socket.id} (role: ${info?.role}) tried to relay message — ignoring`)
       return
     }
 

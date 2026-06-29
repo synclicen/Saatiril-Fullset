@@ -88,6 +88,36 @@ const MAX_PHOTO_HISTORY_IN_MEMORY = 200
 // We store it in separate localStorage keys so it's not lost when
 // the main project list is saved with '__FRAME_SAVED__' markers.
 const FRAME_KEY_PREFIX = 'saatiril_frame_'
+const PASSWORD_HASH_KEY_PREFIX = 'saatiril_pwdhash_'
+
+function savePasswordHashToStorage(projectId: string, hash: string | null) {
+  try {
+    if (hash) {
+      localStorage.setItem(`${PASSWORD_HASH_KEY_PREFIX}${projectId}`, hash)
+    } else {
+      localStorage.removeItem(`${PASSWORD_HASH_KEY_PREFIX}${projectId}`)
+    }
+  } catch (e) {
+    console.error('[SAATIRIL] Failed to save password hash to separate storage:', e)
+  }
+}
+
+function loadPasswordHashFromStorage(projectId: string): string | null {
+  try {
+    return localStorage.getItem(`${PASSWORD_HASH_KEY_PREFIX}${projectId}`)
+  } catch (e) {
+    console.error('[SAATIRIL] Failed to load password hash from separate storage:', e)
+    return null
+  }
+}
+
+function removePasswordHashFromStorage(projectId: string) {
+  try {
+    localStorage.removeItem(`${PASSWORD_HASH_KEY_PREFIX}${projectId}`)
+  } catch (e) {
+    console.error('[SAATIRIL] Failed to remove password hash from separate storage:', e)
+  }
+}
 
 function saveFrameToStorage(projectId: string, frameData: string | null) {
   try {
@@ -115,41 +145,6 @@ function removeFrameFromStorage(projectId: string) {
     localStorage.removeItem(`${FRAME_KEY_PREFIX}${projectId}`)
   } catch (e) {
     console.error('[SAATIRIL] Failed to remove frame from separate storage:', e)
-  }
-}
-
-// ─── Session password storage: separate localStorage keys ──────────────────────
-// Session passwords are stored in separate localStorage keys so they survive
-// page reloads and are not lost when sanitizeProject converts them to markers.
-// Like frame storage, we keep them out of the main JSON blob.
-const SESSION_PASSWORD_KEY_PREFIX = 'saatiril_sp_'
-
-function saveSessionPasswordToStorage(projectId: string, password: string | undefined | null) {
-  try {
-    if (password && password !== '__PASSWORD_SET__') {
-      localStorage.setItem(`${SESSION_PASSWORD_KEY_PREFIX}${projectId}`, password)
-    } else {
-      localStorage.removeItem(`${SESSION_PASSWORD_KEY_PREFIX}${projectId}`)
-    }
-  } catch (e) {
-    console.error('[SAATIRIL] Failed to save session password to separate storage:', e)
-  }
-}
-
-function loadSessionPasswordFromStorage(projectId: string): string | null {
-  try {
-    return localStorage.getItem(`${SESSION_PASSWORD_KEY_PREFIX}${projectId}`)
-  } catch (e) {
-    console.error('[SAATIRIL] Failed to load session password from separate storage:', e)
-    return null
-  }
-}
-
-function removeSessionPasswordFromStorage(projectId: string) {
-  try {
-    localStorage.removeItem(`${SESSION_PASSWORD_KEY_PREFIX}${projectId}`)
-  } catch (e) {
-    console.error('[SAATIRIL] Failed to remove session password from separate storage:', e)
   }
 }
 
@@ -413,17 +408,13 @@ export function sanitizeProject(project: Project): Project {
     }))
 
   // Sanitize config: ensure targetFolder is a string
-  // NOTE: sessionPassword is preserved as a marker ('__PASSWORD_SET__') so the
-  // admin can re-send it to the socket server after a reconnection. The actual
-  // password value is stored in a separate localStorage key (like frame data)
-  // and restored in setCurrentProject / updateCurrentProject.
   const cleanConfig: ProjectConfig = {
     mode: project.config?.mode ?? 'single',
     ratio: project.config?.ratio ?? '4:3',
     preset: project.config?.preset ?? 'original',
     targetFolder: (project.config?.targetFolder ?? '').toString(),
     frame: project.config?.frame ?? null,
-    sessionPassword: project.config?.sessionPassword ? '__PASSWORD_SET__' : undefined,
+    sessionPassword: (project.config as ProjectConfig).sessionPassword,
   }
 
   // Sanitize captureVersions: ensure it's a plain object of numbers.
@@ -468,24 +459,21 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
   addProject: (project) => set((s) => {
     // Save frame data to separate localStorage key immediately
     saveFrameToStorage(project.id, project.config.frame)
-    // Save session password to separate localStorage key immediately
-    saveSessionPasswordToStorage(project.id, project.config.sessionPassword)
     return { projects: [...s.projects, project] }
   }),
   deleteProject: (id) => set((s) => {
     const newProjects = s.projects.filter(p => p.id !== id)
     const shouldClearCurrent = s.currentProject?.id === id
-    // Remove frame data from separate localStorage key
+    // Remove frame data and password hash from separate localStorage keys
     removeFrameFromStorage(id)
-    // Remove session password from separate localStorage key
-    removeSessionPasswordFromStorage(id)
+    removePasswordHashFromStorage(id)
     return {
       projects: newProjects,
       ...(shouldClearCurrent ? { currentProject: null } : {}),
     }
   }),
   setCurrentProject: (project) => {
-    // Ensure frame data and session password are in separate storage when setting current project
+    // Ensure frame data and password hash are in separate storage when setting current project
     if (project) {
       // CRITICAL: sanitize to prevent render crashes from corrupted data
       project = sanitizeProject(project)
@@ -496,15 +484,22 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
           project = { ...project, config: { ...project.config, frame: savedFrame } }
         }
       }
-      // If sessionPassword is the marker, try to restore from separate storage
+      // If sessionPassword is the marker, try to restore the hash from separate storage
       if (project.config.sessionPassword === '__PASSWORD_SET__') {
-        const savedPassword = loadSessionPasswordFromStorage(project.id)
-        if (savedPassword) {
-          project = { ...project, config: { ...project.config, sessionPassword: savedPassword } }
+        const savedHash = loadPasswordHashFromStorage(project.id)
+        if (savedHash) {
+          project = { ...project, config: { ...project.config, sessionPassword: '__PASSWORD_SET__' } }
+          // Store the hash in a well-known field so the admin can re-send it to the server
+          ;(project as any)._sessionPasswordHash = savedHash
         }
       }
       saveFrameToStorage(project.id, project.config.frame)
-      saveSessionPasswordToStorage(project.id, project.config.sessionPassword)
+      // Save password hash to separate storage if actual password is present
+      if (project.config.sessionPassword && project.config.sessionPassword !== '__PASSWORD_SET__') {
+        // This is the plaintext password from project creation — we'll hash it in the socket layer
+        // For now, save a marker so we know a password was set
+        savePasswordHashToStorage(project.id, '__PWD_PENDING__')
+      }
     }
     set({ currentProject: project })
   },
@@ -516,11 +511,11 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
         project = { ...project, config: { ...project.config, frame: savedFrame } }
       }
     }
-    // If sessionPassword is marker, restore from separate storage
+    // If sessionPassword is marker, restore hash from separate storage
     if (project.config.sessionPassword === '__PASSWORD_SET__') {
-      const savedPassword = loadSessionPasswordFromStorage(project.id)
-      if (savedPassword) {
-        project = { ...project, config: { ...project.config, sessionPassword: savedPassword } }
+      const savedHash = loadPasswordHashFromStorage(project.id)
+      if (savedHash && savedHash !== '__PWD_PENDING__') {
+        ;(project as any)._sessionPasswordHash = savedHash
       }
     }
     // Auto-trim photo history to prevent memory bloat
@@ -528,9 +523,8 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
       ...project,
       photoHistory: trimPhotoHistory(project.photoHistory),
     }
-    // Save frame data and session password to separate localStorage keys
+    // Save frame data to separate localStorage key
     saveFrameToStorage(trimmedProject.id, trimmedProject.config.frame)
-    saveSessionPasswordToStorage(trimmedProject.id, trimmedProject.config.sessionPassword)
     const idx = s.projects.findIndex(p => p.id === trimmedProject.id)
     const newProjects = [...s.projects]
     if (idx !== -1) newProjects[idx] = trimmedProject
@@ -572,24 +566,15 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
         if (projects.length !== rawProjects.length) {
           console.warn(`[SAATIRIL] Sanitized projects: ${rawProjects.length} → ${projects.length} (dropped invalid entries)`)
         }
-        // Restore frame data and session passwords from separate localStorage keys
-        // (frames are saved separately because they're too large for the main JSON;
-        //  session passwords are saved separately for security — not in the main JSON)
+        // Restore frame data from separate localStorage keys
+        // (frames are saved separately because they're too large for the main JSON)
         const restoredProjects = projects.map((p: Project) => {
-          let restored = { ...p }
-          // Restore frame
           const savedFrame = loadFrameFromStorage(p.id)
           if (savedFrame && (!p.config.frame || p.config.frame === '__FRAME_SAVED__')) {
             console.log(`[SAATIRIL] Restored frame for project: ${p.name}`)
-            restored = { ...restored, config: { ...restored.config, frame: savedFrame } }
+            return { ...p, config: { ...p.config, frame: savedFrame } }
           }
-          // Restore session password
-          const savedPassword = loadSessionPasswordFromStorage(p.id)
-          if (savedPassword && (!p.config.sessionPassword || p.config.sessionPassword === '__PASSWORD_SET__')) {
-            console.log(`[SAATIRIL] Restored session password for project: ${p.name}`)
-            restored = { ...restored, config: { ...restored.config, sessionPassword: savedPassword } }
-          }
-          return restored
+          return p
         })
         set({ projects: restoredProjects })
         // Persist the cleaned version back to localStorage so future loads
@@ -598,11 +583,7 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
           const safeProjects = restoredProjects.map(p => ({
             ...p,
             photoHistory: p.photoHistory.map(h => ({ ...h, photos: [] })),
-            config: {
-              ...p.config,
-              frame: p.config.frame ? '__FRAME_SAVED__' : null,
-              sessionPassword: p.config.sessionPassword ? '__PASSWORD_SET__' : undefined,
-            },
+            config: { ...p.config, frame: p.config.frame ? '__FRAME_SAVED__' : null },
           }))
           localStorage.setItem('saatiril_projects', JSON.stringify(safeProjects))
         } catch (e2) {
@@ -626,21 +607,16 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
     saveTimeout = setTimeout(() => {
       try {
         const { projects } = get()
-        // Save frame data and session passwords to separate localStorage keys first
+        // Save frame data to separate localStorage keys first
         for (const p of projects) {
           saveFrameToStorage(p.id, p.config.frame)
-          saveSessionPasswordToStorage(p.id, p.config.sessionPassword)
         }
-        // Save lightweight metadata (no base64 photos, frame/password in separate keys)
+        // Save lightweight metadata (no base64 photos, frame in separate keys)
         // so admin gallery shows entries after reload (just without thumbnails)
         const safeProjects = projects.map(p => ({
           ...p,
           photoHistory: p.photoHistory.map(h => ({ ...h, photos: [] })),
-          config: {
-            ...p.config,
-            frame: p.config.frame ? '__FRAME_SAVED__' : null,
-            sessionPassword: p.config.sessionPassword ? '__PASSWORD_SET__' : undefined,
-          },
+          config: { ...p.config, frame: p.config.frame ? '__FRAME_SAVED__' : null },
         }))
         localStorage.setItem('saatiril_projects', JSON.stringify(safeProjects))
         console.log('[SAATIRIL] Projects saved to localStorage (debounced)')
@@ -655,20 +631,15 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
     if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null }
     try {
       const { projects } = get()
-      // Save frame data and session passwords to separate localStorage keys first
+      // Save frame data to separate localStorage keys first
       for (const p of projects) {
         saveFrameToStorage(p.id, p.config.frame)
-        saveSessionPasswordToStorage(p.id, p.config.sessionPassword)
       }
-      // Save lightweight metadata (no base64 photos, frame/password in separate keys)
+      // Save lightweight metadata (no base64 photos, frame in separate keys)
       const safeProjects = projects.map(p => ({
         ...p,
         photoHistory: p.photoHistory.map(h => ({ ...h, photos: [] })),
-        config: {
-          ...p.config,
-          frame: p.config.frame ? '__FRAME_SAVED__' : null,
-          sessionPassword: p.config.sessionPassword ? '__PASSWORD_SET__' : undefined,
-        },
+        config: { ...p.config, frame: p.config.frame ? '__FRAME_SAVED__' : null },
       }))
       localStorage.setItem('saatiril_projects', JSON.stringify(safeProjects))
       console.log('[SAATIRIL] Projects saved to localStorage (immediate)')
