@@ -176,7 +176,12 @@ io.on('connection', (socket: Socket) => {
         // while they're entering the password in the prompt
         info.role = 'auth-pending'
         info.channel = data.channel
+        // Send BOTH auth-failed AND auth-requirement to ensure the client
+        // shows the password prompt. The auth-requirement event is critical
+        // because the client may have missed the initial one sent on connection
+        // (e.g., if the React component mounted after the event was dispatched).
         socket.emit('auth-failed', { reason: 'session_password_required' })
+        socket.emit('auth-requirement', { passwordRequired: true })
         return  // Don't fully register the client
       }
     }
@@ -269,7 +274,7 @@ setInterval(() => {
 }, 5 * 60 * 1000)
 
 // ─── Start server ──────────────────────────────────────────────────────────
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`[SAATIRIL] ═══════════════════════════════════════════════════════════`)
   console.log(`[SAATIRIL]  Socket.io Relay Server — PRODUCTION GRADE`)
   console.log(`[SAATIRIL]  Port: ${PORT}`)

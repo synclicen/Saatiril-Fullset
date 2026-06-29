@@ -82,7 +82,8 @@
     }
   },
   "dependencies": {
-    "pagedjs": "^0.4.3"
+    "pagedjs": "^0.4.3",
+    "qrcode.react": "^4.2.0"
   },
   "devDependencies": {
     "@dnd-kit/core": "^6.3.1",

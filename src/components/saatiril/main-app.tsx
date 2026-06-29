@@ -264,6 +264,13 @@ export function MainApp() {
       setSessionPasswordVerified(false)
       setSessionPasswordError(true)
       setAuthFailedReason(data.reason)
+      // CRITICAL FIX: If auth failed due to session password requirement,
+      // also set serverRequiresPassword so the password prompt shows
+      // even if the auth-requirement event was missed or arrived before
+      // the React handlers were registered.
+      if (data.reason === 'session_password_required') {
+        setServerRequiresPassword(true)
+      }
     }
 
     socket.on('connect', handleConnect)
@@ -590,11 +597,14 @@ export function MainApp() {
   // 2. OR the socket module reports password is required (fallback for when
   //    the React event handler missed the auth-requirement event)
   // 3. OR we have a __PASSWORD_SET__ marker in our project config and we're not authenticated
-  // The serverRequiresPassword flag is set by the 'auth-requirement' event on connect.
+  // 4. OR auth-failed was received with session_password_required reason
+  // The serverRequiresPassword flag is set by the 'auth-requirement' event on connect
+  // AND by the 'auth-failed' handler for robustness.
   const needsPassword = myRole !== 'admin' && !sessionPasswordVerified && (
     serverRequiresPassword ||
     isServerPasswordRequired() ||
-    (currentProject?.config?.sessionPassword === '__PASSWORD_SET__' && !isSocketAuthenticated())
+    (currentProject?.config?.sessionPassword === '__PASSWORD_SET__' && !isSocketAuthenticated()) ||
+    (sessionPasswordError && authFailedReason === 'session_password_required')
   )
   if (needsPassword) {
     return (

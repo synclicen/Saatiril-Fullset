@@ -14,13 +14,23 @@ import {
   Download,
   FileSpreadsheet,
   XCircle,
+  QrCode,
+  X,
 } from 'lucide-react'
+import { QRCodeSVG } from 'qrcode.react'
 import * as XLSX from 'xlsx'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog'
 import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, type CameraMode, mergeDatabases, preserveFrameOnSync, preservePhotoHistoryOnSync, mergeCaptureVersions, isPhotoshootMode, isDualPhotoshootMode } from '@/store/use-saatiril-store'
 import { onLocal, offLocal, getConnectionHealth, onLatencyUpdate, type ConnectionHealth } from '@/lib/socket'
 import { useToast } from '@/hooks/use-toast'
@@ -313,6 +323,11 @@ export default function AdminDashboard() {
   // ── LAN info state ────────────────────────────────────────────────
   const [lanInfo, setLanInfo] = useState<{ httpPort: number; socketPort: number; ips: { name: string; address: string }[] } | null>(null)
 
+  // ── QR Code dialog state ───────────────────────────────────────────
+  const [qrDialogOpen, setQrDialogOpen] = useState(false)
+  const [qrLink, setQrLink] = useState('')
+  const [qrLabel, setQrLabel] = useState('')
+
   useEffect(() => {
     const api = window.saatirilAPI
     if (api?.isElectron && api.getLanInfo) {
@@ -322,6 +337,78 @@ export default function AdminDashboard() {
       }).catch(() => {})
     }
   }, [])
+
+  // ── Generate link URL (shared logic for copy & QR) ────────────────────
+  // Returns the URL string for a given role+channel combo.
+  // Same logic as copyLink but returns the URL instead of copying.
+  const generateLink = useCallback(
+    async (role: string, channel: number): Promise<string> => {
+      const api = window.saatirilAPI
+      const isElectron = api?.isElectron
+
+      if (isElectron) {
+        try {
+          const info = lanInfo || (await api.getLanInfo())
+          const ips = info.ips
+          const lanIP = ips.length > 0 ? ips[0].address : 'localhost'
+          return `http://${lanIP}:${info.httpPort}/?role=${role}&channel=${channel}&socketPort=${info.socketPort}`
+        } catch {
+          const hostname = window.location.hostname
+          const socketPort = new URLSearchParams(window.location.search).get('socketPort') || '3003'
+          return `http://${hostname}:3000/?role=${role}&channel=${channel}&socketPort=${socketPort}`
+        }
+      } else {
+        const socketPort = new URLSearchParams(window.location.search).get('socketPort') || '3003'
+        let origin = window.location.origin
+
+        const hostname = window.location.hostname
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+          try {
+            const pc = new RTCPeerConnection({ iceServers: [] })
+            pc.createDataChannel('')
+            const offer = await pc.createOffer()
+            await pc.setLocalDescription(offer)
+
+            const lanIP = await new Promise<string | null>((resolve) => {
+              const timeout = setTimeout(() => { pc.close(); resolve(null) }, 3000)
+              pc.onicecandidate = (e) => {
+                if (!e.candidate) return
+                const parts = e.candidate.candidate.split(' ')
+                const ip = parts[4]
+                if (ip && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip) && !ip.startsWith('0.') && ip !== '0.0.0.0') {
+                  clearTimeout(timeout)
+                  pc.close()
+                  resolve(ip)
+                }
+              }
+            })
+
+            if (lanIP) {
+              const port = window.location.port || '3000'
+              origin = `http://${lanIP}:${port}`
+            }
+          } catch {
+            // WebRTC not available — keep localhost URL
+          }
+        }
+
+        return `${origin}/?role=${role}&channel=${channel}&socketPort=${socketPort}`
+      }
+    },
+    [lanInfo],
+  )
+
+  // ── Show QR code dialog ─────────────────────────────────────────────
+  const showQrCode = useCallback(
+    async (role: string, channel: number) => {
+      const url = await generateLink(role, channel)
+      const label = role === 'mc' ? `MC ${channel > 1 ? channel : ''}`.trim() : `Operator ${channel}`
+      setQrLink(url)
+      setQrLabel(label)
+      setQrDialogOpen(true)
+    },
+    [generateLink],
+  )
 
   // ── Copy link handler ────────────────────────────────────────────
   // All links use HTTP. Operator needs Chrome Flag for camera access.
@@ -712,22 +799,42 @@ export default function AdminDashboard() {
         )}
         {mode === 'single' || mode === 'single-photoshoot' ? (
           <div className="flex flex-col gap-2">
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-2 border-[#533485] bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
-              onClick={() => copyLink('mc', 1)}
-            >
-              <Copy className="size-3.5" />
-              Copy Link MC
-            </Button>
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-2 border-[#533485] bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
-              onClick={() => copyLink('operator', 1)}
-            >
-              <Copy className="size-3.5" />
-              Copy Link Operator
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1 justify-start gap-2 border-[#533485] bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
+                onClick={() => copyLink('mc', 1)}
+              >
+                <Copy className="size-3.5" />
+                Copy Link MC
+              </Button>
+              <Button
+                variant="outline"
+                className="shrink-0 gap-1.5 border-[#533485] bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
+                onClick={() => showQrCode('mc', 1)}
+                title="Tampilkan Kode QR untuk MC"
+              >
+                <QrCode className="size-3.5" />
+              </Button>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1 justify-start gap-2 border-[#533485] bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
+                onClick={() => copyLink('operator', 1)}
+              >
+                <Copy className="size-3.5" />
+                Copy Link Operator
+              </Button>
+              <Button
+                variant="outline"
+                className="shrink-0 gap-1.5 border-[#533485] bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
+                onClick={() => showQrCode('operator', 1)}
+                title="Tampilkan Kode QR untuk Operator"
+              >
+                <QrCode className="size-3.5" />
+              </Button>
+            </div>
           </div>
         ) : mode === 'dual-photoshoot' ? (
           /* Dual Photoshoot: 1 MC + 2 Operators */
@@ -736,14 +843,24 @@ export default function AdminDashboard() {
               <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: '#4ade80' }}>
                 MC (1 orang)
               </div>
-              <Button
-                variant="outline"
-                className="w-full justify-start gap-2 border-emerald-400/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#4ade80]"
-                onClick={() => copyLink('mc', 1)}
-              >
-                <Copy className="size-3.5" />
-                MC
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1 justify-start gap-2 border-emerald-400/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#4ade80]"
+                  onClick={() => copyLink('mc', 1)}
+                >
+                  <Copy className="size-3.5" />
+                  MC
+                </Button>
+                <Button
+                  variant="outline"
+                  className="shrink-0 gap-1.5 border-emerald-400/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#4ade80]"
+                  onClick={() => showQrCode('mc', 1)}
+                  title="QR Code MC"
+                >
+                  <QrCode className="size-3.5" />
+                </Button>
+              </div>
             </div>
 
             <Separator className="bg-[#533485]/40" />
@@ -752,28 +869,48 @@ export default function AdminDashboard() {
               <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: GOLD }}>
                 Operator Kamera 1
               </div>
-              <Button
-                variant="outline"
-                className="w-full justify-start gap-2 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
-                onClick={() => copyLink('operator', 1)}
-              >
-                <Copy className="size-3.5" />
-                Operator 1
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1 justify-start gap-2 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
+                  onClick={() => copyLink('operator', 1)}
+                >
+                  <Copy className="size-3.5" />
+                  Operator 1
+                </Button>
+                <Button
+                  variant="outline"
+                  className="shrink-0 gap-1.5 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
+                  onClick={() => showQrCode('operator', 1)}
+                  title="QR Code Operator 1"
+                >
+                  <QrCode className="size-3.5" />
+                </Button>
+              </div>
             </div>
 
             <div>
               <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: CYAN }}>
                 Operator Kamera 2
               </div>
-              <Button
-                variant="outline"
-                className="w-full justify-start gap-2 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
-                onClick={() => copyLink('operator', 2)}
-              >
-                <Copy className="size-3.5" />
-                Operator 2
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1 justify-start gap-2 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
+                  onClick={() => copyLink('operator', 2)}
+                >
+                  <Copy className="size-3.5" />
+                  Operator 2
+                </Button>
+                <Button
+                  variant="outline"
+                  className="shrink-0 gap-1.5 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
+                  onClick={() => showQrCode('operator', 2)}
+                  title="QR Code Operator 2"
+                >
+                  <QrCode className="size-3.5" />
+                </Button>
+              </div>
             </div>
           </div>
         ) : (
@@ -784,22 +921,42 @@ export default function AdminDashboard() {
                 Jalur Kiri
               </div>
               <div className="flex flex-col gap-2">
-                <Button
-                  variant="outline"
-                  className="w-full justify-start gap-2 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
-                  onClick={() => copyLink('mc', 1)}
-                >
-                  <Copy className="size-3.5" />
-                  MC 1
-                </Button>
-                <Button
-                  variant="outline"
-                  className="w-full justify-start gap-2 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
-                  onClick={() => copyLink('operator', 1)}
-                >
-                  <Copy className="size-3.5" />
-                  Operator 1
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1 justify-start gap-2 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
+                    onClick={() => copyLink('mc', 1)}
+                  >
+                    <Copy className="size-3.5" />
+                    MC 1
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="shrink-0 gap-1.5 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
+                    onClick={() => showQrCode('mc', 1)}
+                    title="QR Code MC 1"
+                  >
+                    <QrCode className="size-3.5" />
+                  </Button>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1 justify-start gap-2 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
+                    onClick={() => copyLink('operator', 1)}
+                  >
+                    <Copy className="size-3.5" />
+                    Operator 1
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="shrink-0 gap-1.5 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
+                    onClick={() => showQrCode('operator', 1)}
+                    title="QR Code Operator 1"
+                  >
+                    <QrCode className="size-3.5" />
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -811,22 +968,42 @@ export default function AdminDashboard() {
                 Jalur Kanan
               </div>
               <div className="flex flex-col gap-2">
-                <Button
-                  variant="outline"
-                  className="w-full justify-start gap-2 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
-                  onClick={() => copyLink('mc', 2)}
-                >
-                  <Copy className="size-3.5" />
-                  MC 2
-                </Button>
-                <Button
-                  variant="outline"
-                  className="w-full justify-start gap-2 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
-                  onClick={() => copyLink('operator', 2)}
-                >
-                  <Copy className="size-3.5" />
-                  Operator 2
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1 justify-start gap-2 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
+                    onClick={() => copyLink('mc', 2)}
+                  >
+                    <Copy className="size-3.5" />
+                    MC 2
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="shrink-0 gap-1.5 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
+                    onClick={() => showQrCode('mc', 2)}
+                    title="QR Code MC 2"
+                  >
+                    <QrCode className="size-3.5" />
+                  </Button>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1 justify-start gap-2 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
+                    onClick={() => copyLink('operator', 2)}
+                  >
+                    <Copy className="size-3.5" />
+                    Operator 2
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="shrink-0 gap-1.5 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
+                    onClick={() => showQrCode('operator', 2)}
+                    title="QR Code Operator 2"
+                  >
+                    <QrCode className="size-3.5" />
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
@@ -1112,6 +1289,65 @@ export default function AdminDashboard() {
           {renderPhotoGallery()}
         </div>
       </div>
+
+      {/* ── QR Code Dialog ─────────────────────────────────────────────────── */}
+      <Dialog open={qrDialogOpen} onOpenChange={setQrDialogOpen}>
+        <DialogContent className="sm:max-w-md border-[#533485] bg-[#2a164a] text-white">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-white">
+              <QrCode className="size-5" style={{ color: GOLD }} />
+              Kode QR — {qrLabel}
+            </DialogTitle>
+            <DialogDescription className="text-[#c4b5fd]">
+              Scan kode QR ini dengan perangkat yang akan digunakan untuk bergabung ke sesi.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col items-center gap-4 py-4">
+            {/* QR Code */}
+            <div className="rounded-xl bg-white p-4 shadow-lg">
+              <QRCodeSVG
+                value={qrLink}
+                size={220}
+                level="M"
+                bgColor="#ffffff"
+                fgColor="#1a0b2e"
+                includeMargin={false}
+              />
+            </div>
+            {/* Link text */}
+            <div className="w-full rounded-md bg-[#1a0b2e]/60 border border-[#533485]/50 p-3">
+              <p className="break-all text-center text-xs font-mono" style={{ color: '#c4b5fd' }}>
+                {qrLink}
+              </p>
+            </div>
+            {/* Copy button */}
+            <Button
+              className="w-full font-semibold"
+              style={{ backgroundColor: GOLD, color: '#1a0b2e' }}
+              onClick={async () => {
+                try {
+                  if (navigator.clipboard) {
+                    await navigator.clipboard.writeText(qrLink)
+                  } else {
+                    const textarea = document.createElement('textarea')
+                    textarea.value = qrLink
+                    document.body.appendChild(textarea)
+                    textarea.select()
+                    document.execCommand('copy')
+                    document.body.removeChild(textarea)
+                  }
+                  toast({ title: 'Link disalin!', description: qrLink })
+                } catch {
+                  toast({ title: 'Gagal menyalin', variant: 'destructive' })
+                }
+              }}
+            >
+              <Copy className="mr-2 size-4" />
+              Salin Link
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

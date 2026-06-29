@@ -276,7 +276,21 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const config = currentProject?.config
   const aspectRatio = config?.ratio ? parseRatio(config.ratio) : 4 / 3
   const cssFilter = config?.preset ? PRESET_FILTERS[config.preset] ?? 'none' : 'none'
-  const frameData = (config?.frame && config.frame !== '__FRAME_SAVED__') ? config.frame : null
+  const frameData = useMemo(() => {
+    if (!config?.frame) return null
+    if (config.frame !== '__FRAME_SAVED__') return config.frame
+    // Frame was stripped for sync — try to restore from separate localStorage key.
+    // This is a safety net: updateCurrentProject should have already restored it,
+    // but in case of a race condition or localStorage timing issue, we try here too.
+    try {
+      const projectId = currentProject?.id
+      if (projectId) {
+        const saved = localStorage.getItem(`saatiril_frame_${projectId}`)
+        if (saved) return saved
+      }
+    } catch {}
+    return null
+  }, [config?.frame, currentProject?.id])
 
   // ── Resize Observer: calculate camera dimensions ─────────────────────────
   useEffect(() => {
