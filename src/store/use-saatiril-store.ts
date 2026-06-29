@@ -613,10 +613,15 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
         }
         // Save lightweight metadata (no base64 photos, frame in separate keys)
         // so admin gallery shows entries after reload (just without thumbnails)
+        // Also strip session password — use marker instead of plaintext
         const safeProjects = projects.map(p => ({
           ...p,
           photoHistory: p.photoHistory.map(h => ({ ...h, photos: [] })),
-          config: { ...p.config, frame: p.config.frame ? '__FRAME_SAVED__' : null },
+          config: {
+            ...p.config,
+            frame: p.config.frame ? '__FRAME_SAVED__' : null,
+            sessionPassword: p.config.sessionPassword ? '__PASSWORD_SET__' : undefined,
+          },
         }))
         localStorage.setItem('saatiril_projects', JSON.stringify(safeProjects))
         console.log('[SAATIRIL] Projects saved to localStorage (debounced)')
@@ -636,10 +641,15 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
         saveFrameToStorage(p.id, p.config.frame)
       }
       // Save lightweight metadata (no base64 photos, frame in separate keys)
+      // Also strip session password — use marker instead of plaintext
       const safeProjects = projects.map(p => ({
         ...p,
         photoHistory: p.photoHistory.map(h => ({ ...h, photos: [] })),
-        config: { ...p.config, frame: p.config.frame ? '__FRAME_SAVED__' : null },
+        config: {
+          ...p.config,
+          frame: p.config.frame ? '__FRAME_SAVED__' : null,
+          sessionPassword: p.config.sessionPassword ? '__PASSWORD_SET__' : undefined,
+        },
       }))
       localStorage.setItem('saatiril_projects', JSON.stringify(safeProjects))
       console.log('[SAATIRIL] Projects saved to localStorage (immediate)')

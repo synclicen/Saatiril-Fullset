@@ -200,6 +200,13 @@ const MAX_QUEUE_SIZE = 50
 const MAX_RETRIES = 3
 const CRITICAL_EVENTS = new Set(['PHOTOS_SAVED', 'MC_CALL', 'SYNC_DB', 'STUDENT_DONE', 'STUDENT_RESET'])
 
+// ─── Pending session password ──────────────────────────────────────────────
+// When setSessionPassword() is called while socket is not connected,
+// we store the hash here and send it on the next connection BEFORE
+// flushing the event queue. This ensures the server has the password
+// set before any SYNC_DB events are relayed to other clients.
+let pendingSessionPasswordHash: string | null = null
+
 function queueEvent(event: string, data: any) {
   // Only queue critical events
   if (!CRITICAL_EVENTS.has(event)) return
@@ -296,6 +303,17 @@ export function connectSocket(): Socket {
     }
 
     socket?.emit('identify', identifyPayload)
+
+    // Send pending session password BEFORE flushing event queue.
+    // CRITICAL: This ensures the server has the password set before
+    // any SYNC_DB events are relayed to other clients. Without this,
+    // MC/Operator clients could receive project data without authenticating.
+    if (pendingSessionPasswordHash && role === 'admin') {
+      socket?.emit('SET_SESSION_PASSWORD', { passwordHash: pendingSessionPasswordHash })
+      currentSessionPasswordHash = pendingSessionPasswordHash
+      console.log('[SAATIRIL] Sent pending session password hash to server on connect')
+      pendingSessionPasswordHash = null
+    }
 
     // Flush any queued events from when we were disconnected
     // Only flush after we know we're authenticated
@@ -473,10 +491,21 @@ export function offLocal(event: string, callback?: LocalNetworkCallback) {
  * so the admin can re-send it on reconnection.
  */
 export async function setSessionPassword(password: string, projectId?: string): Promise<void> {
-  if (!socket?.connected) return
   const hash = await sha256(password)
   currentSessionPasswordHash = hash
-  socket.emit('SET_SESSION_PASSWORD', { passwordHash: hash })
+
+  if (socket?.connected) {
+    socket.emit('SET_SESSION_PASSWORD', { passwordHash: hash })
+    console.log('[SAATIRIL] Session password set on server')
+  } else {
+    // Socket not connected yet — store the hash as pending so it's sent
+    // on the next connection BEFORE any queued events are flushed.
+    // This is critical for the admin flow: project-setup.tsx calls
+    // setSessionPassword() before MainApp mounts and connects the socket.
+    pendingSessionPasswordHash = hash
+    console.log('[SAATIRIL] Socket not connected — session password hash queued as pending')
+  }
+
   // Save hash to separate localStorage for reconnection
   if (projectId && typeof window !== 'undefined') {
     try {
@@ -485,7 +514,6 @@ export async function setSessionPassword(password: string, projectId?: string): 
       console.error('[SAATIRIL] Failed to save password hash to storage:', e)
     }
   }
-  console.log('[SAATIRIL] Session password set on server')
 }
 
 /**
@@ -539,6 +567,26 @@ export async function reidentifyWithPassword(password: string): Promise<void> {
  */
 export function isSocketAuthenticated(): boolean {
   return isAuthenticated
+}
+
+/**
+ * Get the current socket connection state snapshot.
+ * Used by components on mount to sync their React state with the
+ * actual socket module state (which may have been updated by events
+ * that fired before the component's handlers were registered).
+ */
+export function getSocketAuthState(): {
+  connected: boolean
+  authenticated: boolean
+  passwordRequired: boolean
+  passwordHash: string | null
+} {
+  return {
+    connected: socket?.connected ?? false,
+    authenticated: isAuthenticated,
+    passwordRequired: authRequiredByServer,
+    passwordHash: currentSessionPasswordHash,
+  }
 }
 
 /**

@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useSaatirilStore, type AppTab, type Role, type Project, type CameraMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync, preservePhotoHistoryOnSync, isDualMode, isPhotoshootMode } from '@/store/use-saatiril-store'
-import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth, setSessionPassword, clearSessionPassword, reidentifyWithPassword, isSocketAuthenticated, isServerPasswordRequired, resendSessionPasswordHash } from '@/lib/socket'
+import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth, setSessionPassword, clearSessionPassword, reidentifyWithPassword, isSocketAuthenticated, isServerPasswordRequired, resendSessionPasswordHash, getSocketAuthState } from '@/lib/socket'
 
 import AdminDashboard from '@/components/saatiril/admin-dashboard'
 import { McPanel } from '@/components/saatiril/mc-panel'
@@ -263,10 +263,60 @@ export function MainApp() {
     socket.on('auth-success', handleAuthSuccess)
     socket.on('auth-failed', handleAuthFailed)
 
+    // ── Sync React state with socket module state on mount ──────────────────
+    // CRITICAL FIX: When MainApp mounts and the socket is already connected
+    // (e.g., from a previous mount or because the admin navigated from
+    // project-setup), the `connect` event won't fire again. We need to
+    // read the current auth state from the socket module and sync it to
+    // React state. Without this, the React state would have stale initial
+    // values (serverRequiresPassword=false, sessionPasswordVerified=false)
+    // while the socket module has the correct state.
+    //
+    // Using queueMicrotask to avoid the React lint warning about calling
+    // setState synchronously within an effect body. The microtask runs
+    // after the current execution context, which is safe because the
+    // socket state we're reading is already settled.
     queueMicrotask(() => {
-      if (socket.connected) {
+      const authState = getSocketAuthState()
+      if (authState.connected) {
         setServerConnected(true)
         setConnectionQuality('good')
+
+        // If socket is already connected but handleConnect hasn't run for this
+        // mount (because there's no new `connect` event), we need to perform
+        // the same logic that handleConnect does.
+        const role = myRoleRef.current
+        if (role === 'admin') {
+          // Admin: ensure session password is set on the server
+          const curProj = useSaatirilStore.getState().currentProject
+          if (curProj) {
+            if (curProj.config.sessionPassword && curProj.config.sessionPassword !== '__PASSWORD_SET__') {
+              setSessionPassword(curProj.config.sessionPassword, curProj.id)
+            } else if (curProj.config.sessionPassword === '__PASSWORD_SET__') {
+              const storedHash = typeof window !== 'undefined'
+                ? localStorage.getItem(`saatiril_pwdhash_${curProj.id}`)
+                : null
+              if (storedHash && storedHash !== '__PWD_PENDING__') {
+                resendSessionPasswordHash(storedHash)
+              }
+            }
+          }
+        } else {
+          // Non-admin: request state sync
+          emitLocal('REQUEST_STATE', { role, channel: useSaatirilStore.getState().myChannel })
+        }
+      }
+      if (authState.passwordRequired) {
+        setServerRequiresPassword(true)
+        // If password is required and we're not authenticated, mark as unverified
+        if (!authState.authenticated && myRole !== 'admin') {
+          setSessionPasswordVerified(false)
+        }
+      }
+      // If already authenticated (e.g., admin or non-admin with correct password),
+      // mark as verified
+      if (authState.authenticated) {
+        setSessionPasswordVerified(true)
       }
     })
 
@@ -434,10 +484,13 @@ export function MainApp() {
   // ── Render: Session password prompt (non-admin, when server requires password) ─
   // Show prompt when:
   // 1. Server says password is required (primary check — server-side validation)
-  // 2. OR we have a __PASSWORD_SET__ marker in our project config and we're not authenticated
+  // 2. OR the socket module reports password is required (fallback for when
+  //    the React event handler missed the auth-requirement event)
+  // 3. OR we have a __PASSWORD_SET__ marker in our project config and we're not authenticated
   // The serverRequiresPassword flag is set by the 'auth-requirement' event on connect.
   const needsPassword = myRole !== 'admin' && !sessionPasswordVerified && (
     serverRequiresPassword ||
+    isServerPasswordRequired() ||
     (currentProject?.config?.sessionPassword === '__PASSWORD_SET__' && !isSocketAuthenticated())
   )
   if (needsPassword) {

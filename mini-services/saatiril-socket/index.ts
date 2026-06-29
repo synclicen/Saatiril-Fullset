@@ -143,11 +143,12 @@ io.on('connection', (socket: Socket) => {
     const info = clientRegistry.get(socket.id)
     if (info && info.role === 'admin') {
       sessionPasswordHash = data.passwordHash
-      console.log('[SAATIRIL] Session password set by admin')
-      // Notify ALL other clients that a password is now required
-      // This ensures MC/operator clients that connected before the password
-      // was set will now see the password prompt.
-      socket.broadcast.emit('auth-requirement', { passwordRequired: true })
+      console.log('[SAATIRIL] Session password set by admin — broadcasting to all clients')
+      // Notify ALL clients (including admin) that a password is now required.
+      // Using io.emit instead of socket.broadcast.emit ensures every client
+      // receives the notification, including clients that may have connected
+      // before the password was set.
+      io.emit('auth-requirement', { passwordRequired: true })
     }
   })
 
@@ -156,9 +157,9 @@ io.on('connection', (socket: Socket) => {
     const info = clientRegistry.get(socket.id)
     if (info && info.role === 'admin') {
       sessionPasswordHash = null
-      console.log('[SAATIRIL] Session password cleared')
-      // Notify ALL other clients that password is no longer required
-      socket.broadcast.emit('auth-requirement', { passwordRequired: false })
+      console.log('[SAATIRIL] Session password cleared — broadcasting to all clients')
+      // Notify ALL clients that password is no longer required
+      io.emit('auth-requirement', { passwordRequired: false })
     }
   })
 
