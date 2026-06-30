@@ -19,6 +19,9 @@ dependencyResolutionManagement {
                 password = System.getenv("GITHUB_TOKEN") ?: ""
             }
         }
+        maven {
+            url = uri("https://repo.gradle.org/gradle/libs-releases/")
+        }
     }
 }
 
