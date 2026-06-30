@@ -76,3 +76,37 @@ Stage Summary:
 - Admin dashboard displays the actual password instead of __PASSWORD_SET__
 - LAN sync still uses __PASSWORD_SET__ marker (actual password never sent over LAN)
 - Commit: 91f6c82 pushed to origin/main
+
+---
+Task ID: 5
+Agent: main
+Task: Build native Android operator app with UVC capture card support
+
+Work Log:
+- Studied complete Saatiril socket.io protocol (all events, payloads, auth flow)
+- Designed Android app architecture (Kotlin + Compose + UVC + Socket.io)
+- Created Gradle build files with all dependencies
+- Created AndroidManifest with USB host, camera, network permissions
+- Built data models matching web app (Student, Project, CameraModes, etc.)
+- Built SocketManager with full Saatiril protocol support (auth, lan-message relay, ping)
+- Built OperatorViewModel with state management, capture flow, merge logic
+- Built UVCCameraManager using saki7/UVCCamera library for HDMI capture card
+- Built BuiltInCameraManager using CameraX as fallback
+- Built CameraCapture processor (center-crop, filter presets, frame overlay)
+- Built GridlineOverlay custom View (4 types: thirds, quarters, crosshair, diagonal)
+- Built ConnectionScreen (IP input, channel selection, password auth, camera status)
+- Built OperatorScreen (camera preview, gridline overlay, capture button, settings)
+- Built MainActivity with USB intent handling, permissions, navigation
+- Created GitHub Actions CI/CD workflow (build-windows + build-android + release)
+- Lint passed, Next.js build successful
+- Committed and pushed as 5e96a59
+
+Stage Summary:
+- Full Android app with 24 new files (3229 lines of code)
+- UVC capture card support via saki7/UVCCamera library
+- Socket.io full protocol compatibility with web version
+- Dual mode support (2 HPs as channel 1 & 2)
+- Gridline overlay with configurable type, thickness, color
+- Filter presets (9 presets: original, studio, cinematic, pro, etc.)
+- GitHub Actions auto-build for Windows .exe + Android .apk
+- Commit: 5e96a59 pushed to origin/main
