@@ -2,12 +2,9 @@ package com.saatiril.operator.data
 
 import android.util.Log
 import com.google.gson.Gson
-import com.google.gson.JsonParser
 import io.socket.client.IO
 import io.socket.client.Socket
-import io.socket.emitter.Emitter
 import org.json.JSONObject
-import java.net.URI
 import java.security.MessageDigest
 
 /**
@@ -20,6 +17,12 @@ class SocketManager {
         private const val TAG = "SocketManager"
         private const val IDENTIFY_TIMEOUT_MS = 30_000L
         private const val PING_INTERVAL_MS = 5_000L
+
+        fun sha256(input: String): String {
+            val digest = MessageDigest.getInstance("SHA-256")
+            val hashBytes = digest.digest(input.toByteArray(Charsets.UTF_8))
+            return hashBytes.joinToString("") { "%02x".format(it) }
+        }
     }
     
     private val gson = Gson()
@@ -338,11 +341,4 @@ class SocketManager {
         }
     }
     
-    companion object {
-        fun sha256(input: String): String {
-            val digest = MessageDigest.getInstance("SHA-256")
-            val hashBytes = digest.digest(input.toByteArray(Charsets.UTF_8))
-            return hashBytes.joinToString("") { "%02x".format(it) }
-        }
-    }
 }

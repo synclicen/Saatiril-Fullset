@@ -76,35 +76,14 @@ jobs:
       - name: Create local.properties
         working-directory: android-operator
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
-        
-      - name: Generate Gradle wrapper
+
+      - name: Make gradlew executable
         working-directory: android-operator
-        run: |
-          # Generate proper Gradle wrapper using system gradle
-          gradle wrapper --gradle-version 8.5 || true
-          # If gradle is not installed, create wrapper manually
-          if [ ! -f gradlew ]; then
-            mkdir -p gradle/wrapper
-            cat > gradle/wrapper/gradle-wrapper.properties << 'EOP'
-            distributionBase=GRADLE_USER_HOME
-            distributionPath=wrapper/dists
-            distributionUrl=https\://services.gradle.org/distributions/gradle-8.5-bin.zip
-            zipStoreBase=GRADLE_USER_HOME
-            zipStorePath=wrapper/dists
-            EOP
-            # Download gradlew script
-            curl -sL https://raw.githubusercontent.com/gradle/gradle/v8.5.0/gradlew -o gradlew
-            chmod +x gradlew
-          fi
+        run: chmod +x gradlew
           
       - name: Build Debug APK
         working-directory: android-operator
-        run: |
-          if [ -f gradlew ]; then
-            ./gradlew assembleDebug --no-daemon --stacktrace
-          else
-            gradle assembleDebug --no-daemon --stacktrace
-          fi
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
         
       - name: Upload APK
         uses: actions/upload-artifact@v4

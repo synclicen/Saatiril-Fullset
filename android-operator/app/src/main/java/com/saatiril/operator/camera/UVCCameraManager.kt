@@ -25,6 +25,22 @@ class UVCCameraManager(private val context: Context) {
         private const val PREVIEW_WIDTH = 1920
         private const val PREVIEW_HEIGHT = 1080
         private const val PREVIEW_MODE = UVCCamera.DEFAULT_PREVIEW_MODE
+
+        /**
+         * Check if a USB device is a UVC video device
+         */
+        fun isUVCDevice(device: UsbDevice): Boolean {
+            // Check interface class for Video class (14 or 239)
+            for (i in 0 until device.interfaceCount) {
+                val iface = device.getInterface(i)
+                // USB Video Class: Class 14 (Legacy) or 239 with subclass 2
+                if (iface.interfaceClass == 14 || 
+                    (iface.interfaceClass == 239 && iface.interfaceSubclass == 2)) {
+                    return true
+                }
+            }
+            return false
+        }
     }
     
     private var usbMonitor: USBMonitor? = null
@@ -183,21 +199,4 @@ class UVCCameraManager(private val context: Context) {
         return null // Capture is done via Surface/TexureView screenshot
     }
     
-    companion object {
-        /**
-         * Check if a USB device is a UVC video device
-         */
-        fun isUVCDevice(device: UsbDevice): Boolean {
-            // Check interface class for Video class (14 or 239)
-            for (i in 0 until device.interfaceCount) {
-                val iface = device.getInterface(i)
-                // USB Video Class: Class 14 (Legacy) or 239 with subclass 2
-                if (iface.interfaceClass == 14 || 
-                    (iface.interfaceClass == 239 && iface.interfaceSubclass == 2)) {
-                    return true
-                }
-            }
-            return false
-        }
-    }
 }
