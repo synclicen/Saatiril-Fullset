@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.SaatirilOperator" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#d4af37</item>
+        <item name="colorPrimaryVariant">#b8962e</item>
+        <item name="colorOnPrimary">#1a0b2e</item>
+        <item name="colorSecondary">#06b6d4</item>
+        <item name="colorSecondaryVariant">#0891b2</item>
+        <item name="colorOnSecondary">#1a0b2e</item>
+        <item name="android:windowBackground">#1a0b2e</item>
+        <item name="android:statusBarColor">#1a0b2e</item>
+        <item name="android:navigationBarColor">#1a0b2e</item>
+    </style>
+</resources>

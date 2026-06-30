@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="saatiril_bg">#1a0b2e</color>
+    <color name="saatiril_panel">#2a164a</color>
+    <color name="saatiril_card">#3b2263</color>
+    <color name="saatiril_border">#533485</color>
+    <color name="saatiril_gold">#d4af37</color>
+    <color name="saatiril_muted">#c4b5fd</color>
+    <color name="saatiril_cyan">#06b6d4</color>
+    <color name="saatiril_red">#ef4444</color>
+    <color name="saatiril_green">#4ade80</color>
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+</resources>

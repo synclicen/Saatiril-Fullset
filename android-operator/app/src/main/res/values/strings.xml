@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Saatiril Operator</string>
+    <string name="connection_title">Koneksi ke Server</string>
+    <string name="server_ip_hint">IP Server (contoh: 192.168.1.100)</string>
+    <string name="password_hint">Password Sesi (jika ada)</string>
+    <string name="channel_1">Kamera 1</string>
+    <string name="channel_2">Kamera 2</string>
+    <string name="connect_button">Hubungkan</string>
+    <string name="scan_qr">Scan QR Code</string>
+    <string name="status_connected">Terhubung</string>
+    <string name="status_disconnected">Terputus</string>
+    <string name="status_connecting">Menghubungkan...</string>
+    <string name="capture_button">Tangkap Foto</string>
+    <string name="gridline_settings">Pengaturan Gridline</string>
+    <string name="no_camera">Tidak ada kamera terdeteksi</string>
+    <string name="uvc_camera">Kamera USB (Capture Card)</string>
+    <string name="builtin_camera">Kamera Built-in</string>
+    <string name="waiting_target">Menunggu target dari MC...</string>
+    <string name="password_required">Password diperlukan untuk bergabung</string>
+    <string name="password_wrong">Password salah, coba lagi</string>
+    <string name="photo_1_ready">Pose 1 - Siap Foto</string>
+    <string name="photo_2_ready">Pose 2 - Siap Foto</string>
+    <string name="sending">Mengirim foto...</string>
+    <string name="done">Selesai!</string>
+</resources>

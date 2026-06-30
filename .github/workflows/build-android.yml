@@ -1,0 +1,130 @@
+name: Build Saatiril
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ─── Windows Build (Next.js + Electron) ────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          
+      - name: Install bun
+        run: npm install -g bun
+          
+      - name: Install dependencies
+        run: bun install
+        
+      - name: Build Next.js
+        run: bun run build:export
+        
+      - name: Compile Electron
+        run: bun run electron:compile
+        
+      - name: Bundle Electron
+        run: bun run electron:bundle
+        
+      - name: Build Electron (Windows)
+        run: bun run electron:build:win
+        
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: saatiril-windows
+          path: dist-electron/*.exe
+
+  # ─── Android Build (Operator App) ──────────────────────────
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            android-operator/.gradle
+          key: gradle-${{ hashFiles('android-operator/**/*.gradle.kts', 'android-operator/**/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+          
+      - name: Grant execute permission for gradlew
+        working-directory: android-operator
+        run: chmod +x gradlew || true
+        
+      - name: Create gradlew wrapper
+        working-directory: android-operator
+        run: |
+          cat > gradlew << 'EOF'
+          #!/bin/sh
+          exec gradle "$@"
+          EOF
+          chmod +x gradlew
+          
+      - name: Create local.properties
+        working-directory: android-operator
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+        
+      - name: Build Debug APK
+        working-directory: android-operator
+        run: gradle assembleDebug
+        
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: saatiril-operator-android
+          path: android-operator/app/build/outputs/apk/debug/*.apk
+
+  # ─── Release ───────────────────────────────────────────────
+  release:
+    needs: [build-windows, build-android]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            saatiril-windows/*.exe
+            saatiril-operator-android/*.apk
+          body: |
+            ## Saatiril Release ${{ github.ref_name }}
+            
+            ### 📦 Downloads
+            - **Windows Installer**: `Saatiril-Setup-*.exe`
+            - **Android Operator App**: `app-debug.apk`
+            
+            ### 📱 Android App Setup
+            1. Download the APK to your phone
+            2. Enable "Install from Unknown Sources" in Settings
+            3. Install the APK
+            4. Connect HDMI capture card via USB-C/OTG
+            5. Open the app and enter the server IP
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

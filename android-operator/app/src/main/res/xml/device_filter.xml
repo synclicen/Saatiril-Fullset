@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- UVC Video Class devices (HDMI capture cards, webcams, etc.) -->
+    <usb-device class="239" subclass="2" protocol="1" />
+    <!-- Common capture card vendor IDs -->
+    <usb-device vendor-id="1161" />  <!-- Fushicai -->
+    <usb-device vendor-id="3141" />  <!-- MacroSilicon -->
+    <usb-device vendor-id="1046" />  <!-- Magewell -->
+    <usb-device vendor-id="1273" />  <!-- Elgato -->
+    <usb-device vendor-id="1161" />  <!-- AverMedia -->
+    <!-- Generic - match all USB video devices -->
+    <usb-device class="14" subclass="1" protocol="0" />
+    <usb-device class="14" subclass="2" protocol="0" />
+</resources>
