@@ -1,12 +1,6 @@
 package com.saatiril.operator.ui.connection
 
-import android.app.Activity
-import android.content.pm.PackageManager
 import android.util.Log
-import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable

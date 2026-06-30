@@ -1,6 +1,5 @@
 package com.saatiril.operator.ui.operator
 
-import android.graphics.Bitmap
 import android.view.TextureView
 import androidx.compose.animation.*
 import androidx.compose.foundation.background

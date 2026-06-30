@@ -41,7 +41,6 @@ android {
 
     buildFeatures {
         compose = true
-        viewBinding = true
     }
 
     composeOptions {
@@ -62,7 +61,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")
     implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
 
     // Jetpack Compose
     implementation(platform("androidx.compose:compose-bom:2024.01.00"))
@@ -85,10 +83,6 @@ dependencies {
     implementation("androidx.camera:camera-camera2:1.3.1")
     implementation("androidx.camera:camera-lifecycle:1.3.1")
     implementation("androidx.camera:camera-view:1.3.1")
-
-    // QR Code scanning
-    implementation("com.google.mlkit:barcode-scanning:17.2.0")
-    implementation("com.google.zxing:core:3.5.2")
 
     // Image loading
     implementation("io.coil-kt:coil-compose:2.5.0")
