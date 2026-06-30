@@ -1,6 +1,6 @@
 package com.saatiril.operator.ui.connection
 
-import android.util.Log
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,17 +14,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import com.saatiril.operator.data.ConnectionState
 import com.saatiril.operator.data.OperatorViewModel
 
@@ -129,7 +126,7 @@ fun ConnectionScreen(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = PANEL),
                 shape = RoundedCornerShape(16.dp),
-                border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+                border = BorderStroke(1.dp, BORDER)
             ) {
                 Column(
                     modifier = Modifier.padding(24.dp),
@@ -213,13 +210,15 @@ fun ConnectionScreen(
                         ChannelButton(
                             channel = 1,
                             isSelected = selectedChannel == 1,
-                            onClick = { selectedChannel = 1 }
+                            onClick = { selectedChannel = 1 },
+                            modifier = Modifier.weight(1f)
                         )
                         // Channel 2
                         ChannelButton(
                             channel = 2,
                             isSelected = selectedChannel == 2,
-                            onClick = { selectedChannel = 2 }
+                            onClick = { selectedChannel = 2 },
+                            modifier = Modifier.weight(1f)
                         )
                     }
                     
@@ -357,11 +356,11 @@ fun ConnectionScreen(
 private fun ChannelButton(
     channel: Int,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = Modifier
-            .weight(1f)
+        modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .border(

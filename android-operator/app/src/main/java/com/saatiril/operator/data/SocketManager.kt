@@ -55,7 +55,6 @@ class SocketManager {
                 reconnectionDelay = 1000
                 reconnectionDelayMax = 5000
                 timeout = 10_000
-                maxHttpBufferLength = 20 * 1024 * 1024 // 20MB for photos
             }
             
             socket = IO.socket(serverUrl, options)

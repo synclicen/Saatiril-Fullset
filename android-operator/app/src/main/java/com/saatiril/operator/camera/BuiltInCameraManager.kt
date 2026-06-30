@@ -68,7 +68,7 @@ class BuiltInCameraManager(private val context: Context) {
             .setTargetAspectRatio(androidx.camera.core.AspectRatio.RATIO_16_9)
             .build()
             .also {
-                it.surfaceProvider = previewView.surfaceProvider
+                it.setSurfaceProvider(previewView.surfaceProvider)
             }
         
         // Image capture

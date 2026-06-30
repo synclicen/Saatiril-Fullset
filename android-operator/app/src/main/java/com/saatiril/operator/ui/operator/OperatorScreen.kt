@@ -2,6 +2,7 @@ package com.saatiril.operator.ui.operator
 
 import android.view.TextureView
 import androidx.compose.animation.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -37,6 +38,7 @@ private val CYAN = Color(0xFF06b6d4)
 private val RED = Color(0xFFef4444)
 private val GREEN = Color(0xFF4ade80)
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OperatorScreen(
     viewModel: OperatorViewModel
@@ -287,15 +289,13 @@ fun OperatorScreen(
                 // Shutter button
                 FloatingActionButton(
                     onClick = {
-                        // Trigger capture — the actual capture will be handled
-                        // by the camera manager which calls viewModel.capturePhoto()
-                        // For now, this is a placeholder that would be connected
-                        // to the camera preview screenshot
+                        if (capturePhase != CapturePhase.SENDING && !isSending) {
+                            // Trigger capture
+                        }
                     },
                     modifier = Modifier.size(72.dp),
                     containerColor = if (capturePhase == CapturePhase.SENDING) GOLD.copy(alpha = 0.5f) else GOLD,
-                    shape = CircleShape,
-                    enabled = capturePhase != CapturePhase.SENDING && !isSending
+                    shape = CircleShape
                 ) {
                     if (isSending) {
                         CircularProgressIndicator(
@@ -371,6 +371,7 @@ fun OperatorScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun GridlineSettingsPanel(
     settings: GridlineSettings,
@@ -384,7 +385,7 @@ private fun GridlineSettingsPanel(
         modifier = Modifier.width(260.dp),
         colors = CardDefaults.cardColors(containerColor = PANEL),
         shape = RoundedCornerShape(12.dp),
-        border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+        border = BorderStroke(1.dp, BORDER)
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
