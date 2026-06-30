@@ -50,6 +50,7 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "okhttp3/**"
         }
     }
 }
@@ -76,7 +77,8 @@ dependencies {
     implementation("io.socket:socket.io-client:2.1.0")
 
     // UVC Camera (USB Video Class) - for HDMI capture card support
-    implementation("com.github.saki7:UVCCamera:v3.1.0")
+    // Using jiangdongguo/AndroidUSBCamera (actively maintained, works on JitPack)
+    implementation("com.github.jiangdongguo:AndroidUSBCamera:3.2.7")
 
     // CameraX - built-in camera fallback
     implementation("androidx.camera:camera-core:1.3.1")

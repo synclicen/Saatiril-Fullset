@@ -2,7 +2,8 @@
 -keep class io.socket.** { *; }
 -keep class com.saatiril.operator.data.** { *; }
 
-# UVC Camera
+# AndroidUSBCamera (jiangdongguo)
+-keep class com.jiangdg.ausbc.** { *; }
 -keep class com.serenegiant.** { *; }
 
 # Gson
