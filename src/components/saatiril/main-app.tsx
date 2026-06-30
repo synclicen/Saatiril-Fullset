@@ -96,6 +96,7 @@ export function MainApp() {
   const [sessionPasswordError, setSessionPasswordError] = useState(false)
   const [serverRequiresPassword, setServerRequiresPassword] = useState(false)
   const [authFailedReason, setAuthFailedReason] = useState<string | null>(null)
+  const [forceShowPasswordPrompt, setForceShowPasswordPrompt] = useState(false)
 
   // ── Refs for stable event handlers ─────────────────────────────────────────
   const myRoleRef = useRef(myRole)
@@ -253,9 +254,18 @@ export function MainApp() {
       setSessionPasswordVerified(true)
       setSessionPasswordError(false)
       setAuthFailedReason(null)
+      setForceShowPasswordPrompt(false)
       // Now that we're authenticated, request state sync
       if (data.role !== 'admin') {
         emitLocal('REQUEST_STATE', { role: data.role, channel: data.channel })
+        // One-shot retry after 1 second in case the first REQUEST_STATE is lost
+        // (e.g., admin hasn't finished setting up yet, or network glitch)
+        setTimeout(() => {
+          if (!useSaatirilStore.getState().currentProject && isSocketAuthenticated()) {
+            console.log('[SAATIRIL] Retrying REQUEST_STATE after auth success (1s delay)')
+            emitLocal('REQUEST_STATE', { role: data.role, channel: data.channel })
+          }
+        }, 1000)
       }
     }
 
@@ -379,10 +389,19 @@ export function MainApp() {
       }
 
       // If server requires password and we're not verified, ensure we're not
-      // incorrectly marked as verified
-      if (socketPasswordRequired && !socketAuthenticated && sessionPasswordVerified) {
-        console.log('[SAATIRIL] Auth state sync: resetting sessionPasswordVerified (server requires password, not authenticated)')
-        setSessionPasswordVerified(false)
+      // incorrectly marked as verified. Also force-show the password prompt
+      // if we detect a password requirement that the React state missed.
+      if (socketPasswordRequired && !socketAuthenticated) {
+        if (sessionPasswordVerified) {
+          console.log('[SAATIRIL] Auth state sync: resetting sessionPasswordVerified (server requires password, not authenticated)')
+          setSessionPasswordVerified(false)
+        }
+        // If we're stuck on the waiting screen but the server requires a password,
+        // automatically show the password prompt
+        if (!forceShowPasswordPrompt && !currentProject) {
+          console.log('[SAATIRIL] Auth state sync: forcing password prompt (server requires password, no project data)')
+          setForceShowPasswordPrompt(true)
+        }
       }
 
       // If server does NOT require password and we ARE authenticated, mark as verified
@@ -393,7 +412,7 @@ export function MainApp() {
       }
     }, 2000)
     return () => clearInterval(syncInterval)
-  }, [myRole, serverRequiresPassword, sessionPasswordVerified])
+  }, [myRole, serverRequiresPassword, sessionPasswordVerified, forceShowPasswordPrompt, currentProject])
 
   // ── Connection quality monitor ────────────────────────────────────────────
   useEffect(() => {
@@ -437,21 +456,37 @@ export function MainApp() {
           // First-time project data for MC/Operator
           // SAFETY: If the incoming project has a __FRAME_SAVED__ marker (shouldn't happen
           // on first SYNC_DB from REQUEST_STATE, but can happen from broadcast SYNC_DB),
-          // try to restore from localStorage. If not found, strip the marker to prevent
-          // render issues (operator panel checks for __FRAME_SAVED__ and treats as null).
+          // try to restore from localStorage. If not found, request the frame from admin.
           let projectToSet = data.project
           if (projectToSet.config.frame === '__FRAME_SAVED__') {
             const savedFrame = typeof window !== 'undefined'
               ? localStorage.getItem(`saatiril_frame_${projectToSet.id}`)
               : null
-            projectToSet = {
-              ...projectToSet,
-              config: {
-                ...projectToSet.config,
-                frame: savedFrame || null, // Replace marker with actual data or null
-              },
+            if (savedFrame) {
+              projectToSet = {
+                ...projectToSet,
+                config: {
+                  ...projectToSet.config,
+                  frame: savedFrame,
+                },
+              }
+              console.log('[SAATIRIL] SYNC_DB first-time: __FRAME_SAVED__ marker replaced with actual frame data from localStorage')
+            } else {
+              // No frame in localStorage — replace marker with null for now,
+              // and request the frame from admin via REQUEST_FRAME event.
+              projectToSet = {
+                ...projectToSet,
+                config: {
+                  ...projectToSet.config,
+                  frame: null,
+                },
+              }
+              console.log('[SAATIRIL] SYNC_DB first-time: __FRAME_SAVED__ marker found but no localStorage data — requesting frame from admin')
+              // Request frame from admin (only if authenticated)
+              if (isSocketAuthenticated()) {
+                emitLocal('REQUEST_FRAME', { projectId: projectToSet.id, requesterRole: role })
+              }
             }
-            console.log('[SAATIRIL] SYNC_DB first-time: __FRAME_SAVED__ marker replaced with', savedFrame ? 'actual frame data' : 'null')
           }
           updateCurrentProject(projectToSet)
         }
@@ -491,13 +526,33 @@ export function MainApp() {
         // Ensure frame data is actual base64, not '__FRAME_SAVED__' marker.
         // The store's setCurrentProject/updateCurrentProject should restore from
         // separate localStorage, but as a safety net, check and restore here too.
+        // We try TWICE: first from the dedicated frame key, then from the projects
+        // JSON as a last resort (in case the frame was saved there but the separate
+        // key was cleared).
         let frameToSend = curProj.config.frame
         if (frameToSend === '__FRAME_SAVED__') {
-          const savedFrame = typeof window !== 'undefined'
+          // Try #1: dedicated frame localStorage key
+          let savedFrame = typeof window !== 'undefined'
             ? localStorage.getItem(`saatiril_frame_${curProj.id}`)
             : null
+          // Try #2: parse the projects JSON and look for the frame there
+          if (!savedFrame && typeof window !== 'undefined') {
+            try {
+              const raw = localStorage.getItem('saatiril_projects')
+              if (raw) {
+                const projects = JSON.parse(raw)
+                const found = projects.find((p: any) => p.id === curProj.id)
+                if (found?.config?.frame && found.config.frame !== '__FRAME_SAVED__') {
+                  savedFrame = found.config.frame
+                  console.log('[SAATIRIL] REQUEST_STATE: Restored frame from projects JSON fallback')
+                }
+              }
+            } catch { /* ignore parse errors */ }
+          }
           if (savedFrame) {
             frameToSend = savedFrame
+            // Also save to the dedicated key so future requests don't need the fallback
+            try { localStorage.setItem(`saatiril_frame_${curProj.id}`, savedFrame) } catch {}
             console.log('[SAATIRIL] REQUEST_STATE: Restored frame from localStorage for sync')
           } else {
             frameToSend = null // No frame available — don't send marker
@@ -523,12 +578,65 @@ export function MainApp() {
       }
     }
 
+    // ── REQUEST_FRAME: Non-admin requests frame data from admin ───────────
+    // When an operator/MC connects and receives a project with __FRAME_SAVED__
+    // marker (and localStorage has no frame), they can request the frame
+    // specifically from the admin. This is a targeted request that doesn't
+    // require a full SYNC_DB cycle.
+    const handleRequestFrame = (data: { projectId: string; requesterRole: string }) => {
+      const role = useSaatirilStore.getState().myRole
+      const curProj = useSaatirilStore.getState().currentProject
+      if (role !== 'admin' || !curProj || curProj.id !== data.projectId) return
+
+      // Try to get the frame from current project or localStorage
+      let frameData = curProj.config.frame
+      if (frameData === '__FRAME_SAVED__') {
+        const savedFrame = typeof window !== 'undefined'
+          ? localStorage.getItem(`saatiril_frame_${curProj.id}`)
+          : null
+        frameData = savedFrame || null
+      }
+
+      if (frameData) {
+        console.log('[SAATIRIL] REQUEST_FRAME: Sending frame to', data.requesterRole, `(${Math.round(frameData.length / 1024)}KB)`)
+        emitLocal('FRAME_DATA', { projectId: curProj.id, frame: frameData })
+      } else {
+        console.warn('[SAATIRIL] REQUEST_FRAME: No frame data available to send')
+      }
+    }
+
+    // ── FRAME_DATA: Non-admin receives frame data from admin ───────────────
+    const handleFrameData = (data: { projectId: string; frame: string }) => {
+      const role = myRoleRef.current
+      const curProj = useSaatirilStore.getState().currentProject
+      if (role === 'admin' || !curProj || curProj.id !== data.projectId) return
+
+      if (data.frame && data.frame !== '__FRAME_SAVED__') {
+        console.log('[SAATIRIL] FRAME_DATA: Received frame from admin', `(${Math.round(data.frame.length / 1024)}KB)`)
+        // Save to localStorage for persistence
+        try {
+          localStorage.setItem(`saatiril_frame_${data.projectId}`, data.frame)
+        } catch (e) {
+          console.error('[SAATIRIL] FRAME_DATA: Failed to save frame to localStorage:', e)
+        }
+        // Update the current project with the frame data
+        updateCurrentProject({
+          ...curProj,
+          config: { ...curProj.config, frame: data.frame },
+        })
+      }
+    }
+
     onLocal('SYNC_DB', handleSyncDb)
     onLocal('REQUEST_STATE', handleRequestState)
+    onLocal('REQUEST_FRAME', handleRequestFrame)
+    onLocal('FRAME_DATA', handleFrameData)
 
     return () => {
       offLocal('SYNC_DB', handleSyncDb)
       offLocal('REQUEST_STATE', handleRequestState)
+      offLocal('REQUEST_FRAME', handleRequestFrame)
+      offLocal('FRAME_DATA', handleFrameData)
     }
   }, [updateCurrentProject])
 
@@ -547,8 +655,14 @@ export function MainApp() {
     // Periodic retry while we don't have a project AND we're authenticated
     // (unauthenticated clients can't relay messages, so REQUEST_STATE would be blocked)
     const requestInterval = setInterval(() => {
-      if (!useSaatirilStore.getState().currentProject && isSocketAuthenticated()) {
+      const state = useSaatirilStore.getState()
+      if (!state.currentProject && isSocketAuthenticated()) {
         emitLocal('REQUEST_STATE', { role: myRole, channel: myChannel })
+      }
+      // Also check if we have a project but the frame is missing — request it
+      if (state.currentProject && !state.currentProject.config.frame && isSocketAuthenticated()) {
+        console.log('[SAATIRIL] Periodic check: requesting frame from admin (frame is missing)')
+        emitLocal('REQUEST_FRAME', { projectId: state.currentProject.id, requesterRole: myRole })
       }
     }, 3000)
 
@@ -598,13 +712,15 @@ export function MainApp() {
   //    the React event handler missed the auth-requirement event)
   // 3. OR we have a __PASSWORD_SET__ marker in our project config and we're not authenticated
   // 4. OR auth-failed was received with session_password_required reason
+  // 5. OR the forceShowPasswordPrompt flag was set (by the waiting screen or periodic sync)
   // The serverRequiresPassword flag is set by the 'auth-requirement' event on connect
   // AND by the 'auth-failed' handler for robustness.
   const needsPassword = myRole !== 'admin' && !sessionPasswordVerified && (
     serverRequiresPassword ||
     isServerPasswordRequired() ||
     (currentProject?.config?.sessionPassword === '__PASSWORD_SET__' && !isSocketAuthenticated()) ||
-    (sessionPasswordError && authFailedReason === 'session_password_required')
+    (sessionPasswordError && authFailedReason === 'session_password_required') ||
+    forceShowPasswordPrompt
   )
   if (needsPassword) {
     return (
@@ -674,10 +790,85 @@ export function MainApp() {
   }
 
   // ── Render: Sync waiting screen ───────────────────────────────────────────
-  if (!isSynced && myRole !== 'admin') {
+  // Also check if server requires password — if so, show a password hint
+  // instead of the generic waiting message. This handles the case where
+  // the auth-requirement event was received by the socket module but the
+  // React state hasn't synced yet, or the needsPassword check failed.
+  // Note: !isSynced already implies myRole !== 'admin' (because isSynced is
+  // true when myRole === 'admin'), so we don't need the extra check.
+  if (!isSynced) {
+    const waitingScreenPasswordRequired = serverRequiresPassword || isServerPasswordRequired()
+    // If server requires password, show password-required waiting screen
+    if (waitingScreenPasswordRequired) {
+      return (
+        <div
+          className="flex h-dvh flex-col items-center justify-center gap-6 px-6"
+          style={{ backgroundColor: THEME.bg }}
+        >
+          <div
+            className="flex size-20 items-center justify-center rounded-full"
+            style={{ backgroundColor: `${THEME.gold}15`, borderWidth: 1, borderColor: `${THEME.gold}33` }}
+          >
+            <Lock className="size-10" style={{ color: THEME.gold }} />
+          </div>
+          <div className="text-center">
+            <h2 className="text-xl font-bold text-white">Password Diperlukan</h2>
+            <p className="mt-2 text-sm" style={{ color: THEME.muted }}>
+              Sesi ini dilindungi password. Masukkan password untuk bergabung.
+            </p>
+          </div>
+          <div className="w-full max-w-xs space-y-3">
+            <Input
+              type="password"
+              placeholder="Masukkan password sesi..."
+              value={sessionPasswordInput}
+              onChange={(e) => { setSessionPasswordInput(e.target.value); setSessionPasswordError(false) }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && sessionPasswordInput.trim()) {
+                  reidentifyWithPassword(sessionPasswordInput.trim())
+                }
+              }}
+              className="h-10 text-center font-mono text-sm"
+              style={{
+                backgroundColor: THEME.bg,
+                borderColor: sessionPasswordError ? THEME.red : THEME.border,
+                color: THEME.gold,
+              }}
+            />
+            {sessionPasswordError && (
+              <p className="text-center text-xs font-medium" style={{ color: THEME.red }}>
+                {authFailedReason === 'session_password_required'
+                  ? 'Password salah. Coba lagi.'
+                  : 'Gagal mengautentikasi. Coba lagi.'}
+              </p>
+            )}
+            <Button
+              className="w-full h-10 font-semibold"
+              style={{ backgroundColor: THEME.gold, color: THEME.bg }}
+              onClick={() => {
+                if (sessionPasswordInput.trim()) {
+                  reidentifyWithPassword(sessionPasswordInput.trim())
+                }
+              }}
+            >
+              Bergabung
+            </Button>
+          </div>
+          <Badge
+            className="gap-1.5 border-[#533485] bg-[#2a164a] px-3 py-1 text-xs"
+            style={{ color: THEME.muted }}
+          >
+            <Radio className="size-3" style={{ color: THEME.gold }} />
+            {myRole === 'mc' ? 'MC' : 'Operator'} — Jalur {myChannel}
+          </Badge>
+        </div>
+      )
+    }
+
+    // Generic waiting screen (no password required)
     return (
       <div
-        className="flex h-full flex-col items-center justify-center gap-6 px-6"
+        className="flex h-dvh flex-col items-center justify-center gap-6 px-6"
         style={{ backgroundColor: THEME.bg }}
       >
         <div className="flex size-20 items-center justify-center rounded-full border-2 border-[#533485] bg-[#2a164a]">
@@ -692,6 +883,20 @@ export function MainApp() {
             Pastikan Admin sudah membuka proyek di jaringan LAN yang sama.
           </p>
         </div>
+        {/* Fallback button: if server requires password but the needsPassword
+            check failed to detect it, allow the user to manually show the
+            password prompt */}
+        {isServerPasswordRequired() && (
+          <Button
+            variant="outline"
+            className="gap-2 border-[#533485] text-sm"
+            style={{ color: THEME.gold, borderColor: THEME.border }}
+            onClick={() => setForceShowPasswordPrompt(true)}
+          >
+            <Lock className="size-4" />
+            Masukkan Password
+          </Button>
+        )}
         <Badge
           className="gap-1.5 border-[#533485] bg-[#2a164a] px-3 py-1 text-xs"
           style={{ color: THEME.muted }}

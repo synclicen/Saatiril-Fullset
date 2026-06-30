@@ -39,6 +39,7 @@ import {
   Zap,
   Timer,
   Hand,
+  Grid3x3,
 } from 'lucide-react'
 import {
   useSaatirilStore,
@@ -244,6 +245,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   // Buffer for MC_CALL events that arrive before the database updates via SYNC_DB
   const [mcCallBuffer, setMcCallBuffer] = useState<Student[]>([])
   const isCapturingRef = useRef(false)
+
+  // ── Gridline overlay state ─────────────────────────────────────────────────
+  const [gridlineEnabled, setGridlineEnabled] = useState(true)
+  const [gridlineType, setGridlineType] = useState<'thirds' | 'quarters' | 'crosshair' | 'diagonal'>('thirds')
+  const [gridlineThickness, setGridlineThickness] = useState<1 | 2 | 3>(1)
+  const [gridlineColor, setGridlineColor] = useState<'white' | 'yellow' | 'red' | 'cyan' | 'green'>('white')
 
   // ── Shutter mode state ───────────────────────────────────────────────────
   const [shutterMode, setShutterMode] = useState<ShutterMode>('manual')
@@ -1329,6 +1336,141 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     )
   }
 
+  // ── Gridline settings ──────────────────────────────────────────────────────
+  const renderGridlineSettings = (compact = false) => {
+    const colorSwatches: { id: typeof gridlineColor; color: string; label: string }[] = [
+      { id: 'white', color: '#ffffff', label: 'Putih' },
+      { id: 'yellow', color: '#facc15', label: 'Kuning' },
+      { id: 'red', color: '#ef4444', label: 'Merah' },
+      { id: 'cyan', color: '#06b6d4', label: 'Cyan' },
+      { id: 'green', color: '#22c55e', label: 'Hijau' },
+    ]
+
+    const typeOptions: { id: typeof gridlineType; label: string; icon: React.ReactNode }[] = [
+      { id: 'thirds', label: '1/3', icon: <List className="size-3" /> },
+      { id: 'quarters', label: '1/4', icon: <List className="size-3" /> },
+      { id: 'crosshair', label: '+', icon: <Aperture className="size-3" /> },
+      { id: 'diagonal', label: 'X', icon: <Frame className="size-3" /> },
+    ]
+
+    return (
+      <div className={`flex flex-col gap-1.5 ${compact ? '' : ''}`}>
+        <div className="flex items-center justify-between">
+          <p className={`font-semibold uppercase tracking-widest ${compact ? 'text-[8px]' : 'text-[9px]'}`} style={{ color: THEME.muted }}>
+            Gridline
+          </p>
+          <button
+            onClick={() => setGridlineEnabled((v) => !v)}
+            className="flex items-center gap-1 cursor-pointer"
+            title={gridlineEnabled ? 'Sembunyikan gridline' : 'Tampilkan gridline'}
+          >
+            <div
+              className={`rounded-full transition-all duration-200 ${compact ? 'w-6 h-3.5' : 'w-7 h-4'}`}
+              style={{
+                backgroundColor: gridlineEnabled ? THEME.gold : THEME.border,
+                position: 'relative',
+              }}
+            >
+              <div
+                className={`rounded-full bg-white transition-all duration-200 ${compact ? 'size-2.5' : 'size-3'}`}
+                style={{
+                  position: 'absolute',
+                  top: '50%',
+                  transform: `translateY(-50%) translateX(${gridlineEnabled ? (compact ? '10px' : '14px') : '1px'})`,
+                  transition: 'transform 0.2s ease',
+                }}
+              />
+            </div>
+          </button>
+        </div>
+
+        {gridlineEnabled && (
+          <>
+            {/* Grid type selector */}
+            <div className="flex gap-1">
+              {typeOptions.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setGridlineType(t.id)}
+                  className={`flex items-center justify-center gap-0.5 rounded-md font-semibold transition-all duration-200 cursor-pointer ${
+                    compact ? 'px-1.5 py-1 text-[9px]' : 'px-2 py-1.5 text-[10px]'
+                  } ${gridlineType === t.id ? 'scale-105' : 'hover:bg-white/5'}`}
+                  style={{
+                    backgroundColor: gridlineType === t.id ? `${THEME.gold}33` : THEME.panel,
+                    color: gridlineType === t.id ? THEME.gold : THEME.muted,
+                    border: `1px solid ${gridlineType === t.id ? THEME.gold : THEME.border}`,
+                    minWidth: compact ? '28px' : '34px',
+                  }}
+                  title={t.label}
+                >
+                  {t.icon}
+                  <span>{t.label}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Thickness selector */}
+            <div className="flex items-center gap-1.5">
+              <span className={`font-medium ${compact ? 'text-[8px]' : 'text-[9px]'}`} style={{ color: THEME.muted }}>
+                Ketebalan
+              </span>
+              <div className="flex gap-1">
+                {[1, 2, 3].map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setGridlineThickness(t as 1 | 2 | 3)}
+                    className={`flex items-center justify-center rounded-md transition-all duration-200 cursor-pointer ${
+                      compact ? 'w-6 h-5' : 'w-7 h-6'
+                    }`}
+                    style={{
+                      backgroundColor: gridlineThickness === t ? `${THEME.gold}33` : THEME.panel,
+                      border: `1px solid ${gridlineThickness === t ? THEME.gold : THEME.border}`,
+                    }}
+                    title={`Ketebalan ${t}`}
+                  >
+                    <div
+                      className="rounded-full"
+                      style={{
+                        backgroundColor: gridlineThickness === t ? THEME.gold : THEME.muted,
+                        width: `${t * 2 + 1}px`,
+                        height: `${t * 2 + 1}px`,
+                      }}
+                    />
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Color selector */}
+            <div className="flex items-center gap-1.5">
+              <span className={`font-medium ${compact ? 'text-[8px]' : 'text-[9px]'}`} style={{ color: THEME.muted }}>
+                Warna
+              </span>
+              <div className="flex gap-1">
+                {colorSwatches.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => setGridlineColor(c.id)}
+                    className={`rounded-full transition-all duration-200 cursor-pointer ${
+                      compact ? 'size-4' : 'size-5'
+                    }`}
+                    style={{
+                      backgroundColor: c.color,
+                      border: `2px solid ${gridlineColor === c.id ? THEME.gold : 'transparent'}`,
+                      boxShadow: gridlineColor === c.id ? `0 0 6px ${c.color}66` : 'none',
+                      opacity: gridlineColor === c.id ? 1 : 0.5,
+                    }}
+                    title={c.label}
+                  />
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
+
   // ── Operator queue with search (photoshoot mode) ────────────────────────
   const renderOpSearch = (compact = false) => {
     if (!photoshoot) return null
@@ -1400,6 +1542,74 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     )
   }
 
+  // ── Gridline color map ────────────────────────────────────────────────────
+  const GRIDLINE_COLORS: Record<string, { stroke: string; opacity: number }> = {
+    white:  { stroke: '#ffffff', opacity: 0.25 },
+    yellow: { stroke: '#facc15', opacity: 0.35 },
+    red:    { stroke: '#ef4444', opacity: 0.35 },
+    cyan:   { stroke: '#06b6d4', opacity: 0.35 },
+    green:  { stroke: '#22c55e', opacity: 0.35 },
+  }
+
+  // ── Gridline SVG renderer ─────────────────────────────────────────────────
+  const renderGridlineSVG = () => {
+    const { stroke, opacity } = GRIDLINE_COLORS[gridlineColor] || GRIDLINE_COLORS.white
+    const sw = gridlineThickness * 0.15 // stroke width in viewBox units (0.15, 0.3, 0.45)
+    const commonProps = { stroke, strokeWidth: sw, opacity, fill: 'none' }
+
+    switch (gridlineType) {
+      case 'thirds':
+        return (
+          <>
+            <line x1="33.333" y1="0" x2="33.333" y2="100" {...commonProps} />
+            <line x1="66.666" y1="0" x2="66.666" y2="100" {...commonProps} />
+            <line x1="0" y1="33.333" x2="100" y2="33.333" {...commonProps} />
+            <line x1="0" y1="66.666" x2="100" y2="66.666" {...commonProps} />
+          </>
+        )
+      case 'quarters':
+        return (
+          <>
+            <line x1="25" y1="0" x2="25" y2="100" {...commonProps} />
+            <line x1="50" y1="0" x2="50" y2="100" {...commonProps} />
+            <line x1="75" y1="0" x2="75" y2="100" {...commonProps} />
+            <line x1="0" y1="25" x2="100" y2="25" {...commonProps} />
+            <line x1="0" y1="50" x2="100" y2="50" {...commonProps} />
+            <line x1="0" y1="75" x2="100" y2="75" {...commonProps} />
+          </>
+        )
+      case 'crosshair':
+        return (
+          <>
+            <line x1="50" y1="0" x2="50" y2="100" {...commonProps} />
+            <line x1="0" y1="50" x2="100" y2="50" {...commonProps} />
+            {/* Center circle */}
+            <circle cx="50" cy="50" r="8" {...commonProps} />
+            <circle cx="50" cy="50" r="20" {...commonProps} strokeDasharray="2 2" />
+            {/* Small tick marks */}
+            <line x1="50" y1="0" x2="50" y2="5" {...commonProps} strokeWidth={sw * 2} />
+            <line x1="50" y1="95" x2="50" y2="100" {...commonProps} strokeWidth={sw * 2} />
+            <line x1="0" y1="50" x2="5" y2="50" {...commonProps} strokeWidth={sw * 2} />
+            <line x1="95" y1="50" x2="100" y2="50" {...commonProps} strokeWidth={sw * 2} />
+          </>
+        )
+      case 'diagonal':
+        return (
+          <>
+            {/* Diagonal lines + thirds */}
+            <line x1="0" y1="0" x2="100" y2="100" {...commonProps} />
+            <line x1="100" y1="0" x2="0" y2="100" {...commonProps} />
+            <line x1="33.333" y1="0" x2="33.333" y2="100" {...commonProps} opacity={opacity * 0.5} />
+            <line x1="66.666" y1="0" x2="66.666" y2="100" {...commonProps} opacity={opacity * 0.5} />
+            <line x1="0" y1="33.333" x2="100" y2="33.333" {...commonProps} opacity={opacity * 0.5} />
+            <line x1="0" y1="66.666" x2="100" y2="66.666" {...commonProps} opacity={opacity * 0.5} />
+          </>
+        )
+      default:
+        return null
+    }
+  }
+
   // ── Shared camera view component ─────────────────────────────────────────
   const renderCameraView = () => (
     <div
@@ -1432,13 +1642,17 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         />
       )}
 
-      {/* Rule of thirds grid */}
-      <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 6 }}>
-        <div className="absolute top-0 bottom-0 left-[33.333%] w-px bg-white/[0.12]" />
-        <div className="absolute top-0 bottom-0 left-[66.666%] w-px bg-white/[0.12]" />
-        <div className="absolute left-0 right-0 top-[33.333%] h-px bg-white/[0.12]" />
-        <div className="absolute left-0 right-0 top-[66.666%] h-px bg-white/[0.12]" />
-      </div>
+      {/* Gridline overlay */}
+      {gridlineEnabled && (
+        <svg
+          className="absolute inset-0 w-full h-full pointer-events-none"
+          style={{ zIndex: 6 }}
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+        >
+          {renderGridlineSVG()}
+        </svg>
+      )}
 
       {/* Timer countdown overlay */}
       {effectiveTimerCountdown > 0 && (
@@ -1524,6 +1738,11 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         {frameData && (
           <Badge className="text-[9px] px-1.5 py-0.5 border-0" style={{ backgroundColor: 'rgba(0,0,0,0.6)', color: THEME.gold }}>
             <Frame className="size-2.5 mr-0.5" />Frame
+          </Badge>
+        )}
+        {gridlineEnabled && (
+          <Badge className="text-[9px] px-1.5 py-0.5 border-0" style={{ backgroundColor: 'rgba(0,0,0,0.6)', color: GRIDLINE_COLORS[gridlineColor]?.stroke ?? '#ffffff' }}>
+            <Grid3x3 className="size-2.5 mr-0.5" />{gridlineType === 'thirds' ? '1/3' : gridlineType === 'quarters' ? '1/4' : gridlineType === 'crosshair' ? '+' : 'X'}
           </Badge>
         )}
       </div>
@@ -1904,6 +2123,11 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               {renderShutterModeSelector(true)}
             </div>
           </div>
+
+          {/* Gridline Settings (compact, mobile) */}
+          <div className="px-3 py-1 border-t" style={{ borderColor: `${THEME.border}44` }}>
+            {renderGridlineSettings(true)}
+          </div>
         </div>
       </div>
     )
@@ -2016,6 +2240,13 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             </CardContent>
           </Card>
         )}
+
+        {/* Gridline Settings */}
+        <Card className="shrink-0 border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: THEME.border }}>
+          <CardContent className="p-2.5">
+            {renderGridlineSettings(false)}
+          </CardContent>
+        </Card>
 
         {/* Operator search (photoshoot only) */}
         {renderOpSearch(false)}
