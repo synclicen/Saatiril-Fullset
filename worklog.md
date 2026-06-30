@@ -52,3 +52,27 @@ Stage Summary:
 - Gridline feature fully implemented with toggle, 4 types, 3 thickness levels, 5 color options
 - Settings available in both mobile (compact) and desktop sidebar layouts
 - Gridline badge appears on camera view showing current settings
+
+---
+Task ID: 4
+Agent: main
+Task: Fix password showing __PASSWORD_SET__ instead of actual password when admin reopens project
+
+Work Log:
+- Analyzed uploaded screenshot showing __PASSWORD_SET__ displayed instead of actual password
+- Traced the root cause: password is replaced with __PASSWORD_SET__ marker when saving to localStorage but never restored
+- Added separate localStorage key prefix (saatiril_pwd_plain_) for storing plaintext password (similar to frame storage pattern)
+- Added savePasswordPlainToStorage, loadPasswordPlainFromStorage, removePasswordPlainFromStorage functions
+- Updated setCurrentProject to restore actual password from separate key when sessionPassword is __PASSWORD_SET__
+- Updated updateCurrentProject to also restore actual password
+- Updated loadProjectsFromStorage to restore plaintext password on project load
+- Updated saveProjectsToStorage and saveProjectsToStorageNow to save plaintext to separate key BEFORE replacing with marker
+- Updated deleteProject to also clean up plaintext password key
+- Added safety check in admin-dashboard.tsx to never display __PASSWORD_SET__ marker
+- Lint passed, committed and pushed as 91f6c82
+
+Stage Summary:
+- Password now persists in separate localStorage key and is restored when admin reopens project
+- Admin dashboard displays the actual password instead of __PASSWORD_SET__
+- LAN sync still uses __PASSWORD_SET__ marker (actual password never sent over LAN)
+- Commit: 91f6c82 pushed to origin/main
