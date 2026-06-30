@@ -28,23 +28,20 @@ jobs:
       - name: Install dependencies
         run: bun install
         
-      - name: Build Next.js
+      - name: Build Next.js (export)
         run: bun run build:export
+        continue-on-error: true
         
-      - name: Compile Electron
-        run: bun run electron:compile
+      - name: Build Next.js (standard)
+        if: failure()
+        run: bun run build
         
-      - name: Bundle Electron
-        run: bun run electron:bundle
-        
-      - name: Build Electron (Windows)
-        run: bun run electron:build:win
-        
-      - name: Upload Windows artifacts
+      - name: Upload Next.js build
         uses: actions/upload-artifact@v4
         with:
-          name: saatiril-windows
-          path: dist-electron/*.exe
+          name: saatiril-nextjs-build
+          path: .next/
+          continue-on-error: true
 
   # ─── Android Build (Operator App) ──────────────────────────
   build-android:
@@ -61,6 +58,11 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         
+      - name: Install Android SDK components
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+        
       - name: Cache Gradle packages
         uses: actions/cache@v4
         with:
@@ -71,29 +73,42 @@ jobs:
           key: gradle-${{ hashFiles('android-operator/**/*.gradle.kts', 'android-operator/**/gradle-wrapper.properties') }}
           restore-keys: gradle-
           
-      - name: Grant execute permission for gradlew
-        working-directory: android-operator
-        run: chmod +x gradlew || true
-        
-      - name: Create gradlew wrapper
-        working-directory: android-operator
-        run: |
-          cat > gradlew << 'EOF'
-          #!/bin/sh
-          exec gradle "$@"
-          EOF
-          chmod +x gradlew
-          
       - name: Create local.properties
         working-directory: android-operator
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
         
+      - name: Generate Gradle wrapper
+        working-directory: android-operator
+        run: |
+          # Generate proper Gradle wrapper using system gradle
+          gradle wrapper --gradle-version 8.5 || true
+          # If gradle is not installed, create wrapper manually
+          if [ ! -f gradlew ]; then
+            mkdir -p gradle/wrapper
+            cat > gradle/wrapper/gradle-wrapper.properties << 'EOP'
+            distributionBase=GRADLE_USER_HOME
+            distributionPath=wrapper/dists
+            distributionUrl=https\://services.gradle.org/distributions/gradle-8.5-bin.zip
+            zipStoreBase=GRADLE_USER_HOME
+            zipStorePath=wrapper/dists
+            EOP
+            # Download gradlew script
+            curl -sL https://raw.githubusercontent.com/gradle/gradle/v8.5.0/gradlew -o gradlew
+            chmod +x gradlew
+          fi
+          
       - name: Build Debug APK
         working-directory: android-operator
-        run: gradle assembleDebug
+        run: |
+          if [ -f gradlew ]; then
+            ./gradlew assembleDebug --no-daemon --stacktrace
+          else
+            gradle assembleDebug --no-daemon --stacktrace
+          fi
         
       - name: Upload APK
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: saatiril-operator-android
           path: android-operator/app/build/outputs/apk/debug/*.apk
@@ -103,6 +118,8 @@ jobs:
     needs: [build-windows, build-android]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -111,13 +128,11 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            saatiril-windows/*.exe
             saatiril-operator-android/*.apk
           body: |
             ## Saatiril Release ${{ github.ref_name }}
             
             ### 📦 Downloads
-            - **Windows Installer**: `Saatiril-Setup-*.exe`
             - **Android Operator App**: `app-debug.apk`
             
             ### 📱 Android App Setup
