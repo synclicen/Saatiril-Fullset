@@ -89,6 +89,7 @@ const MAX_PHOTO_HISTORY_IN_MEMORY = 200
 // the main project list is saved with '__FRAME_SAVED__' markers.
 const FRAME_KEY_PREFIX = 'saatiril_frame_'
 const PASSWORD_HASH_KEY_PREFIX = 'saatiril_pwdhash_'
+const PASSWORD_PLAIN_KEY_PREFIX = 'saatiril_pwd_plain_'
 
 function savePasswordHashToStorage(projectId: string, hash: string | null) {
   try {
@@ -116,6 +117,35 @@ function removePasswordHashFromStorage(projectId: string) {
     localStorage.removeItem(`${PASSWORD_HASH_KEY_PREFIX}${projectId}`)
   } catch (e) {
     console.error('[SAATIRIL] Failed to remove password hash from separate storage:', e)
+  }
+}
+
+function savePasswordPlainToStorage(projectId: string, password: string | null) {
+  try {
+    if (password && password !== '__PASSWORD_SET__') {
+      localStorage.setItem(`${PASSWORD_PLAIN_KEY_PREFIX}${projectId}`, password)
+    } else if (!password || password === '__PASSWORD_SET__') {
+      localStorage.removeItem(`${PASSWORD_PLAIN_KEY_PREFIX}${projectId}`)
+    }
+  } catch (e) {
+    console.error('[SAATIRIL] Failed to save plaintext password to separate storage:', e)
+  }
+}
+
+function loadPasswordPlainFromStorage(projectId: string): string | null {
+  try {
+    return localStorage.getItem(`${PASSWORD_PLAIN_KEY_PREFIX}${projectId}`)
+  } catch (e) {
+    console.error('[SAATIRIL] Failed to load plaintext password from separate storage:', e)
+    return null
+  }
+}
+
+function removePasswordPlainFromStorage(projectId: string) {
+  try {
+    localStorage.removeItem(`${PASSWORD_PLAIN_KEY_PREFIX}${projectId}`)
+  } catch (e) {
+    console.error('[SAATIRIL] Failed to remove plaintext password from separate storage:', e)
   }
 }
 
@@ -464,9 +494,10 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
   deleteProject: (id) => set((s) => {
     const newProjects = s.projects.filter(p => p.id !== id)
     const shouldClearCurrent = s.currentProject?.id === id
-    // Remove frame data and password hash from separate localStorage keys
+    // Remove frame data, password hash, and plaintext password from separate localStorage keys
     removeFrameFromStorage(id)
     removePasswordHashFromStorage(id)
+    removePasswordPlainFromStorage(id)
     return {
       projects: newProjects,
       ...(shouldClearCurrent ? { currentProject: null } : {}),
@@ -484,18 +515,22 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
           project = { ...project, config: { ...project.config, frame: savedFrame } }
         }
       }
-      // If sessionPassword is the marker, try to restore the hash from separate storage
+      // If sessionPassword is the marker, try to restore the actual password from separate storage
       if (project.config.sessionPassword === '__PASSWORD_SET__') {
+        const savedPlain = loadPasswordPlainFromStorage(project.id)
+        if (savedPlain) {
+          project = { ...project, config: { ...project.config, sessionPassword: savedPlain } }
+        }
+        // Also restore the hash for server re-authentication
         const savedHash = loadPasswordHashFromStorage(project.id)
         if (savedHash) {
-          project = { ...project, config: { ...project.config, sessionPassword: '__PASSWORD_SET__' } }
-          // Store the hash in a well-known field so the admin can re-send it to the server
           ;(project as any)._sessionPasswordHash = savedHash
         }
       }
       saveFrameToStorage(project.id, project.config.frame)
-      // Save password hash to separate storage if actual password is present
+      // Save plaintext password and hash to separate storage if actual password is present
       if (project.config.sessionPassword && project.config.sessionPassword !== '__PASSWORD_SET__') {
+        savePasswordPlainToStorage(project.id, project.config.sessionPassword)
         // This is the plaintext password from project creation — we'll hash it in the socket layer
         // For now, save a marker so we know a password was set
         savePasswordHashToStorage(project.id, '__PWD_PENDING__')
@@ -511,8 +546,12 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
         project = { ...project, config: { ...project.config, frame: savedFrame } }
       }
     }
-    // If sessionPassword is marker, restore hash from separate storage
+    // If sessionPassword is marker, restore actual password and hash from separate storage
     if (project.config.sessionPassword === '__PASSWORD_SET__') {
+      const savedPlain = loadPasswordPlainFromStorage(project.id)
+      if (savedPlain) {
+        project = { ...project, config: { ...project.config, sessionPassword: savedPlain } }
+      }
       const savedHash = loadPasswordHashFromStorage(project.id)
       if (savedHash && savedHash !== '__PWD_PENDING__') {
         ;(project as any)._sessionPasswordHash = savedHash
@@ -566,15 +605,25 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
         if (projects.length !== rawProjects.length) {
           console.warn(`[SAATIRIL] Sanitized projects: ${rawProjects.length} → ${projects.length} (dropped invalid entries)`)
         }
-        // Restore frame data from separate localStorage keys
+        // Restore frame data and plaintext password from separate localStorage keys
         // (frames are saved separately because they're too large for the main JSON)
+        // (passwords are saved separately to avoid __PASSWORD_SET__ marker on reload)
         const restoredProjects = projects.map((p: Project) => {
           const savedFrame = loadFrameFromStorage(p.id)
+          let restored = p
           if (savedFrame && (!p.config.frame || p.config.frame === '__FRAME_SAVED__')) {
             console.log(`[SAATIRIL] Restored frame for project: ${p.name}`)
-            return { ...p, config: { ...p.config, frame: savedFrame } }
+            restored = { ...restored, config: { ...restored.config, frame: savedFrame } }
           }
-          return p
+          // Restore plaintext password from separate storage
+          if (p.config.sessionPassword === '__PASSWORD_SET__') {
+            const savedPlain = loadPasswordPlainFromStorage(p.id)
+            if (savedPlain) {
+              console.log(`[SAATIRIL] Restored plaintext password for project: ${p.name}`)
+              restored = { ...restored, config: { ...restored.config, sessionPassword: savedPlain } }
+            }
+          }
+          return restored
         })
         set({ projects: restoredProjects })
         // Persist the cleaned version back to localStorage so future loads
@@ -607,9 +656,13 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
     saveTimeout = setTimeout(() => {
       try {
         const { projects } = get()
-        // Save frame data to separate localStorage keys first
+        // Save frame data and plaintext password to separate localStorage keys first
         for (const p of projects) {
           saveFrameToStorage(p.id, p.config.frame)
+          // Save plaintext password to separate key BEFORE replacing with marker
+          if (p.config.sessionPassword && p.config.sessionPassword !== '__PASSWORD_SET__') {
+            savePasswordPlainToStorage(p.id, p.config.sessionPassword)
+          }
         }
         // Save lightweight metadata (no base64 photos, frame in separate keys)
         // so admin gallery shows entries after reload (just without thumbnails)
@@ -636,9 +689,13 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
     if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null }
     try {
       const { projects } = get()
-      // Save frame data to separate localStorage keys first
+      // Save frame data and plaintext password to separate localStorage keys first
       for (const p of projects) {
         saveFrameToStorage(p.id, p.config.frame)
+        // Save plaintext password to separate key BEFORE replacing with marker
+        if (p.config.sessionPassword && p.config.sessionPassword !== '__PASSWORD_SET__') {
+          savePasswordPlainToStorage(p.id, p.config.sessionPassword)
+        }
       }
       // Save lightweight metadata (no base64 photos, frame in separate keys)
       // Also strip session password — use marker instead of plaintext
