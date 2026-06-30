@@ -32,8 +32,8 @@ class SocketManager {
     private var myChannel: Int = 1
     private var pingIntervalJob: java.util.Timer? = null
     
-    // Event listeners
-    private val listeners = mutableMapOf<String, MutableList<(Any?) -> Unit>>()
+    // Event listeners — ConcurrentHashMap for thread safety
+    private val listeners = java.util.concurrent.ConcurrentHashMap<String, MutableList<(Any?) -> Unit>>()
     
     // ─── Connection ─────────────────────────────────────────────
     
@@ -77,6 +77,8 @@ class SocketManager {
         socket = null
         connectionState = ConnectionState.DISCONNECTED
         notifyListeners("state_changed", connectionState)
+        // Clear all listeners to prevent accumulation on reconnect
+        listeners.clear()
     }
     
     fun isConnected(): Boolean = socket?.connected() == true

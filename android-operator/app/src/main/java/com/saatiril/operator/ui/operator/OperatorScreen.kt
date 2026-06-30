@@ -49,7 +49,6 @@ fun OperatorScreen(
     val gridlineSettings by viewModel.gridlineSettings.collectAsState()
     val latencyMs by viewModel.latencyMs.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
-    val cameraSource by viewModel.cameraSource.collectAsState()
     val myChannel by viewModel.myChannel.collectAsState()
 
     var showGridlineSettings by remember { mutableStateOf(false) }

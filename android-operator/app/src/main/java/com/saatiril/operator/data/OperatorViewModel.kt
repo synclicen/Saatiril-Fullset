@@ -162,7 +162,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             _currentTarget.value = mcCall.student
             
             val photosPerSession = CameraModes.photosPerSession(mode)
-            _capturePhase.value = if (photosPerSession == 1) CapturePhase.READY_1 else CapturePhase.READY_1
+            _capturePhase.value = CapturePhase.READY_1
             _capturedPhotos.value = emptyList()
             
             Log.i(TAG, "MC_CALL: ${mcCall.student.nama} (channel ${mcCall.channel})")

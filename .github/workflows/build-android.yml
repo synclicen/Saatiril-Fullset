@@ -85,7 +85,7 @@ jobs:
         working-directory: android-operator
         env:
           GITHUB_USER: ${{ github.actor }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         run: ./gradlew assembleDebug --no-daemon --stacktrace
         
       - name: Upload APK
@@ -121,7 +121,7 @@ jobs:
             1. Download the APK to your phone
             2. Enable "Install from Unknown Sources" in Settings
             3. Install the APK
-            4. Connect HDMI capture card via USB-C/OTG
-            5. Open the app and enter the server IP
+            4. Open the app and enter the Saatiril server IP
+            5. For external camera: connect HDMI capture card via USB-C OTG
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

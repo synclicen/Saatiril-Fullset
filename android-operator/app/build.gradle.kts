@@ -50,14 +50,6 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
-            excludes += "okhttp3/**"
-        }
-    }
-
-    // Force resolve transitive dep conflicts
-    configurations.all {
-        resolutionStrategy {
-            force("com.gyf.immersionbar:immersionbar:3.0.0")
         }
     }
 }
@@ -80,23 +72,10 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
-    // Socket.io
+    // Socket.io — Saatiril protocol communication
     implementation("io.socket:socket.io-client:2.1.0")
 
-    // UVC Camera (USB Video Class) - for HDMI capture card support
-    // Using jiangdongguo/AndroidUSBCamera with transitive excludes for JitPack compatibility
-    implementation("com.github.jiangdongguo:AndroidUSBCamera:3.2.7") {
-        // Exclude transitive deps that fail on JitPack (401 Unauthorized)
-        // We add them from their proper Maven repositories below
-        exclude(group = "com.gyf.immersionbar", module = "immersionbar")
-        exclude(group = "com.zlc.glide", module = "webpdecoder")
-    }
-
-    // Add excluded transitive deps from their proper sources
-    // immersionbar — available on Maven Central / JitPack with auth
-    implementation("com.gyf.immersionbar:immersionbar:3.0.0")
-
-    // CameraX - built-in camera fallback
+    // CameraX — camera preview and capture (supports built-in + external cameras)
     implementation("androidx.camera:camera-core:1.3.1")
     implementation("androidx.camera:camera-camera2:1.3.1")
     implementation("androidx.camera:camera-lifecycle:1.3.1")
