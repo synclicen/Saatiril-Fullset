@@ -7,9 +7,12 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.saatiril.operator.util.FilenameUtils
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 
@@ -20,11 +23,13 @@ import java.io.ByteArrayOutputStream
  * - Capture state machine (standby → ready-1 → ready-2 → sending)
  * - Gridline settings
  * - Connection health
+ * - REQUEST_STATE retry loop (matches web client behavior)
  */
 class OperatorViewModel(application: Application) : AndroidViewModel(application) {
     
     companion object {
         private const val TAG = "OperatorViewModel"
+        private const val STATE_REQUEST_INTERVAL_MS = 3000L  // Match web client
     }
     
     private val socketManager = SocketManager()
@@ -86,6 +91,27 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private val _frameBitmap = MutableStateFlow<Bitmap?>(null)
     val frameBitmap: StateFlow<Bitmap?> = _frameBitmap.asStateFlow()
     
+    // ─── State Request Retry ────────────────────────────────────
+    // Matches web client behavior: keep requesting state until project is received
+    
+    private var stateRequestJob: Job? = null
+    
+    private fun startStateRequestLoop() {
+        stateRequestJob?.cancel()
+        stateRequestJob = viewModelScope.launch {
+            while (isActive && _project.value == null) {
+                socketManager.requestState()
+                delay(STATE_REQUEST_INTERVAL_MS)
+            }
+        }
+        Log.d(TAG, "State request loop started")
+    }
+    
+    private fun stopStateRequestLoop() {
+        stateRequestJob?.cancel()
+        stateRequestJob = null
+    }
+    
     // ─── Connection ─────────────────────────────────────────────
     
     fun connect(serverUrl: String, channel: Int, password: String? = null) {
@@ -98,6 +124,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     }
     
     fun disconnect() {
+        stopStateRequestLoop()
         socketManager.disconnect()
         _project.value = null
         _currentTarget.value = null
@@ -125,6 +152,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         socketManager.on("auth_success") {
             _passwordRequired.value = false
             _authError.value = null
+            
+            // Start requesting state from admin (retry loop)
+            startStateRequestLoop()
         }
         
         socketManager.on("auth_failed") { reason ->
@@ -144,6 +174,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         }
         
         socketManager.on("server_shutdown") {
+            stopStateRequestLoop()
             disconnect()
         }
         
@@ -171,6 +202,11 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         socketManager.on(SocketEvents.SYNC_DB) { data ->
             val syncData = data as? SyncDbData ?: return@on
             handleSyncDb(syncData.project)
+            
+            // Stop the state request loop once we have project data
+            if (_project.value != null) {
+                stopStateRequestLoop()
+            }
         }
         
         socketManager.on(SocketEvents.STUDENT_RESET) { data ->
@@ -208,6 +244,51 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
                     config = proj.config.copy(frame = frameData.frame)
                 )
             }
+        }
+        
+        // ── PHOTOS_SAVED from other operators (dual-photoshoot mode) ──
+        // When another operator finishes photographing the same student,
+        // we may need to clear our target (dual-photoshoot: either camera is enough)
+        
+        socketManager.on(SocketEvents.PHOTOS_SAVED) { data ->
+            val photosSaved = data as? PhotosSavedData ?: return@on
+            val mode = _project.value?.config?.mode ?: return@on
+            
+            // Only relevant in dual-photoshoot mode
+            if (!CameraModes.isPhotoshootMode(mode) || !CameraModes.isDualMode(mode)) return@on
+            
+            _currentTarget.value?.let { target ->
+                if (target.id == photosSaved.student.id) {
+                    // Other operator finished our target — clear it
+                    _currentTarget.value = null
+                    _capturePhase.value = CapturePhase.STANDBY
+                    _capturedPhotos.value = emptyList()
+                    Log.i(TAG, "Target cleared — other operator finished: ${target.nama}")
+                }
+            }
+        }
+        
+        // ── STUDENT_DONE from other operators (dual mode) ──
+        // In standard dual mode, we want to know when the other operator marks done
+        
+        socketManager.on(SocketEvents.STUDENT_DONE) { data ->
+            val doneData = data as? StudentDoneData ?: return@on
+            val mode = _project.value?.config?.mode ?: return@on
+            
+            // Only relevant in dual mode and from a different channel
+            if (!CameraModes.isDualMode(mode) || doneData.channel == _myChannel.value) return@on
+            
+            // Update local project state for this student
+            _project.value?.let { proj ->
+                val updatedDb = proj.database.map { student ->
+                    if (student.id == doneData.studentId) {
+                        student.copy(status = "done")
+                    } else student
+                }
+                _project.value = proj.copy(database = updatedDb)
+            }
+            
+            Log.d(TAG, "STUDENT_DONE from other operator: ${doneData.studentId}")
         }
     }
     
@@ -369,6 +450,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             }
             
             // 2. Send PHOTOS_SAVED with all photo data
+            // Student status is set to "done" inside sendPhotosSaved (matches web client)
             socketManager.sendPhotosSaved(
                 student = student,
                 photos = photos,
@@ -462,6 +544,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     
     override fun onCleared() {
         super.onCleared()
+        stopStateRequestLoop()
         socketManager.disconnect()
     }
 }
