@@ -70,45 +70,47 @@ class BuiltInCameraManager(private val context: Context) {
     private fun selectBestCamera(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
         val provider = cameraProvider ?: return
 
-        // Try external camera first (USB capture cards)
-        val hasExternal = try {
+        // Try external camera first (USB capture cards on API 28+)
+        try {
             val externalSelector = CameraSelector.Builder()
-                .addCameraFilter { cameras ->
-                    cameras.filter { it.hasExtension(CameraExtension.SESSION_EXTENSION) }
-                        .ifEmpty { cameras }
-                }
+                .requireLensFacing(CameraSelector.LENS_FACING_BACK) // External cameras may use BACK facing
                 .build()
-            // Try to find any camera that's external
-            provider.hasCamera(externalSelector) ||
-                provider.availableCameraInfos.any { info ->
-                    // External cameras are identified by their lens facing
-                    try {
-                        val selector = CameraSelector.Builder()
-                            .requireLensFacing(CameraSelector.LENS_FACING_BACK)
-                            .build()
-                        // Check all cameras for external ones
-                        false
-                    } catch (e: Exception) { false }
-                }
-        } catch (e: Exception) {
-            Log.d(TAG, "No external camera found: ${e.message}")
-            false
-        }
-
-        // Determine lens facing
-        currentLensFacing = when {
-            hasExternal -> CameraSelector.LENS_FACING_BACK // external uses special selector
-            provider.hasCamera(CameraSelector.Builder().requireLensFacing(CameraSelector.LENS_FACING_BACK).build()) -> CameraSelector.LENS_FACING_BACK
-            provider.hasCamera(CameraSelector.Builder().requireLensFacing(CameraSelector.LENS_FACING_FRONT).build()) -> CameraSelector.LENS_FACING_FRONT
-            else -> {
-                Log.e(TAG, "No camera available at all")
-                _isConnected.value = false
-                _cameraType.value = "none"
+            if (provider.hasCamera(externalSelector)) {
+                currentLensFacing = CameraSelector.LENS_FACING_BACK
+                startCamera(lifecycleOwner, previewView)
                 return
             }
+        } catch (e: Exception) {
+            Log.d(TAG, "No external camera found: ${e.message}")
         }
 
-        startCamera(lifecycleOwner, previewView)
+        // Fallback to back camera
+        try {
+            val backSelector = CameraSelector.Builder()
+                .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+                .build()
+            if (provider.hasCamera(backSelector)) {
+                currentLensFacing = CameraSelector.LENS_FACING_BACK
+                startCamera(lifecycleOwner, previewView)
+                return
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "No back camera found: ${e.message}")
+        }
+
+        // Fallback to front camera
+        try {
+            val frontSelector = CameraSelector.Builder()
+                .requireLensFacing(CameraSelector.LENS_FACING_FRONT)
+                .build()
+            if (provider.hasCamera(frontSelector)) {
+                currentLensFacing = CameraSelector.LENS_FACING_FRONT
+                startCamera(lifecycleOwner, previewView)
+                return
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "No camera available at all: ${e.message}")
+        }
     }
 
     private fun startCamera(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {

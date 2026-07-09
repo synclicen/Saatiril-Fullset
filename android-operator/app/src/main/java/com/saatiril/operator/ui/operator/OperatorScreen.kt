@@ -23,7 +23,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.camera.view.PreviewView
-import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.activity.ComponentActivity
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.LifecycleOwner
 import com.saatiril.operator.data.*
 import com.saatiril.operator.ui.gridline.GridlineOverlay
 
@@ -44,7 +46,7 @@ fun OperatorScreen(
     viewModel: OperatorViewModel
 ) {
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
+    val lifecycleOwner = (context as ComponentActivity) as LifecycleOwner
 
     val project by viewModel.project.collectAsState()
     val currentTarget by viewModel.currentTarget.collectAsState()
