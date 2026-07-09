@@ -76,11 +76,11 @@ dependencies {
     implementation("io.socket:socket.io-client:2.1.0")
 
     // CameraX — camera preview and capture (supports built-in + external cameras)
+    // Camera2CameraInfo interop is included in camera-camera2 module
     implementation("androidx.camera:camera-core:1.3.1")
     implementation("androidx.camera:camera-camera2:1.3.1")
     implementation("androidx.camera:camera-lifecycle:1.3.1")
     implementation("androidx.camera:camera-view:1.3.1")
-    implementation("androidx.camera:camera-camera2-interop:1.3.1")
 
     // Image loading
     implementation("io.coil-kt:coil-compose:2.5.0")
