@@ -325,7 +325,7 @@ private fun CameraStatusCard(
             }
 
             // Divider
-            HorizontalDivider(
+            Divider(
                 modifier = Modifier.padding(vertical = if (compact) 2.dp else 4.dp),
                 color = BORDER.copy(alpha = 0.5f),
                 thickness = 0.5.dp
