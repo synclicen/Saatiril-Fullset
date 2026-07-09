@@ -433,7 +433,7 @@ private fun ConnectionFormCard(
                         modifier = Modifier.weight(0.35f),
                         colors = textFieldColors(authError = null),
                         leadingIcon = {
-                            Icon(Icons.Default.Cable, contentDescription = null, tint = MUTED, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.SettingsEthernet, contentDescription = null, tint = MUTED, modifier = Modifier.size(16.dp))
                         },
                         textStyle = TextStyle(fontSize = 13.sp)
                     )
@@ -463,7 +463,7 @@ private fun ConnectionFormCard(
                     modifier = Modifier.fillMaxWidth(),
                     colors = textFieldColors(authError = null),
                     leadingIcon = {
-                        Icon(Icons.Default.Cable, contentDescription = null, tint = MUTED)
+                        Icon(Icons.Default.SettingsEthernet, contentDescription = null, tint = MUTED)
                     }
                 )
             }

@@ -24,7 +24,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.camera.view.PreviewView
 import androidx.activity.ComponentActivity
-import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.LifecycleOwner
 import com.saatiril.operator.data.*
 import com.saatiril.operator.ui.gridline.GridlineOverlay
