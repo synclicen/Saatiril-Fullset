@@ -1,6 +1,5 @@
 package com.saatiril.operator.ui.operator
 
-import android.view.TextureView
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -20,10 +19,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.camera.view.PreviewView
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.saatiril.operator.data.*
 import com.saatiril.operator.ui.gridline.GridlineOverlay
 
@@ -43,6 +43,9 @@ private val GREEN = Color(0xFF4ade80)
 fun OperatorScreen(
     viewModel: OperatorViewModel
 ) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
     val project by viewModel.project.collectAsState()
     val currentTarget by viewModel.currentTarget.collectAsState()
     val capturePhase by viewModel.capturePhase.collectAsState()
@@ -52,14 +55,22 @@ fun OperatorScreen(
     val latencyMs by viewModel.latencyMs.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
     val myChannel by viewModel.myChannel.collectAsState()
+    val cameraConnected by viewModel.cameraConnected.collectAsState()
+    val uvcDeviceAttached by viewModel.uvcDeviceAttached.collectAsState()
 
     var showGridlineSettings by remember { mutableStateOf(false) }
-    var showCameraSwitch by remember { mutableStateOf(false) }
 
     val config = project?.config
     val mode = config?.mode ?: CameraModes.SINGLE
     val photosPerSession = CameraModes.photosPerSession(mode)
     val isPhotoshoot = CameraModes.isPhotoshootMode(mode)
+
+    // Initialize camera when this screen enters composition
+    DisposableEffect(lifecycleOwner) {
+        onDispose {
+            // Camera will be cleaned up in ViewModel.onCleared()
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -70,11 +81,18 @@ fun OperatorScreen(
         Box(
             modifier = Modifier.fillMaxSize()
         ) {
-            // Camera preview using TextureView (supports both UVC and built-in)
+            // Camera preview using CameraX PreviewView
             AndroidView(
                 factory = { ctx ->
-                    TextureView(ctx).apply {
-                        // This will be connected to the camera manager
+                    PreviewView(ctx).apply {
+                        layoutParams = android.widget.FrameLayout.LayoutParams(
+                            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                        )
+                        scaleType = PreviewView.ScaleType.FILL_CENTER
+
+                        // Initialize camera with this PreviewView
+                        viewModel.initCamera(lifecycleOwner, this)
                     }
                 },
                 modifier = Modifier.fillMaxSize()
@@ -92,6 +110,37 @@ fun OperatorScreen(
                     view.updateSettings(gridlineSettings)
                 }
             )
+
+            // Camera not connected warning
+            if (!cameraConnected) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(BG.copy(alpha = 0.7f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.VideocamOff,
+                            contentDescription = null,
+                            tint = MUTED,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Text(
+                            "Menghubungkan kamera...",
+                            style = TextStyle(color = MUTED, fontSize = 16.sp)
+                        )
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = GOLD,
+                            strokeWidth = 2.dp
+                        )
+                    }
+                }
+            }
         }
 
         // ─── Top Bar ────────────────────────────────────────
@@ -147,12 +196,12 @@ fun OperatorScreen(
                 )
             }
 
-            // Right: Gridline settings button
+            // Right: Camera switch + Gridline settings
             Row(
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 IconButton(
-                    onClick = { showCameraSwitch = !showCameraSwitch },
+                    onClick = { viewModel.switchCamera() },
                     modifier = Modifier.size(32.dp)
                 ) {
                     Icon(
@@ -289,9 +338,7 @@ fun OperatorScreen(
                 // Shutter button
                 FloatingActionButton(
                     onClick = {
-                        if (capturePhase != CapturePhase.SENDING && !isSending) {
-                            // Trigger capture
-                        }
+                        viewModel.triggerCapture()
                     },
                     modifier = Modifier.size(72.dp),
                     containerColor = if (capturePhase == CapturePhase.SENDING) GOLD.copy(alpha = 0.5f) else GOLD,
