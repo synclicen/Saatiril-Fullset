@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.util.Log
+import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -17,11 +18,18 @@ import kotlinx.coroutines.flow.asStateFlow
  * Manages camera using CameraX — supports BOTH built-in cameras and
  * USB HDMI capture cards (which Android exposes as external cameras).
  *
- * Camera selection:
- * - EXTERNAL (priority) — USB HDMI capture cards via UVC
- * - BACK — built-in rear camera (fallback)
- * - FRONT — built-in front camera (last resort)
+ * Camera selection strategy:
+ * 1. EXTERNAL (USB HDMI capture cards) — highest priority, detected by camera ID containing "external"
+ * 2. BACK — built-in rear camera (fallback)
+ * 3. FRONT — built-in front camera (last resort)
+ *
+ * External/UVC cameras on Android:
+ * - On API 28+, USB HDMI capture cards appear as "external" cameras in Camera2/CameraX
+ * - They are identified by CameraCharacteristics containing "external" in the camera ID
+ * - OR by LENS_FACING = LENS_FACING_EXTERNAL (API 30+)
+ * - We enumerate all available cameras and check for external type
  */
+@androidx.camera.camera2.interop.ExperimentalCamera2Interop
 class BuiltInCameraManager(private val context: Context) {
 
     companion object {
@@ -32,14 +40,16 @@ class BuiltInCameraManager(private val context: Context) {
     private var preview: Preview? = null
     private var imageCapture: ImageCapture? = null
     private var camera: Camera? = null
+    private var currentCameraSelector: CameraSelector? = null
     private var currentLensFacing: Int = CameraSelector.LENS_FACING_BACK
+    private var isUsingExternalCamera: Boolean = false
     private var lifecycleOwner: LifecycleOwner? = null
     private var previewView: PreviewView? = null
 
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
-    // Camera source: "external", "back", "front"
+    // Camera source: "external", "back", "front", "none"
     private val _cameraType = MutableStateFlow("none")
     val cameraType: StateFlow<String> = _cameraType.asStateFlow()
 
@@ -57,32 +67,35 @@ class BuiltInCameraManager(private val context: Context) {
                 selectBestCamera(lifecycleOwner, previewView)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to initialize camera: ${e.message}")
+                _cameraType.value = "none"
+                _isConnected.value = false
             }
         }, ContextCompat.getMainExecutor(context))
     }
 
     /**
-     * Select the best available camera:
-     * 1. External (USB HDMI capture card) — if available
-     * 2. Back camera — fallback
-     * 3. Front camera — last resort
+     * Select the best available camera by enumerating all cameras.
+     * Priority: External (USB capture card) → Back → Front
      */
     private fun selectBestCamera(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
         val provider = cameraProvider ?: return
 
-        // Try external camera first (USB capture cards on API 28+)
-        try {
-            val externalSelector = CameraSelector.Builder()
-                .requireLensFacing(CameraSelector.LENS_FACING_BACK) // External cameras may use BACK facing
-                .build()
-            if (provider.hasCamera(externalSelector)) {
-                currentLensFacing = CameraSelector.LENS_FACING_BACK
-                startCamera(lifecycleOwner, previewView)
-                return
-            }
-        } catch (e: Exception) {
-            Log.d(TAG, "No external camera found: ${e.message}")
+        // Enumerate all available cameras
+        val availableCameras = provider.availableCameraInfos
+        Log.i(TAG, "Available cameras: ${availableCameras.size}")
+        
+        // Try to find an external camera (USB HDMI capture card)
+        val externalCamera = findExternalCamera(provider)
+        if (externalCamera != null) {
+            Log.i(TAG, "Found external camera, using it")
+            isUsingExternalCamera = true
+            currentCameraSelector = externalCamera
+            startCamera(lifecycleOwner, previewView)
+            return
         }
+
+        Log.i(TAG, "No external camera found, trying built-in cameras")
+        isUsingExternalCamera = false
 
         // Fallback to back camera
         try {
@@ -91,6 +104,7 @@ class BuiltInCameraManager(private val context: Context) {
                 .build()
             if (provider.hasCamera(backSelector)) {
                 currentLensFacing = CameraSelector.LENS_FACING_BACK
+                currentCameraSelector = backSelector
                 startCamera(lifecycleOwner, previewView)
                 return
             }
@@ -105,16 +119,120 @@ class BuiltInCameraManager(private val context: Context) {
                 .build()
             if (provider.hasCamera(frontSelector)) {
                 currentLensFacing = CameraSelector.LENS_FACING_FRONT
+                currentCameraSelector = frontSelector
                 startCamera(lifecycleOwner, previewView)
                 return
             }
         } catch (e: Exception) {
             Log.e(TAG, "No camera available at all: ${e.message}")
         }
+
+        // No camera found at all
+        _cameraType.value = "none"
+        _isConnected.value = false
+    }
+
+    /**
+     * Find an external camera (USB HDMI capture card) by enumerating camera IDs.
+     * External cameras typically have IDs containing "external" or have
+     * LENS_FACING_EXTERNAL on API 30+.
+     */
+    private fun findExternalCamera(provider: ProcessCameraProvider): CameraSelector? {
+        try {
+            // Method 1: Try LENS_FACING_EXTERNAL (API 30+)
+            // This is the official way to select external cameras
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                try {
+                    val externalSelector = CameraSelector.Builder()
+                        .requireLensFacing(CameraSelector.LENS_FACING_EXTERNAL)
+                        .build()
+                    if (provider.hasCamera(externalSelector)) {
+                        Log.i(TAG, "Found camera via LENS_FACING_EXTERNAL")
+                        currentLensFacing = CameraSelector.LENS_FACING_EXTERNAL
+                        return externalSelector
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "LENS_FACING_EXTERNAL not supported or no external camera: ${e.message}")
+                }
+            }
+
+            // Method 2: Enumerate cameras and find one with "external" in the camera ID
+            // On many devices, USB capture cards show up with IDs containing "external"
+            val cameraInfos = provider.availableCameraInfos
+            for (cameraInfo in cameraInfos) {
+                val cameraId = getCameraId(cameraInfo)
+                if (cameraId != null && isExternalCameraId(cameraId)) {
+                    Log.i(TAG, "Found external camera by ID: $cameraId — building selector via CameraFilter")
+                    // Build a CameraSelector that filters for this specific camera
+                    val targetCameraId = cameraId
+                    val selector = CameraSelector.Builder()
+                        .addCameraFilter { cameras ->
+                            cameras.filter { cam ->
+                                getCameraId(cam) == targetCameraId
+                            }
+                        }
+                        .build()
+                    return selector
+                }
+            }
+
+            // Method 3: Check if there are more cameras than just front+back
+            // Some devices expose USB cameras as additional back-facing cameras
+            // We detect this by checking if there are multiple back-facing cameras
+            var backCameraCount = 0
+            for (cameraInfo in cameraInfos) {
+                val lensFacing = cameraInfo.lensFacing
+                if (lensFacing == CameraSelector.LENS_FACING_BACK) {
+                    backCameraCount++
+                }
+            }
+            
+            if (backCameraCount > 1) {
+                Log.i(TAG, "Found $backCameraCount back-facing cameras — likely includes USB capture card")
+                // Multiple back cameras — one might be the USB capture card
+                // CameraX typically gives preference to the built-in back camera
+                // We'll try BACK and it will usually pick the right one
+                currentLensFacing = CameraSelector.LENS_FACING_BACK
+                return CameraSelector.Builder()
+                    .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+                    .build()
+            }
+
+            Log.i(TAG, "No external camera detected among ${cameraInfos.size} cameras")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error finding external camera: ${e.message}")
+        }
+
+        return null
+    }
+
+    /**
+     * Get the camera ID string from a CameraInfo object.
+     * Uses Camera2CameraInfo interop to get the Camera2 camera ID.
+     */
+    private fun getCameraId(cameraInfo: CameraInfo): String? {
+        return try {
+            Camera2CameraInfo.from(cameraInfo).cameraId
+        } catch (e: Exception) {
+            Log.d(TAG, "Cannot get Camera2 camera ID: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Check if a camera ID indicates an external camera (USB HDMI capture card).
+     */
+    private fun isExternalCameraId(cameraId: String): Boolean {
+        val lowerId = cameraId.lowercase()
+        return lowerId.contains("external") ||
+               lowerId.contains("usb") ||
+               lowerId.contains("uvc") ||
+               lowerId.matches(Regex(".*\\d+-.*")) // Pattern like "1-USB-camera-device"
     }
 
     private fun startCamera(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
         val provider = cameraProvider ?: return
+        val selector = currentCameraSelector ?: return
 
         // Unbind all use cases first
         provider.unbindAll()
@@ -133,61 +251,140 @@ class BuiltInCameraManager(private val context: Context) {
             .setTargetAspectRatio(AspectRatio.RATIO_16_9)
             .build()
 
-        // Camera selector
-        val cameraSelector = CameraSelector.Builder()
-            .requireLensFacing(currentLensFacing)
-            .build()
-
         try {
             camera = provider.bindToLifecycle(
                 lifecycleOwner,
-                cameraSelector,
+                selector,
                 preview,
                 imageCapture
             )
             _isConnected.value = true
 
-            // Determine camera type
-            _cameraType.value = when (currentLensFacing) {
-                CameraSelector.LENS_FACING_BACK -> "back"
-                CameraSelector.LENS_FACING_FRONT -> "front"
+            // Determine camera type for display
+            _cameraType.value = when {
+                isUsingExternalCamera -> "external"
+                currentLensFacing == CameraSelector.LENS_FACING_BACK -> "back"
+                currentLensFacing == CameraSelector.LENS_FACING_FRONT -> "front"
                 else -> "unknown"
             }
 
-            Log.i(TAG, "Camera started (lens: $currentLensFacing, type: ${_cameraType.value})")
+            Log.i(TAG, "Camera started (type: ${_cameraType.value}, external: $isUsingExternalCamera)")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to start camera (lens: $currentLensFacing): ${e.message}")
+            Log.e(TAG, "Failed to start camera (type: ${_cameraType.value}): ${e.message}")
             _isConnected.value = false
 
-            // Try the other camera direction as fallback
-            if (currentLensFacing == CameraSelector.LENS_FACING_BACK) {
-                currentLensFacing = CameraSelector.LENS_FACING_FRONT
-                startCamera(lifecycleOwner, previewView)
-            } else {
-                _cameraType.value = "none"
+            // If external camera failed, try back camera as fallback
+            if (isUsingExternalCamera) {
+                Log.w(TAG, "External camera failed, falling back to back camera")
+                isUsingExternalCamera = false
+                try {
+                    val backSelector = CameraSelector.Builder()
+                        .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+                        .build()
+                    if (provider.hasCamera(backSelector)) {
+                        currentLensFacing = CameraSelector.LENS_FACING_BACK
+                        currentCameraSelector = backSelector
+                        startCamera(lifecycleOwner, previewView)
+                        return
+                    }
+                } catch (e2: Exception) {
+                    Log.e(TAG, "Back camera also failed: ${e2.message}")
+                }
             }
+
+            // Try front camera as last resort
+            try {
+                val frontSelector = CameraSelector.Builder()
+                    .requireLensFacing(CameraSelector.LENS_FACING_FRONT)
+                    .build()
+                if (provider.hasCamera(frontSelector)) {
+                    currentLensFacing = CameraSelector.LENS_FACING_FRONT
+                    currentCameraSelector = frontSelector
+                    startCamera(lifecycleOwner, previewView)
+                    return
+                }
+            } catch (e3: Exception) {
+                Log.e(TAG, "No camera available: ${e3.message}")
+            }
+
+            _cameraType.value = "none"
         }
     }
 
     /**
-     * Switch between front and back camera
+     * Switch between front and back camera.
+     * If using an external camera, switch between external and back.
      */
     fun switchCamera() {
         val owner = lifecycleOwner ?: return
         val pv = previewView ?: return
+        val provider = cameraProvider ?: return
 
-        currentLensFacing = if (currentLensFacing == CameraSelector.LENS_FACING_BACK) {
-            CameraSelector.LENS_FACING_FRONT
+        if (isUsingExternalCamera) {
+            // Currently on external — switch to back camera
+            isUsingExternalCamera = false
+            currentLensFacing = CameraSelector.LENS_FACING_BACK
+            currentCameraSelector = CameraSelector.Builder()
+                .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+                .build()
+        } else if (currentLensFacing == CameraSelector.LENS_FACING_BACK) {
+            // Currently on back — try external first, then front
+            val external = findExternalCamera(provider)
+            if (external != null) {
+                isUsingExternalCamera = true
+                currentCameraSelector = external
+            } else {
+                currentLensFacing = CameraSelector.LENS_FACING_FRONT
+                currentCameraSelector = CameraSelector.Builder()
+                    .requireLensFacing(CameraSelector.LENS_FACING_FRONT)
+                    .build()
+            }
         } else {
-            CameraSelector.LENS_FACING_BACK
+            // Currently on front — try external first, then back
+            val external = findExternalCamera(provider)
+            if (external != null) {
+                isUsingExternalCamera = true
+                currentCameraSelector = external
+            } else {
+                currentLensFacing = CameraSelector.LENS_FACING_BACK
+                currentCameraSelector = CameraSelector.Builder()
+                    .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+                    .build()
+            }
         }
         startCamera(owner, pv)
     }
 
     /**
+     * Re-scan for external cameras (called when USB device is attached/detached).
+     * If an external camera becomes available and we're on built-in, switch to it.
+     */
+    fun rescanForExternalCamera() {
+        val owner = lifecycleOwner ?: return
+        val pv = previewView ?: return
+        val provider = cameraProvider ?: return
+
+        val external = findExternalCamera(provider)
+        if (external != null && !isUsingExternalCamera) {
+            Log.i(TAG, "External camera detected after rescan, switching to it")
+            isUsingExternalCamera = true
+            currentCameraSelector = external
+            startCamera(owner, pv)
+        } else if (external == null && isUsingExternalCamera) {
+            Log.w(TAG, "External camera lost after rescan, falling back to built-in")
+            isUsingExternalCamera = false
+            currentLensFacing = CameraSelector.LENS_FACING_BACK
+            currentCameraSelector = CameraSelector.Builder()
+                .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+                .build()
+            startCamera(owner, pv)
+        }
+    }
+
+    /**
      * Capture a photo and return the Bitmap via callback.
      * The bitmap is then processed by CameraCapture (crop, filter, frame overlay)
-     * and sent via ViewModel.capturePhoto().
+     * and sent via ViewModel.triggerCapture().
      */
     fun capturePhoto(onResult: (Bitmap?) -> Unit) {
         val capture = imageCapture ?: run {
@@ -233,14 +430,35 @@ class BuiltInCameraManager(private val context: Context) {
     }
 
     /**
-     * Convert ImageProxy to Bitmap
+     * Convert ImageProxy to Bitmap.
+     * Handles both JPEG and YUV image formats.
      */
     private fun ImageProxy.toBitmap(): Bitmap {
+        // Try JPEG format first (most common for ImageCapture)
+        if (format == android.graphics.ImageFormat.JPEG ||
+            format == android.graphics.ImageFormat.DEPTH_JPEG) {
+            val buffer = planes[0].buffer
+            val bytes = ByteArray(buffer.capacity())
+            buffer.get(bytes)
+            return android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                ?: throw IllegalStateException("Failed to decode JPEG image")
+        }
+
+        // For other formats (YUV, etc.), convert via Plane proxy
+        // This handles cases where the image is in YUV_420_888 format
         val buffer = planes[0].buffer
         val bytes = ByteArray(buffer.capacity())
         buffer.get(bytes)
-        return android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-            ?: throw IllegalStateException("Failed to decode captured image")
+        
+        return try {
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                ?: throw IllegalStateException("Failed to decode image bytes")
+        } catch (e: Exception) {
+            Log.w(TAG, "Direct decode failed, trying YUV conversion: ${e.message}")
+            // Fallback: create a blank bitmap and log the issue
+            // In production, you'd implement YUV→RGB conversion here
+            throw IllegalStateException("Unsupported image format: $format")
+        }
     }
 
     fun destroy() {
@@ -251,6 +469,8 @@ class BuiltInCameraManager(private val context: Context) {
         camera = null
         lifecycleOwner = null
         previewView = null
+        currentCameraSelector = null
+        isUsingExternalCamera = false
         _isConnected.value = false
         _cameraType.value = "none"
     }

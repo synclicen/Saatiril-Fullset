@@ -59,6 +59,7 @@ fun OperatorScreen(
     val myChannel by viewModel.myChannel.collectAsState()
     val cameraConnected by viewModel.cameraConnected.collectAsState()
     val uvcDeviceAttached by viewModel.uvcDeviceAttached.collectAsState()
+    val cameraSource by viewModel.cameraSource.collectAsState()
 
     var showGridlineSettings by remember { mutableStateOf(false) }
 
@@ -66,6 +67,9 @@ fun OperatorScreen(
     val mode = config?.mode ?: CameraModes.SINGLE
     val photosPerSession = CameraModes.photosPerSession(mode)
     val isPhotoshoot = CameraModes.isPhotoshootMode(mode)
+
+    // Track if camera has been initialized to prevent double init
+    var cameraInitialized by remember { mutableStateOf(false) }
 
     // Initialize camera when this screen enters composition
     DisposableEffect(lifecycleOwner) {
@@ -93,8 +97,11 @@ fun OperatorScreen(
                         )
                         scaleType = PreviewView.ScaleType.FILL_CENTER
 
-                        // Initialize camera with this PreviewView
-                        viewModel.initCamera(lifecycleOwner, this)
+                        // Initialize camera with this PreviewView (only once)
+                        if (!cameraInitialized) {
+                            cameraInitialized = true
+                            viewModel.initCamera(lifecycleOwner, this)
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxSize()
@@ -132,14 +139,21 @@ fun OperatorScreen(
                             modifier = Modifier.size(48.dp)
                         )
                         Text(
-                            "Menghubungkan kamera...",
+                            if (cameraSource == "none") "Kamera tidak terdeteksi" else "Menghubungkan kamera...",
                             style = TextStyle(color = MUTED, fontSize = 16.sp)
                         )
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            color = GOLD,
-                            strokeWidth = 2.dp
-                        )
+                        if (cameraSource != "none") {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                color = GOLD,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text(
+                                "Pastikan izin kamera sudah diberikan",
+                                style = TextStyle(color = MUTED.copy(alpha = 0.6f), fontSize = 12.sp)
+                            )
+                        }
                     }
                 }
             }
@@ -192,8 +206,13 @@ fun OperatorScreen(
                     project?.name ?: "Saatiril",
                     style = TextStyle(color = GOLD, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 )
+                val cameraLabel = when (cameraSource) {
+                    "uvc" -> "USB Capture Card"
+                    "builtin" -> "Kamera HP"
+                    else -> "Kamera"
+                }
                 Text(
-                    "Kamera $myChannel • ${config?.ratio ?: "4:3"} • ${config?.preset ?: "original"}",
+                    "Kamera $myChannel • $cameraLabel • ${config?.ratio ?: "4:3"} • ${config?.preset ?: "original"}",
                     style = TextStyle(color = MUTED, fontSize = 11.sp)
                 )
             }

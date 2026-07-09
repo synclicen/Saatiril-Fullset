@@ -135,16 +135,51 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         uvcCameraManager.init()
         builtInCameraManager.init(lifecycleOwner, previewView)
 
-        // Monitor camera connection
+        // Monitor camera connection state
         viewModelScope.launch {
             builtInCameraManager.isConnected.collect { connected ->
                 _cameraConnected.value = connected
-                if (connected) {
-                    _cameraSource.value = if (_uvcDeviceAttached.value) "uvc" else "builtin"
-                } else {
-                    _cameraSource.value = "none"
-                }
+                updateCameraSource()
             }
+        }
+
+        // Monitor camera type changes (external/back/front)
+        viewModelScope.launch {
+            builtInCameraManager.cameraType.collect { type ->
+                updateCameraSource()
+            }
+        }
+
+        // Monitor UVC device attachment
+        viewModelScope.launch {
+            uvcCameraManager.isConnected.collect { uvcConnected ->
+                _uvcDeviceAttached.value = uvcConnected
+                // If UVC device status changed, tell BuiltInCameraManager to rescan
+                if (uvcConnected || !uvcConnected) {
+                    builtInCameraManager.rescanForExternalCamera()
+                }
+                updateCameraSource()
+            }
+        }
+    }
+
+    /**
+     * Update camera source based on the actual camera type reported by BuiltInCameraManager.
+     */
+    private fun updateCameraSource() {
+        val connected = builtInCameraManager.isConnected.value
+        val cameraType = builtInCameraManager.cameraType.value
+
+        if (!connected) {
+            _cameraSource.value = "none"
+            return
+        }
+
+        _cameraSource.value = when (cameraType) {
+            "external" -> "uvc"      // USB HDMI capture card → display as "USB Capture Card"
+            "back" -> "builtin"       // Built-in back camera → display as "Kamera HP"
+            "front" -> "builtin"      // Built-in front camera → display as "Kamera HP"
+            else -> "none"
         }
     }
 
@@ -605,11 +640,11 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     fun setUvcDeviceAttached(attached: Boolean) {
         _uvcDeviceAttached.value = attached
         if (attached) {
-            _cameraSource.value = "uvc"
             uvcCameraManager.scanForUVCDevices()
-        } else {
-            _cameraSource.value = if (hasBuiltinCamera()) "builtin" else "none"
         }
+        // Tell BuiltInCameraManager to rescan — it will auto-detect external cameras
+        // and update cameraType flow, which triggers updateCameraSource()
+        builtInCameraManager.rescanForExternalCamera()
     }
 
     private fun hasBuiltinCamera(): Boolean {

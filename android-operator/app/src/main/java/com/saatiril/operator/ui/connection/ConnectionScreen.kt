@@ -19,9 +19,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.saatiril.operator.data.ConnectionState
@@ -278,32 +280,73 @@ private fun CameraStatusCard(
         colors = CardDefaults.cardColors(containerColor = PANEL),
         shape = RoundedCornerShape(if (compact) 8.dp else 12.dp),
     ) {
-        Row(
+        Column(
             modifier = Modifier.padding(if (compact) PaddingValues(8.dp) else PaddingValues(14.dp)),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp)
+            verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp)
         ) {
-            Icon(
-                if (uvcDeviceAttached) Icons.Default.Usb else Icons.Default.Videocam,
-                contentDescription = null,
-                tint = if (uvcDeviceAttached) GREEN else MUTED,
-                modifier = Modifier.size(if (compact) 16.dp else 24.dp)
-            )
-            Column {
-                Text(
-                    if (uvcDeviceAttached) "Capture Card" else "Kamera Built-in",
-                    style = TextStyle(
-                        color = Color.White,
-                        fontWeight = FontWeight.Medium,
-                        fontSize = if (compact) 11.sp else 14.sp
-                    )
+            // Camera source indicator
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp)
+            ) {
+                Icon(
+                    if (uvcDeviceAttached) Icons.Default.Usb else Icons.Default.Videocam,
+                    contentDescription = null,
+                    tint = if (uvcDeviceAttached) GREEN else MUTED,
+                    modifier = Modifier.size(if (compact) 16.dp else 24.dp)
                 )
-                Text(
-                    if (uvcDeviceAttached) "USB HDMI siap" else "Sambungkan via USB",
-                    style = TextStyle(
-                        color = MUTED,
-                        fontSize = if (compact) 9.sp else 12.sp
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            if (uvcDeviceAttached) "USB Capture Card" else "Kamera HP",
+                            style = TextStyle(
+                                color = Color.White,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = if (compact) 11.sp else 14.sp
+                            )
+                        )
+                        // Green/gray dot status indicator
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(if (uvcDeviceAttached) GREEN else MUTED.copy(alpha = 0.5f))
+                        )
+                    }
+                    Text(
+                        if (uvcDeviceAttached) "USB HDMI capture card terdeteksi" else "Akan menggunakan kamera belakang HP",
+                        style = TextStyle(
+                            color = MUTED,
+                            fontSize = if (compact) 9.sp else 12.sp
+                        )
                     )
+                }
+            }
+
+            // Divider
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = if (compact) 2.dp else 4.dp),
+                color = BORDER.copy(alpha = 0.5f),
+                thickness = 0.5.dp
+            )
+
+            // Helpful instructions
+            if (!compact) {
+                Text(
+                    buildAnnotatedString {
+                        append("💡 ")
+                        withStyle(TextStyle(color = MUTED, fontSize = 11.sp).toSpanStyle()) {
+                            append("Tips: ")
+                        }
+                        withStyle(TextStyle(color = MUTED.copy(alpha = 0.7f), fontSize = 11.sp).toSpanStyle()) {
+                            if (uvcDeviceAttached) {
+                                append("Capture card via USB sudah terhubung. Kamera akan otomatis menggunakan USB setelah login.")
+                            } else {
+                                append("Hubungkan USB HDMI capture card sebelum menekan Hubungkan, atau kamera HP akan digunakan.")
+                            }
+                        }
+                    }
                 )
             }
         }
