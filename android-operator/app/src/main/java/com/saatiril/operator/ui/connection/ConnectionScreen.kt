@@ -94,13 +94,13 @@ fun ConnectionScreen(
         errorMessage = null
         val ip = serverIp.trim()
         val port = serverPort.trim().ifEmpty { "3003" }
-        if (ip.isEmpty()) {
+        if (ip.isNotEmpty()) {
+            val url = "http://$ip:$port"
+            val pwd = if (showPasswordPrompt || passwordRequired) password.trim().ifEmpty { null } else null
+            viewModel.connect(url, selectedChannel, pwd)
+        } else {
             errorMessage = "Masukkan IP server"
-            return@let
         }
-        val url = "http://$ip:$port"
-        val pwd = if (showPasswordPrompt || passwordRequired) password.trim().ifEmpty { null } else null
-        viewModel.connect(url, selectedChannel, pwd)
     }
 
     Box(
