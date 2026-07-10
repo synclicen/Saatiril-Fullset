@@ -151,3 +151,67 @@ Stage Summary:
 - Root cause of connection failure: missing android:usesCleartextTraffic="true"
 - Secondary cause: listener lifecycle bugs breaking reconnection
 - All 4 bugs fixed, CI passing, pushed to main
+---
+Task ID: 7
+Agent: main
+Task: Comprehensive audit of Android Saatiril operator app - find and fix all bugs
+
+Work Log:
+- Read ALL 12 Kotlin source files + AndroidManifest + build.gradle.kts
+- Read server index.ts and web client socket.ts for protocol comparison
+- Performed systematic audit of every code path and state transition
+- Identified 7+ bugs through deep code analysis
+
+Bugs Found and Fixed:
+
+1. CRITICAL: emitLanMessage() crashes on List<String> data
+   - PhotosSavedData.photos is List<String> → Gson serializes to JSON array
+   - JSONObject(jsonArrayString) throws JSONException
+   - Fixed: detect array vs object with startsWith("[") and use JSONArray/JSONObject accordingly
+   - Also fixed flushEventQueue() with same pattern
+
+2. CRITICAL: EVENT_CONNECT_ERROR sets DISCONNECTED instead of CONNECTING
+   - Socket.io auto-reconnects, but UI showed "Terputus" on each retry
+   - Fixed: keep CONNECTING state during auto-reconnect, only DISCONNECTED on actual disconnect
+
+3. CRITICAL: ConnectionScreen password re-submit creates new connection
+   - When auth_failed + passwordRequired, clicking Hubungkan called viewModel.connect()
+   - This creates a whole new socket connection instead of just re-identifying
+   - Fixed: detect auth_failed state and call submitPassword() instead of connect()
+   - Also fixed Kotlin compilation error: return@Unit is invalid → restructured as if/else
+
+4. CRITICAL: Frame bitmap never decoded from base64
+   - FRAME_DATA and handleSyncDb stored base64 string but _frameBitmap stayed null
+   - CameraCapture.processFrame() receives null frameBitmap → no overlay rendered
+   - Fixed: added decodeFrameBitmap() with coroutine + BitmapFactory
+   - Fixed: called from FRAME_DATA handler, handleSyncDb first sync, and frame change detection
+
+5. HIGH: WAITING_FOR_DATA not treated as connected in SaatirilOperatorApp
+   - LaunchedEffect only checked AUTHENTICATED for isConnected=true
+   - After auth-success, SocketManager sets WAITING_FOR_DATA → screen didn't switch
+   - Fixed: treat both AUTHENTICATED and WAITING_FOR_DATA as connected
+
+6. MEDIUM: BuiltInCameraManager.toBitmap() crashes on YUV_420_888
+   - Only handled JPEG; YUV format threw IllegalStateException
+   - Some devices output YUV from ImageCapture
+   - Fixed: added proper YUV→RGB (BT.601) conversion with fallback
+
+7. HIGH: ConnectionScreen WAITING_FOR_DATA didn't trigger onConnected
+   - Same as #5 but in ConnectionScreen's LaunchedEffect
+   - Fixed: also trigger onConnected for WAITING_FOR_DATA state
+
+Commits:
+- a20439b: "fix: comprehensive audit fixes - 7 critical and medium bugs resolved"
+- f41b5bf: "fix: resolve Kotlin compilation error - return@Unit is invalid"
+
+GitHub Actions:
+- Run #23: FAILURE (return@Unit compilation error)
+- Run #24: SUCCESS ✅
+
+Stage Summary:
+- All 7 bugs fixed, CI passing
+- Frame overlay now properly rendered
+- Password re-authentication works without reconnecting
+- Photo capture/send no longer crashes on List data
+- YUV camera images now properly converted
+- Connection state transitions are correct throughout the app
