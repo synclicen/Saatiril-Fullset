@@ -110,3 +110,44 @@ Stage Summary:
 - Filter presets (9 presets: original, studio, cinematic, pro, etc.)
 - GitHub Actions auto-build for Windows .exe + Android .apk
 - Commit: 5e96a59 pushed to origin/main
+---
+Task ID: 6
+Agent: main
+Task: Fix Android Saatiril connection bug - "Hubungkan" button doesn't connect
+
+Work Log:
+- Read all critical files: SocketManager.kt, OperatorViewModel.kt, ConnectionScreen.kt, server index.ts, web client socket.ts, AndroidManifest.xml, build.gradle.kts
+- Traced full connection flow: Button press → doConnect → viewModel.connect() → setupSocketListeners() → socketManager.connect() → IO.socket() → socket.connect()
+- Compared Android protocol against server protocol: event names match, payload structure matches, path matches
+- Identified 4 bugs through systematic analysis:
+
+BUG 1 (CRITICAL): android:usesCleartextTraffic not set in AndroidManifest
+  - Android 9+ (API 28) blocks cleartext HTTP by default
+  - Saatiril connects via http://192.168.x.x:3003 (plain HTTP, not HTTPS)
+  - Without this flag, Socket.io client silently fails to connect
+  - FIX: Added android:usesCleartextTraffic="true" to <application> tag
+
+BUG 2 (CRITICAL): SocketManager.disconnect() clears all ViewModel listeners
+  - disconnect() called listeners.clear() which removed all ViewModel callbacks
+  - In connect(), if socket already exists, disconnect() is called first
+  - This means every reconnect attempt wiped all ViewModel event handlers
+  - FIX: disconnect() now preserves listeners; new destroy() method for full cleanup
+  - ViewModel.onCleared() now calls destroy() instead of disconnect()
+
+BUG 3: Double setupSocketListeners() registration
+  - OperatorViewModel.connect() called setupSocketListeners() every time
+  - SocketManager.on() just appends to a list, so listeners accumulate
+  - FIX: Added socketListenersInitialized flag to register only once
+
+BUG 4: camera-camera2-interop:1.3.1 dependency still present
+  - This artifact doesn't exist in Maven Central, causes build issues
+  - FIX: Removed the dependency line
+
+- Committed as: "fix: critical connection bugs - cleartext traffic, listener lifecycle, double registration"
+- Pushed to GitHub, resolved rebase conflicts (Divider vs HorizontalDivider)
+- GitHub Actions Run #22: SUCCESS ✅
+
+Stage Summary:
+- Root cause of connection failure: missing android:usesCleartextTraffic="true"
+- Secondary cause: listener lifecycle bugs breaking reconnection
+- All 4 bugs fixed, CI passing, pushed to main
