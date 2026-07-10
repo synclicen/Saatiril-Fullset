@@ -94,8 +94,6 @@ fun ConnectionScreen(
     // Shared connect logic
     val doConnect: () -> Unit = {
         errorMessage = null
-        val ip = serverIp.trim()
-        val port = serverPort.trim().ifEmpty { "3003" }
         
         // If we're already connected but need password, just resubmit with password
         // instead of creating a whole new connection
@@ -106,11 +104,8 @@ fun ConnectionScreen(
             } else {
                 errorMessage = "Masukkan password sesi"
             }
-            return@Unit
-        }
-        
-        if (ip.isNotEmpty()) {
-            val url = "http://$ip:$port"
+        } else if (serverIp.trim().isNotEmpty()) {
+            val url = "http://${serverIp.trim()}:${serverPort.trim().ifEmpty { "3003" }}"
             val pwd = if (showPasswordPrompt || passwordRequired) password.trim().ifEmpty { null } else null
             viewModel.connect(url, selectedChannel, pwd)
         } else {
