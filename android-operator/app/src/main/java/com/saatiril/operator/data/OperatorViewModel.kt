@@ -248,12 +248,19 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     // ─── Connection ─────────────────────────────────────────────
 
+    // Track whether socket listeners have been set up to prevent double registration
+    private var socketListenersInitialized = false
+
     fun connect(serverUrl: String, channel: Int, password: String? = null) {
         _serverUrl.value = serverUrl
         _myChannel.value = channel
         _authError.value = null
 
-        setupSocketListeners()
+        // Only set up listeners once — they persist across reconnects
+        if (!socketListenersInitialized) {
+            setupSocketListeners()
+            socketListenersInitialized = true
+        }
         socketManager.connect(serverUrl, channel, password)
     }
 
@@ -657,7 +664,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     override fun onCleared() {
         super.onCleared()
         stopStateRequestLoop()
-        socketManager.disconnect()
+        socketManager.destroy()
         builtInCameraManager.destroy()
         uvcCameraManager.destroy()
     }

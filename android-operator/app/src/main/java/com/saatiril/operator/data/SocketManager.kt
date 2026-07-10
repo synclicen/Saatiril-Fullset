@@ -63,14 +63,20 @@ class SocketManager {
     // ─── Connection ─────────────────────────────────────────────
     
     fun connect(serverUrl: String, channel: Int, password: String? = null) {
-        if (socket?.connected() == true) {
-            Log.w(TAG, "Already connected, disconnecting first")
-            disconnect()
+        // Disconnect existing socket if any, but preserve ViewModel listeners
+        if (socket != null) {
+            Log.w(TAG, "Existing socket found, cleaning up before reconnect")
+            stopPingInterval()
+            socket?.disconnect()
+            socket?.off()
+            socket = null
+            // NOTE: Do NOT clear listeners here — ViewModel listeners must persist across reconnects
         }
         
         myChannel = channel
         passwordHash = password?.let { sha256(it) }
         connectionState = ConnectionState.CONNECTING
+        notifyListeners("state_changed", connectionState)
         
         try {
             val options = IO.Options().apply {
@@ -103,9 +109,18 @@ class SocketManager {
         socket = null
         connectionState = ConnectionState.DISCONNECTED
         notifyListeners("state_changed", connectionState)
-        // Clear all listeners to prevent accumulation on reconnect
-        listeners.clear()
+        // NOTE: Do NOT clear listeners here — they should persist for reconnect
+        // Use destroy() for full cleanup when ViewModel is being destroyed
         eventQueue.clear()
+    }
+    
+    /**
+     * Full cleanup including listener removal.
+     * Called only from ViewModel.onCleared() when the ViewModel is permanently destroyed.
+     */
+    fun destroy() {
+        disconnect()
+        listeners.clear()
     }
     
     fun isConnected(): Boolean = socket?.connected() == true
