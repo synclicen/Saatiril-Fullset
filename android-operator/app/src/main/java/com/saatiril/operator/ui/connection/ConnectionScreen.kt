@@ -60,11 +60,11 @@ fun ConnectionScreen(
     // Monitor connection state changes
     LaunchedEffect(connectionState) {
         when (connectionState) {
-            ConnectionState.AUTHENTICATED -> {
+            ConnectionState.AUTHENTICATED, ConnectionState.WAITING_FOR_DATA -> {
                 onConnected()
             }
-            ConnectionState.AUTHENTICATING, ConnectionState.WAITING_FOR_DATA -> {
-                // Show loading
+            ConnectionState.AUTHENTICATING -> {
+                // Show loading — waiting for auth response
             }
             ConnectionState.AUTH_FAILED -> {
                 if (passwordRequired) {
@@ -96,6 +96,19 @@ fun ConnectionScreen(
         errorMessage = null
         val ip = serverIp.trim()
         val port = serverPort.trim().ifEmpty { "3003" }
+        
+        // If we're already connected but need password, just resubmit with password
+        // instead of creating a whole new connection
+        if (passwordRequired && connectionState == ConnectionState.AUTH_FAILED) {
+            val pwd = password.trim()
+            if (pwd.isNotEmpty()) {
+                viewModel.submitPassword(pwd)
+            } else {
+                errorMessage = "Masukkan password sesi"
+            }
+            return@Unit
+        }
+        
         if (ip.isNotEmpty()) {
             val url = "http://$ip:$port"
             val pwd = if (showPasswordPrompt || passwordRequired) password.trim().ifEmpty { null } else null

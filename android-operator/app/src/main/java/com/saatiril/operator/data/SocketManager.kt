@@ -152,8 +152,14 @@ class SocketManager {
         
         s.on(Socket.EVENT_CONNECT_ERROR) { args ->
             Log.e(TAG, "Connection error: ${args.getOrElse(0) { "unknown" }}")
-            connectionState = ConnectionState.DISCONNECTED
+            // Don't set DISCONNECTED here — Socket.io auto-reconnects
+            // Keep state as CONNECTING so UI shows "Menghubungkan..." instead of "Terputus"
+            if (connectionState != ConnectionState.AUTHENTICATING && 
+                connectionState != ConnectionState.AUTH_FAILED) {
+                connectionState = ConnectionState.CONNECTING
+            }
             notifyListeners("connection_error", args.getOrElse(0) { "Connection failed" })
+            notifyListeners("state_changed", connectionState)
         }
         
         // ── Auth events ──────────────────────────────────────────────
@@ -390,9 +396,16 @@ class SocketManager {
     // ─── Critical Event Queue ────────────────────────────────────
     
     private fun emitLanMessage(event: String, data: Any) {
+        val dataJsonStr = gson.toJson(data)
         val payload = JSONObject().apply {
             put("event", event)
-            put("data", JSONObject(gson.toJson(data)))
+            // Use putWithJsonAutoDetect to handle both JSONObject and JSONArray data
+            // gson.toJson() may produce {...} or [...] — we need to wrap correctly
+            put("data", if (dataJsonStr.trimStart().startsWith("[")) {
+                org.json.JSONArray(dataJsonStr)
+            } else {
+                JSONObject(dataJsonStr)
+            })
         }
         
         if (socket?.connected() == true && isAuthenticated()) {
@@ -423,9 +436,14 @@ class SocketManager {
             }
             item.retries++
             
+            val dataJsonStr = gson.toJson(item.data)
             val payload = JSONObject().apply {
                 put("event", item.event)
-                put("data", JSONObject(gson.toJson(item.data)))
+                put("data", if (dataJsonStr.trimStart().startsWith("[")) {
+                    org.json.JSONArray(dataJsonStr)
+                } else {
+                    JSONObject(dataJsonStr)
+                })
             }
             socket?.emit(SocketEvents.LAN_MESSAGE, payload)
             Log.i(TAG, "Flushed queued event: ${item.event} (attempt ${item.retries})")

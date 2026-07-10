@@ -431,7 +431,7 @@ class BuiltInCameraManager(private val context: Context) {
 
     /**
      * Convert ImageProxy to Bitmap.
-     * Handles both JPEG and YUV image formats.
+     * Handles JPEG, YUV_420_888, and other image formats.
      */
     private fun ImageProxy.toBitmap(): Bitmap {
         // Try JPEG format first (most common for ImageCapture)
@@ -444,20 +444,51 @@ class BuiltInCameraManager(private val context: Context) {
                 ?: throw IllegalStateException("Failed to decode JPEG image")
         }
 
-        // For other formats (YUV, etc.), convert via Plane proxy
-        // This handles cases where the image is in YUV_420_888 format
-        val buffer = planes[0].buffer
-        val bytes = ByteArray(buffer.capacity())
-        buffer.get(bytes)
-        
+        // For YUV_420_888 and other formats, convert using PixelCopy or RenderScript
+        // The safest approach is to use the ImageProxy->Bitmap conversion
+        // that works on all API levels
         return try {
-            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                ?: throw IllegalStateException("Failed to decode image bytes")
+            // YUV_420_888 conversion: combine Y, U, V planes
+            val yBuffer = planes[0].buffer // Y
+            val uBuffer = planes[1].buffer // U
+            val vBuffer = planes[2].buffer // V
+
+            val yRowStride = planes[0].rowStride
+            val uvRowStride = planes[1].rowStride
+            val uvPixelStride = planes[1].pixelStride
+
+            val width = width
+            val height = height
+
+            val argb = IntArray(width * height)
+
+            for (y in 0 until height) {
+                for (x in 0 until width) {
+                    val yIndex = y * yRowStride + x
+                    val uvIndex = (y / 2) * uvRowStride + (x / 2) * uvPixelStride
+
+                    val yValue = yBuffer.get(yIndex).toInt() and 0xFF
+                    val uValue = uBuffer.get(uvIndex).toInt() and 0xFF
+                    val vValue = vBuffer.get(uvIndex).toInt() and 0xFF
+
+                    // YUV to RGB conversion (BT.601)
+                    val r = (yValue + 1.370705 * (vValue - 128)).toInt().coerceIn(0, 255)
+                    val g = (yValue - 0.337633 * (uValue - 128) - 0.698001 * (vValue - 128)).toInt().coerceIn(0, 255)
+                    val b = (yValue + 1.732446 * (uValue - 128)).toInt().coerceIn(0, 255)
+
+                    argb[y * width + x] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                }
+            }
+
+            Bitmap.createBitmap(argb, width, height, Bitmap.Config.ARGB_8888)
         } catch (e: Exception) {
-            Log.w(TAG, "Direct decode failed, trying YUV conversion: ${e.message}")
-            // Fallback: create a blank bitmap and log the issue
-            // In production, you'd implement YUV→RGB conversion here
-            throw IllegalStateException("Unsupported image format: $format")
+            Log.e(TAG, "YUV conversion failed, trying direct buffer decode: ${e.message}")
+            // Last resort: try to decode the raw buffer
+            val buffer = planes[0].buffer
+            val bytes = ByteArray(buffer.capacity())
+            buffer.get(bytes)
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                ?: throw IllegalStateException("Failed to convert image format: $format")
         }
     }
 

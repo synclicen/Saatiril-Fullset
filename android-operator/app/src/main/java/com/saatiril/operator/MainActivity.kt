@@ -105,12 +105,18 @@ fun SaatirilOperatorApp(viewModel: OperatorViewModel) {
     val connectionState by viewModel.connectionState.collectAsState()
     var isConnected by remember { mutableStateOf(false) }
     
-    // Track when we transition to authenticated
+    // Track when we transition to authenticated or disconnected
     LaunchedEffect(connectionState) {
-        if (connectionState == ConnectionState.AUTHENTICATED) {
-            isConnected = true
-        } else if (connectionState == ConnectionState.DISCONNECTED) {
-            isConnected = false
+        when (connectionState) {
+            ConnectionState.AUTHENTICATED, ConnectionState.WAITING_FOR_DATA -> {
+                isConnected = true
+            }
+            ConnectionState.DISCONNECTED -> {
+                isConnected = false
+            }
+            // Keep current state for CONNECTING, CONNECTED, AUTHENTICATING, AUTH_FAILED
+            // These intermediate states shouldn't change the screen
+            else -> {}
         }
     }
     

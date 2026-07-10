@@ -2,6 +2,7 @@ package com.saatiril.operator.data
 
 import android.app.Application
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.util.Base64
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -385,6 +386,8 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
                     config = proj.config.copy(frame = frameData.frame)
                 )
             }
+            // Decode base64 frame to Bitmap for overlay rendering
+            decodeFrameBitmap(frameData.frame)
         }
 
         // ── PHOTOS_SAVED from other operators (dual-photoshoot mode) ──
@@ -442,6 +445,12 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             // First sync — use incoming data directly
             _project.value = incomingProject
             Log.i(TAG, "SYNC_DB: First sync, project: ${incomingProject.name}")
+            // Decode frame bitmap if present
+            decodeFrameBitmap(incomingProject.config.frame)
+            // If we have __FRAME_SAVED__ marker, request actual frame
+            if (incomingProject.config.frame == "__FRAME_SAVED__") {
+                socketManager.requestFrame(incomingProject.id)
+            }
             return
         }
 
@@ -483,9 +492,13 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             }
         }
 
-        // If we have __FRAME_SAVED__ marker, request actual frame
+        // Handle frame bitmap decoding
         if (preservedFrame == "__FRAME_SAVED__") {
+            // Request actual frame data from admin
             socketManager.requestFrame(incomingProject.id)
+        } else if (preservedFrame != currentProject.config.frame) {
+            // Frame changed — decode the new frame
+            decodeFrameBitmap(preservedFrame)
         }
     }
 
@@ -640,6 +653,37 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     fun setGridlineColor(color: GridlineColor) {
         _gridlineSettings.value = _gridlineSettings.value.copy(color = color)
+    }
+
+    // ─── Frame Bitmap Decoding ──────────────────────────────────
+
+    /**
+     * Decode base64 frame string to Bitmap for overlay rendering.
+     * Called when FRAME_DATA is received or when project config has a frame.
+     * Runs on a background coroutine to avoid blocking the main thread.
+     */
+    private fun decodeFrameBitmap(frameBase64: String?) {
+        if (frameBase64 == null || frameBase64 == "__FRAME_SAVED__" || frameBase64.isEmpty()) {
+            _frameBitmap.value = null
+            return
+        }
+        
+        viewModelScope.launch {
+            try {
+                val pureBase64 = if (frameBase64.contains(",")) {
+                    frameBase64.substringAfter(",")
+                } else {
+                    frameBase64
+                }
+                val bytes = Base64.decode(pureBase64, Base64.DEFAULT)
+                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                _frameBitmap.value = bitmap
+                Log.i(TAG, "Frame bitmap decoded: ${bitmap?.width}x${bitmap?.height}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to decode frame bitmap: ${e.message}")
+                _frameBitmap.value = null
+            }
+        }
     }
 
     // ─── Camera Source ──────────────────────────────────────────
