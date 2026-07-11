@@ -384,16 +384,95 @@ class SocketManager {
 
         when (event) {
             SocketEvents.MC_CALL -> {
+                Log.d(TAG, "MC_CALL raw data type: ${data?.javaClass?.simpleName}")
                 val mcCallData = parseData<McCallData>(data)
                 if (mcCallData != null) {
+                    Log.i(TAG, "MC_CALL parsed: student=${mcCallData.student.nama}, nim=${mcCallData.student.nim}, ch=${mcCallData.channel}, status=${mcCallData.student.status}")
                     notifyListenersOnUiThread(SocketEvents.MC_CALL, mcCallData)
+                } else {
+                    Log.e(TAG, "MC_CALL: Failed to parse McCallData — trying manual extraction")
+                    // Fallback: manually extract student from JSONObject
+                    try {
+                        val dataObj = (data as? JSONObject)
+                        val studentObj = dataObj?.optJSONObject("student")
+                        if (studentObj != null) {
+                            val fallbackStudent = Student(
+                                id = studentObj.optString("id", ""),
+                                nim = studentObj.optString("nim", ""),
+                                nama = studentObj.optString("nama", ""),
+                                status = studentObj.optString("status", "sent"),
+                                assignedChannel = studentObj.optInt("assignedChannel", studentObj.optInt("assigned_channel", 1))
+                            )
+                            val fallbackMcCall = McCallData(student = fallbackStudent, channel = dataObj.optInt("channel", 1))
+                            Log.i(TAG, "MC_CALL manual fallback: student=${fallbackStudent.nama}, ch=${fallbackMcCall.channel}")
+                            notifyListenersOnUiThread(SocketEvents.MC_CALL, fallbackMcCall)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "MC_CALL manual fallback also failed: ${e.message}")
+                    }
                 }
             }
 
             SocketEvents.SYNC_DB -> {
+                Log.d(TAG, "SYNC_DB raw data type: ${data?.javaClass?.simpleName}")
                 val syncData = parseData<SyncDbData>(data)
                 if (syncData != null) {
+                    Log.i(TAG, "SYNC_DB parsed: project=${syncData.project.name}, dbSize=${syncData.project.database.size}, mode=${syncData.project.config.mode}")
+                    if (syncData.project.database.isNotEmpty()) {
+                        Log.d(TAG, "SYNC_DB first student: ${syncData.project.database.first().nama} (status=${syncData.project.database.first().status}, ch=${syncData.project.database.first().assignedChannel})")
+                    }
                     notifyListenersOnUiThread(SocketEvents.SYNC_DB, syncData)
+                } else {
+                    Log.e(TAG, "SYNC_DB: Failed to parse SyncDbData — trying manual extraction")
+                    try {
+                        val dataObj = (data as? JSONObject)
+                        val projectObj = dataObj?.optJSONObject("project")
+                        if (projectObj != null) {
+                            Log.d(TAG, "SYNC_DB manual: Found project object, name=${projectObj.optString("name")}")
+                            // Try parsing with a more lenient approach
+                            val configObj = projectObj.optJSONObject("config")
+                            val dbArray = projectObj.optJSONArray("database")
+                            val dbSize = dbArray?.length() ?: 0
+                            Log.d(TAG, "SYNC_DB manual: db size=$dbSize, config mode=${configObj?.optString("mode")}")
+                            
+                            // Build students list manually
+                            val students = mutableListOf<Student>()
+                            if (dbArray != null) {
+                                for (i in 0 until dbArray.length()) {
+                                    val sObj = dbArray.optJSONObject(i)
+                                    if (sObj != null) {
+                                        students.add(Student(
+                                            id = sObj.optString("id", ""),
+                                            nim = sObj.optString("nim", ""),
+                                            nama = sObj.optString("nama", ""),
+                                            status = sObj.optString("status", "pending"),
+                                            assignedChannel = sObj.optInt("assignedChannel", sObj.optInt("assigned_channel", 1))
+                                        ))
+                                    }
+                                }
+                            }
+                            
+                            val config = ProjectConfig(
+                                mode = configObj?.optString("mode", "single") ?: "single",
+                                ratio = configObj?.optString("ratio", "4:3") ?: "4:3",
+                                preset = configObj?.optString("preset", "original") ?: "original",
+                                targetFolder = configObj?.optString("targetFolder", "") ?: "",
+                                frame = configObj?.optString("frame")
+                            )
+                            
+                            val fallbackProject = Project(
+                                id = projectObj.optString("id", ""),
+                                name = projectObj.optString("name", ""),
+                                config = config,
+                                database = students
+                            )
+                            val fallbackSyncData = SyncDbData(project = fallbackProject)
+                            Log.i(TAG, "SYNC_DB manual fallback: project=${fallbackProject.name}, dbSize=${students.size}")
+                            notifyListenersOnUiThread(SocketEvents.SYNC_DB, fallbackSyncData)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "SYNC_DB manual fallback also failed: ${e.message}")
+                    }
                 }
             }
 
@@ -405,6 +484,7 @@ class SocketManager {
             }
 
             SocketEvents.FRAME_DATA -> {
+                Log.d(TAG, "FRAME_DATA received (length: ${data?.toString()?.length})")
                 val frameData = parseData<FrameDataPayload>(data)
                 if (frameData != null) {
                     notifyListenersOnUiThread(SocketEvents.FRAME_DATA, frameData)
@@ -662,9 +742,19 @@ class SocketManager {
                 is String -> data
                 else -> gson.toJson(data)
             }
-            gson.fromJson(jsonString, T::class.java)
+            if (jsonString.length > 500) {
+                Log.d(TAG, "parseData<${T::class.java.simpleName}>: JSON length=${jsonString.length}, preview=${jsonString.take(200)}...")
+            } else {
+                Log.d(TAG, "parseData<${T::class.java.simpleName}>: JSON=$jsonString")
+            }
+            val result = gson.fromJson(jsonString, T::class.java)
+            if (result == null) {
+                Log.e(TAG, "parseData<${T::class.java.simpleName}>: GSON returned null!")
+            }
+            result
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse data for ${T::class.java.simpleName}: ${e.message}")
+            Log.e(TAG, "Raw data type: ${data?.javaClass?.simpleName}, data preview: ${data?.toString()?.take(200)}")
             null
         }
     }

@@ -1,8 +1,10 @@
 package com.saatiril.operator.util
 
+import android.content.ContentValues
 import android.content.Context
 import android.os.Build
 import android.os.Environment
+import android.provider.MediaStore
 import android.util.Base64
 import android.util.Log
 import java.io.File
@@ -12,10 +14,11 @@ import java.io.FileOutputStream
  * Utility for saving captured photos to Android storage.
  *
  * Handles:
- * - Android 10+ scoped storage (API 29+) using app-specific external directory
- * - Legacy external storage for older Android versions
- * - Project name as subfolder: Pictures/Saatiril/{projectName}/
- * - Fallback paths if primary path is not writable
+ * - Android 10+ (API 29+): MediaStore API — saves to Pictures/Saatiril/{folderName}/
+ *   and photos appear in Gallery app immediately
+ * - Legacy external storage for Android 9 and below
+ * - Folder name extracted from admin's targetFolder (Windows path like "D:\Wisuda 2024")
+ * - Fallback to project name if targetFolder is empty
  * - Extensive logging for debugging
  */
 object PhotoSaver {
@@ -24,27 +27,29 @@ object PhotoSaver {
     /**
      * Save a base64-encoded photo to Android storage.
      *
-     * Strategy (matches Windows behavior but adapted for Android):
-     * 1. Try app-specific external Pictures directory: {externalFilesDir/Pictures}/Saatiril/{projectName}/
-     *    - Works on Android 10+ with scoped storage
-     *    - No WRITE_EXTERNAL_STORAGE needed
-     * 2. Try legacy public directory: Pictures/Saatiril/{projectName}/
-     *    - Works on Android 9 and below with WRITE_EXTERNAL_STORAGE
-     * 3. Try internal app storage as last resort
+     * Strategy:
+     * 1. Android 10+ (API 29+): Use MediaStore API to save to public Pictures/Saatiril/{folderName}/
+     *    - Photos are immediately visible in Gallery app
+     *    - No WRITE_EXTERNAL_STORAGE permission needed
+     *    - Folder name comes from admin's targetFolder (last segment of Windows path)
+     * 2. Legacy public directory for Android 9 and below
+     * 3. Internal app storage as last resort (not user-visible)
      *
      * @param context Application context for file access
      * @param base64Data Full data URI: "data:image/jpeg;base64,..."
      * @param filename Target filename: "NIM_Nama_1_Toga.jpg"
-     * @param projectName Project name for subfolder
-     * @return Saved file absolute path on success, null on failure
+     * @param projectName Project name for subfolder (fallback)
+     * @param targetFolder Admin-designated folder path from Windows (e.g., "D:\Wisuda 2024")
+     * @return Saved file display name on success, null on failure
      */
     fun savePhoto(
         context: Context,
         base64Data: String,
         filename: String,
-        projectName: String
+        projectName: String,
+        targetFolder: String = ""
     ): String? {
-        Log.d(TAG, "savePhoto() called: filename=$filename, projectName=$projectName")
+        Log.d(TAG, "savePhoto() called: filename=$filename, projectName=$projectName, targetFolder=$targetFolder")
 
         // Decode base64 data once
         val pureBase64 = if (base64Data.contains(",")) base64Data.substringAfter(",") else base64Data
@@ -62,25 +67,27 @@ object PhotoSaver {
 
         Log.d(TAG, "Decoded ${bytes.size} bytes for $filename")
 
-        // Sanitize project name for use as folder name
-        val safeProjectName = sanitizeFolderName(projectName)
+        // Determine folder name from targetFolder or projectName
+        val folderName = extractFolderName(targetFolder, projectName)
 
-        // Strategy 1: App-specific external storage (works on Android 10+)
-        val path1 = saveToAppSpecificExternal(context, bytes, filename, safeProjectName)
-        if (path1 != null) {
-            Log.i(TAG, "Photo saved (app-specific external): $path1")
-            return path1
+        // Strategy 1: MediaStore API (Android 10+ / API 29+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val result = saveToMediaStore(context, bytes, filename, folderName)
+            if (result != null) {
+                Log.i(TAG, "Photo saved (MediaStore): $result in folder Saatiril/$folderName")
+                return result
+            }
         }
 
         // Strategy 2: Legacy public external storage (Android 9 and below)
-        val path2 = saveToLegacyExternal(bytes, filename, safeProjectName)
+        val path2 = saveToLegacyExternal(bytes, filename, folderName)
         if (path2 != null) {
             Log.i(TAG, "Photo saved (legacy external): $path2")
             return path2
         }
 
         // Strategy 3: Internal app storage (always works, but not user-visible)
-        val path3 = saveToInternalStorage(context, bytes, filename, safeProjectName)
+        val path3 = saveToInternalStorage(context, bytes, filename, folderName)
         if (path3 != null) {
             Log.i(TAG, "Photo saved (internal storage): $path3")
             return path3
@@ -91,55 +98,75 @@ object PhotoSaver {
     }
 
     /**
-     * Strategy 1: Save to app-specific external files directory.
-     * On Android 10+ (API 29+), this directory doesn't require WRITE_EXTERNAL_STORAGE.
-     * Path: /storage/emulated/0/Android/data/com.saatiril.operator/files/Pictures/Saatiril/{projectName}/
-     *
-     * Note: On Android 11+ (API 30+), this directory is accessible via Files app
-     * under "Android/data/com.saatiril.operator/files/Pictures/"
+     * Extract folder name from the admin's targetFolder path.
+     * Windows paths like "D:\Wisuda 2024" → "Wisuda 2024"
+     * Falls back to project name if targetFolder is empty or unparsable.
      */
-    private fun saveToAppSpecificExternal(
+    private fun extractFolderName(targetFolder: String, projectName: String): String {
+        if (targetFolder.isBlank()) return sanitizeFolderName(projectName.ifBlank { "Saatiril" })
+        // Extract last segment of Windows path: "D:\Wisuda 2024" → "Wisuda 2024"
+        val folderName = targetFolder
+            .replace('\\', '/')
+            .trimEnd('/')
+            .substringAfterLast('/')
+            .trim()
+        return if (folderName.isNotBlank()) sanitizeFolderName(folderName) else sanitizeFolderName(projectName.ifBlank { "Saatiril" })
+    }
+
+    /**
+     * Strategy 1: Save via MediaStore API (Android 10+ / API 29+).
+     * Saves to Pictures/Saatiril/{folderName}/ which is publicly visible
+     * and appears in the Gallery app.
+     * No WRITE_EXTERNAL_STORAGE permission needed.
+     */
+    private fun saveToMediaStore(
         context: Context,
         bytes: ByteArray,
         filename: String,
-        safeProjectName: String
+        folderName: String
     ): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+
         return try {
-            val picturesDir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
-            if (picturesDir == null) {
-                Log.w(TAG, "getExternalFilesDir(PICTURES) returned null — external storage unavailable")
-                return null
+            val contentValues = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/Saatiril/$folderName")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
             }
 
-            val targetDir = File(picturesDir, "Saatiril/$safeProjectName")
-            Log.d(TAG, "Attempting app-specific external save to: ${targetDir.absolutePath}")
+            val resolver = context.contentResolver
+            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+                ?: run {
+                    Log.w(TAG, "MediaStore: Failed to create content URI for $filename")
+                    return null
+                }
 
-            if (!targetDir.exists() && !targetDir.mkdirs()) {
-                Log.w(TAG, "Failed to create directory: ${targetDir.absolutePath}")
-                return null
-            }
+            try {
+                resolver.openOutputStream(uri)?.use { it.write(bytes) }
+                    ?: run {
+                        Log.w(TAG, "MediaStore: Failed to open output stream for $uri")
+                        resolver.delete(uri, null, null)
+                        return null
+                    }
 
-            if (!targetDir.canWrite()) {
-                Log.w(TAG, "Directory not writable: ${targetDir.absolutePath}")
-                return null
-            }
+                // Mark as not pending — makes the file visible to Gallery
+                contentValues.clear()
+                contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+                resolver.update(uri, contentValues, null, null)
 
-            val file = File(targetDir, filename)
-            FileOutputStream(file).use { it.write(bytes) }
-
-            // Verify write
-            if (file.exists() && file.length() == bytes.size.toLong()) {
-                Log.i(TAG, "Verified photo saved: ${file.absolutePath} (${bytes.size} bytes)")
-                file.absolutePath
-            } else {
-                Log.w(TAG, "File verification failed: exists=${file.exists()}, expected=${bytes.size}, actual=${file.length()}")
+                Log.i(TAG, "MediaStore: Saved $filename to Pictures/Saatiril/$folderName/ (${bytes.size} bytes)")
+                filename // Return filename as success indicator
+            } catch (e: Exception) {
+                Log.w(TAG, "MediaStore: Failed to write $filename — ${e.message}")
+                try { resolver.delete(uri, null, null) } catch (_: Exception) {}
                 null
             }
         } catch (e: SecurityException) {
-            Log.w(TAG, "SecurityException on app-specific external: ${e.message}")
+            Log.w(TAG, "MediaStore: SecurityException — ${e.message}")
             null
         } catch (e: Exception) {
-            Log.w(TAG, "Failed app-specific external save: ${e.message}")
+            Log.w(TAG, "MediaStore: Unexpected error — ${e.message}")
             null
         }
     }
@@ -148,22 +175,22 @@ object PhotoSaver {
      * Strategy 2: Save to legacy public external storage.
      * Only works on Android 9 (API 28) and below with WRITE_EXTERNAL_STORAGE,
      * or on Android 10 with requestLegacyExternalStorage.
-     * Path: /storage/emulated/0/Pictures/Saatiril/{projectName}/
+     * Path: /storage/emulated/0/Pictures/Saatiril/{folderName}/
      */
     private fun saveToLegacyExternal(
         bytes: ByteArray,
         filename: String,
-        safeProjectName: String
+        folderName: String
     ): String? {
         return try {
-            // Only attempt on Android 9 and below, or if we have storage access
+            // Only attempt on Android 9 and below
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                Log.d(TAG, "Skipping legacy external storage — Android 10+ uses scoped storage")
+                Log.d(TAG, "Skipping legacy external storage — Android 10+ uses MediaStore")
                 return null
             }
 
             val picturesDir = Environment.getExternalStorageDirectory()
-            val targetDir = File(picturesDir, "Pictures/Saatiril/$safeProjectName")
+            val targetDir = File(picturesDir, "Pictures/Saatiril/$folderName")
             Log.d(TAG, "Attempting legacy external save to: ${targetDir.absolutePath}")
 
             if (!targetDir.exists() && !targetDir.mkdirs()) {
@@ -198,16 +225,16 @@ object PhotoSaver {
     /**
      * Strategy 3: Save to internal app storage.
      * This always works but files are not visible to users through the file manager.
-     * Path: /data/data/com.saatiril.operator/files/Saatiril/{projectName}/
+     * Path: /data/data/com.saatiril.operator/files/Saatiril/{folderName}/
      */
     private fun saveToInternalStorage(
         context: Context,
         bytes: ByteArray,
         filename: String,
-        safeProjectName: String
+        folderName: String
     ): String? {
         return try {
-            val targetDir = File(context.filesDir, "Saatiril/$safeProjectName")
+            val targetDir = File(context.filesDir, "Saatiril/$folderName")
             Log.d(TAG, "Attempting internal storage save to: ${targetDir.absolutePath}")
 
             if (!targetDir.exists() && !targetDir.mkdirs()) {
@@ -235,28 +262,29 @@ object PhotoSaver {
      * Get the primary save directory path for display purposes.
      * Returns the path where photos will be saved (may not exist yet).
      */
-    fun getSaveDirectoryPath(context: Context, projectName: String): String {
-        val safeProjectName = sanitizeFolderName(projectName)
+    fun getSaveDirectoryPath(context: Context, projectName: String, targetFolder: String = ""): String {
+        val folderName = extractFolderName(targetFolder, projectName)
 
-        // Prefer app-specific external
-        val picturesDir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
-        if (picturesDir != null) {
-            return File(picturesDir, "Saatiril/$safeProjectName").absolutePath
+        // Android 10+: Public Pictures directory via MediaStore
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            return "Pictures/Saatiril/$folderName"
         }
 
-        // Fallback to internal
-        return File(context.filesDir, "Saatiril/$safeProjectName").absolutePath
+        // Legacy: Full path
+        val picturesDir = Environment.getExternalStorageDirectory()
+        return File(picturesDir, "Pictures/Saatiril/$folderName").absolutePath
     }
 
     /**
-     * Sanitize a project name for use as a folder name.
-     * Replaces spaces with underscores, removes special characters.
+     * Sanitize a folder name for use as a directory name.
+     * Preserves spaces (valid on Android/MediaStore), removes only truly invalid characters.
      */
     private fun sanitizeFolderName(name: String): String {
         if (name.isBlank()) return "Default"
         return name.trim()
-            .replace("\\s+".toRegex(), "_")
-            .replace("[^a-zA-Z0-9_\\-]".toRegex(), "")
-            .take(50) // Limit length
+            .replace("[<>:\"|?*]".toRegex(), "") // Remove chars invalid on most filesystems
+            .replace("\\s+".toRegex(), " ")       // Collapse multiple spaces to one
+            .trim()
+            .take(100) // Allow longer names for folder names like "Wisuda 2024"
     }
 }

@@ -120,6 +120,9 @@ fun OperatorScreen(
     val opSearchQuery by viewModel.opSearchQuery.collectAsState()
     val frameBitmap by viewModel.frameBitmap.collectAsState()
     val mcCallBuffer by viewModel.mcCallBuffer.collectAsState()
+    val opQueue by viewModel.opQueue.collectAsState()
+    val channelStudents by viewModel.channelStudents.collectAsState()
+    val savePath by viewModel.savePath.collectAsState()
 
     val config = project?.config
     val mode = config?.mode ?: CameraModes.SINGLE
@@ -169,40 +172,12 @@ fun OperatorScreen(
     }
 
     // ─── Derived data ───────────────────────────────────────
-    // channelStudents: All students assigned to this channel (ALL modes, ALL statuses)
-    // In photoshoot mode, this returns ALL students (no channel filtering)
-    val channelStudents = remember(project, myChannel, isPhotoshoot) {
-        val db = project?.database ?: emptyList()
-        if (isPhotoshoot) db else db.filter { it.assignedChannel == myChannel }
-    }
-
-    // opQueue: Students that the operator should photograph next
-    // Photoshoot mode: db students with status=='sent' + mcCallBuffer entries not already in db as 'sent' or 'done'
-    // Non-photoshoot mode: same as channelStudents (full list, all statuses)
-    val opQueue = remember(project, myChannel, isPhotoshoot, mcCallBuffer) {
-        if (project == null) emptyList()
-        else if (isPhotoshoot) {
-            // Photoshoot mode: combine database 'sent' students + mcCallBuffer
-            val db = project!!.database
-            val alreadyPhotographed = project!!.photoHistory
-                .filter { it.channel == myChannel }
-                .map { it.student.id }.toSet()
-            val sentFromDb = db.filter { it.status == "sent" && !alreadyPhotographed.contains(it.id) }
-            // Add mcCallBuffer entries not already in sentFromDb or done
-            val sentIds = sentFromDb.map { it.id }.toSet()
-            val doneIds = db.filter { it.status == "done" }.map { it.id }.toSet()
-            val bufferAdditions = mcCallBuffer.filter { !sentIds.contains(it.id) && !doneIds.contains(it.id) && !alreadyPhotographed.contains(it.id) }
-            sentFromDb + bufferAdditions
-        } else {
-            // Non-photoshoot mode: show ALL students for this channel with ALL statuses
-            // This matches the Windows version's channelStudents behavior
-            channelStudents
-        }
-    }
+    // channelStudents and opQueue are now computed by the ViewModel reactively
+    // No local computation needed — just use the ViewModel's StateFlow directly
 
     // opSearchResults: Search within the appropriate list based on mode
-    // Photoshoot mode: search within opQueue
-    // Non-photoshoot mode: search within channelStudents (which opQueue equals)
+    // Photoshoot mode: search within opQueue (students sent by MC)
+    // Non-photoshoot mode: search within channelStudents (all students for this channel)
     val searchableList = if (isPhotoshoot) opQueue else channelStudents
     val opSearchResults = remember(searchableList, opSearchQuery) {
         if (opSearchQuery.isBlank()) searchableList
@@ -239,6 +214,7 @@ fun OperatorScreen(
             currentTarget = currentTarget,
             capturePhase = capturePhase,
             isPhotoshoot = isPhotoshoot,
+            savePath = savePath,
             onSwitchCamera = { viewModel.switchCamera() },
             onTogglePanelSelector = { showPanelSelector = !showPanelSelector }
         )
@@ -648,6 +624,7 @@ private fun TopBar(
     currentTarget: Student?,
     capturePhase: CapturePhase,
     isPhotoshoot: Boolean,
+    savePath: String,
     onSwitchCamera: () -> Unit,
     onTogglePanelSelector: () -> Unit
 ) {
@@ -693,7 +670,12 @@ private fun TopBar(
                 }
             } else {
                 val cameraLabel = when (cameraSource) { "uvc" -> "USB"; "builtin" -> "HP"; else -> "-" }
-                Text("Kamera $myChannel • $cameraLabel • ${config?.ratio ?: "4:3"}", style = TextStyle(color = MUTED, fontSize = 8.sp))
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Kamera $myChannel • $cameraLabel • ${config?.ratio ?: "4:3"}", style = TextStyle(color = MUTED, fontSize = 8.sp))
+                    if (savePath.isNotBlank()) {
+                        Text("💾 $savePath", style = TextStyle(color = MUTED.copy(alpha = 0.7f), fontSize = 6.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
             }
         }
 
