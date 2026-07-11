@@ -362,3 +362,32 @@ Stage Summary:
 - Camera initialization now properly waits for permission before accessing CameraX
 - Permission state is communicated from Activity → Composable → ViewModel
 - Camera init is idempotent and safe to call multiple times
+---
+Task ID: 9
+Agent: main
+Task: Fix GitHub Actions build failure for Android APK
+
+Work Log:
+- Checked GitHub Actions API: Run #27 (Build Saatiril) failed on commit 6e3cc23
+- Downloaded build logs and identified Kotlin compilation errors in 3 files
+- Root cause: Multi-line expression assignments like `_cameraPermissionGranted = ContextCompat.checkSelfPermission(...) == PackageManager.PERMISSION_GRANTED` were parsed as two separate expressions by Kotlin because the `==` operator on the next line was treated as an orphaned operator, not a continuation of the assignment
+- Fixed all 3 files by wrapping the comparison in parentheses: `(ContextCompat.checkSelfPermission(...) == PackageManager.PERMISSION_GRANTED)`
+- Also removed unused `ContextCompat.checkSelfPermission()` call in OperatorScreen settings button onClick handler
+
+Files Fixed:
+- MainActivity.kt: 2 locations (onCreate line 78, onResume line 103)
+- BuiltInCameraManager.kt: 1 location (hasCameraPermission line 68)
+- OperatorScreen.kt: 2 locations (initial state line 83, permission poll line 97)
+
+Commits:
+- 8c6c9ea: "fix: resolve Kotlin compilation errors - wrap permission check comparisons in parentheses"
+
+Build Results:
+- Run #28 (Build Saatiril - Android APK): ✅ SUCCESS
+- Run #82 (Build Electron Windows App): ✅ SUCCESS
+
+Stage Summary:
+- Build failure was caused by Kotlin parser splitting multi-line comparison expressions
+- Simple fix: wrap comparisons in parentheses
+- All builds now passing successfully
+- APK is available for download from GitHub Actions artifacts
