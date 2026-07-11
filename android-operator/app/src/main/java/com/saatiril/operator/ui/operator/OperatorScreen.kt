@@ -1,8 +1,6 @@
 package com.saatiril.operator.ui.operator
 
 import android.Manifest
-import android.os.Environment
-import android.util.Log
 import android.widget.ImageView
 import androidx.activity.ComponentActivity
 import androidx.camera.view.PreviewView
@@ -41,8 +39,6 @@ import androidx.core.content.PermissionChecker
 import androidx.lifecycle.LifecycleOwner
 import com.saatiril.operator.data.*
 import com.saatiril.operator.ui.gridline.GridlineOverlay
-import java.io.File
-import java.io.FileOutputStream
 
 // ─── Theme Colors ──────────────────────────────────────────
 private val BG = Color(0xFF1a0b2e)
@@ -123,6 +119,7 @@ fun OperatorScreen(
     val timerCountdown by viewModel.timerCountdown.collectAsState()
     val opSearchQuery by viewModel.opSearchQuery.collectAsState()
     val frameBitmap by viewModel.frameBitmap.collectAsState()
+    val mcCallBuffer by viewModel.mcCallBuffer.collectAsState()
 
     val config = project?.config
     val mode = config?.mode ?: CameraModes.SINGLE
@@ -172,28 +169,50 @@ fun OperatorScreen(
     }
 
     // ─── Derived data ───────────────────────────────────────
+    // channelStudents: All students assigned to this channel (ALL modes, ALL statuses)
+    // In photoshoot mode, this returns ALL students (no channel filtering)
     val channelStudents = remember(project, myChannel, isPhotoshoot) {
         val db = project?.database ?: emptyList()
         if (isPhotoshoot) db else db.filter { it.assignedChannel == myChannel }
     }
-    val remainingCount = channelStudents.count { it.status == "pending" }
 
-    val opQueue = remember(project, myChannel, isPhotoshoot) {
-        if (!isPhotoshoot || project == null) emptyList()
-        else {
+    // opQueue: Students that the operator should photograph next
+    // Photoshoot mode: db students with status=='sent' + mcCallBuffer entries not already in db as 'sent' or 'done'
+    // Non-photoshoot mode: same as channelStudents (full list, all statuses)
+    val opQueue = remember(project, myChannel, isPhotoshoot, mcCallBuffer) {
+        if (project == null) emptyList()
+        else if (isPhotoshoot) {
+            // Photoshoot mode: combine database 'sent' students + mcCallBuffer
+            val db = project!!.database
             val alreadyPhotographed = project!!.photoHistory
                 .filter { it.channel == myChannel }
                 .map { it.student.id }.toSet()
-            project!!.database.filter { it.status == "sent" && !alreadyPhotographed.contains(it.id) }
+            val sentFromDb = db.filter { it.status == "sent" && !alreadyPhotographed.contains(it.id) }
+            // Add mcCallBuffer entries not already in sentFromDb or done
+            val sentIds = sentFromDb.map { it.id }.toSet()
+            val doneIds = db.filter { it.status == "done" }.map { it.id }.toSet()
+            val bufferAdditions = mcCallBuffer.filter { !sentIds.contains(it.id) && !doneIds.contains(it.id) && !alreadyPhotographed.contains(it.id) }
+            sentFromDb + bufferAdditions
+        } else {
+            // Non-photoshoot mode: show ALL students for this channel with ALL statuses
+            // This matches the Windows version's channelStudents behavior
+            channelStudents
         }
     }
-    val opSearchResults = remember(opQueue, opSearchQuery) {
-        if (opSearchQuery.isBlank()) opQueue
+
+    // opSearchResults: Search within the appropriate list based on mode
+    // Photoshoot mode: search within opQueue
+    // Non-photoshoot mode: search within channelStudents (which opQueue equals)
+    val searchableList = if (isPhotoshoot) opQueue else channelStudents
+    val opSearchResults = remember(searchableList, opSearchQuery) {
+        if (opSearchQuery.isBlank()) searchableList
         else {
             val q = opSearchQuery.lowercase().trim()
-            opQueue.filter { it.nim.lowercase().contains(q) || it.nama.lowercase().contains(q) }
+            searchableList.filter { it.nim.lowercase().contains(q) || it.nama.lowercase().contains(q) }
         }
     }
+
+    val remainingCount = channelStudents.count { it.status == "pending" }
     val hasActiveTarget = currentTarget != null
     val aspectRatio = config?.parseAspectRatio() ?: (4f / 3f)
 
@@ -549,21 +568,22 @@ fun OperatorScreen(
                         }
                     }
 
-                    // OP SEARCH panel (photoshoot only)
-                    if (Panels.OP_SEARCH in visiblePanels && isPhotoshoot) {
+                    // OP SEARCH panel (all modes, shows searchable queue)
+                    if (Panels.OP_SEARCH in visiblePanels) {
                         item {
                             CollapsiblePanel(
-                                title = "Antre dari MC (${opQueue.size})",
+                                title = if (isPhotoshoot) "Antre dari MC (${opQueue.size})" else "Cari Antrean (${channelStudents.size})",
                                 onClose = { visiblePanels = visiblePanels - Panels.OP_SEARCH }
                             ) {
                                 OpSearchContent(
-                                    opQueue = opQueue,
+                                    searchableList = searchableList,
                                     opSearchResults = opSearchResults,
                                     opSearchQuery = opSearchQuery,
                                     currentTargetId = currentTarget?.id,
                                     onSearchQueryChange = { viewModel.setOpSearchQuery(it) },
                                     onSelectTarget = { viewModel.setOpCurrentTarget(it) },
-                                    isSending = isSending
+                                    isSending = isSending,
+                                    isPhotoshoot = isPhotoshoot
                                 )
                             }
                         }
@@ -578,7 +598,8 @@ fun OperatorScreen(
                             ) {
                                 QueueListContent(
                                     channelStudents = channelStudents,
-                                    myChannel = myChannel
+                                    myChannel = myChannel,
+                                    isPhotoshoot = isPhotoshoot
                                 )
                             }
                         }
@@ -999,13 +1020,14 @@ private fun GridlineSettingsContent(
 
 @Composable
 private fun OpSearchContent(
-    opQueue: List<Student>,
+    searchableList: List<Student>,
     opSearchResults: List<Student>,
     opSearchQuery: String,
     currentTargetId: String?,
     onSearchQueryChange: (String) -> Unit,
     onSelectTarget: (Student) -> Unit,
-    isSending: Boolean
+    isSending: Boolean,
+    isPhotoshoot: Boolean
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         OutlinedTextField(
@@ -1019,7 +1041,7 @@ private fun OpSearchContent(
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = MUTED, modifier = Modifier.size(12.dp)) },
             singleLine = true
         )
-        if (opQueue.isEmpty()) {
+        if (searchableList.isEmpty()) {
             Text(if (opSearchQuery.isNotBlank()) "Tidak ditemukan" else "Belum ada peserta dikirim MC",
                 style = TextStyle(color = MUTED, fontSize = 8.sp), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         } else {
@@ -1034,6 +1056,19 @@ private fun OpSearchContent(
                         verticalAlignment = Alignment.CenterVertically) {
                         Text(student.nim, style = TextStyle(color = MUTED, fontSize = 8.sp, fontFamily = FontFamily.Monospace), modifier = Modifier.width(45.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(student.nama, style = TextStyle(color = if (isCurrent) GOLD else Color.White, fontSize = 9.sp, fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        // Show status badge in non-photoshoot mode
+                        if (!isPhotoshoot) {
+                            val (statusLabel, statusColor) = when (student.status) {
+                                "sent" -> "Kirim" to GOLD.copy(alpha = 0.7f)
+                                "active_1", "active_2" -> "Foto" to GOLD
+                                "done" -> "OK" to GREEN
+                                else -> "" to MUTED
+                            }
+                            if (statusLabel.isNotEmpty()) {
+                                Text(statusLabel, style = TextStyle(color = statusColor, fontSize = 6.sp, fontWeight = FontWeight.Bold),
+                                    modifier = Modifier.width(25.dp), textAlign = TextAlign.End)
+                            }
+                        }
                         if (isCurrent) Icon(Icons.Default.Camera, contentDescription = null, tint = GOLD, modifier = Modifier.size(10.dp))
                     }
                 }
@@ -1045,17 +1080,34 @@ private fun OpSearchContent(
 @Composable
 private fun QueueListContent(
     channelStudents: List<Student>,
-    myChannel: Int
+    myChannel: Int,
+    isPhotoshoot: Boolean
 ) {
     if (channelStudents.isEmpty()) {
         Text("Tidak ada mahasiswa", style = TextStyle(color = MUTED, fontSize = 9.sp), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), textAlign = TextAlign.Center)
     } else {
+        // Sort: active first, then sent, then pending, then done last
+        val sortedStudents = remember(channelStudents) {
+            val statusOrder = mapOf(
+                "active_1" to 0, "active_2" to 0,
+                "sent" to 1,
+                "pending" to 2,
+                "done" to 3
+            )
+            channelStudents.sortedBy { statusOrder[it.status] ?: 4 }
+        }
         LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 120.dp)) {
-            itemsIndexed(channelStudents) { idx, student ->
-                val isActive = student.status == "active_$myChannel"
+            itemsIndexed(sortedStudents) { idx, student ->
+                val isActive = student.status.startsWith("active_")
                 val isDone = student.status == "done"
                 val isSent = student.status == "sent"
-                val rowBg = when { isActive -> GOLD.copy(alpha = 0.12f); isSent -> GOLD.copy(alpha = 0.04f); isDone -> MUTED.copy(alpha = 0.02f); else -> Color.Transparent }
+                val isPending = student.status == "pending"
+                val rowBg = when {
+                    isActive -> GOLD.copy(alpha = 0.12f)
+                    isSent -> GOLD.copy(alpha = 0.04f)
+                    isDone -> MUTED.copy(alpha = 0.02f)
+                    else -> Color.Transparent
+                }
                 Row(modifier = Modifier.fillMaxWidth().background(rowBg).padding(horizontal = 3.dp, vertical = 1.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text("${idx + 1}", style = TextStyle(color = MUTED, fontSize = 7.sp, fontFamily = FontFamily.Monospace), modifier = Modifier.width(18.dp))
@@ -1063,79 +1115,16 @@ private fun QueueListContent(
                     Text(student.nama, style = TextStyle(color = if (isActive) GOLD else if (isDone) MUTED else Color.White, fontSize = 8.sp,
                         fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal, textDecoration = if (isDone) TextDecoration.LineThrough else TextDecoration.None),
                         modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    val (statusLabel, statusColor) = when { isActive -> "Foto" to GOLD; isSent -> "Kirim" to GOLD.copy(alpha = 0.6f); isDone -> "Selesai" to MUTED; else -> "Tunggu" to BORDER }
+                    val (statusLabel, statusColor) = when {
+                        isActive -> "Foto" to GOLD
+                        isSent -> "Kirim" to GOLD.copy(alpha = 0.6f)
+                        isDone -> "Selesai" to MUTED
+                        isPending -> "Tunggu" to BORDER
+                        else -> "?" to MUTED
+                    }
                     Text(statusLabel, style = TextStyle(color = statusColor, fontSize = 6.sp, fontWeight = FontWeight.Bold), modifier = Modifier.width(35.dp))
                 }
             }
-        }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════
-// PHOTO FILE SAVE UTILITY
-// Matches Windows/Electron behavior: save JPEG to targetFolder
-// ═══════════════════════════════════════════════════════════
-
-object PhotoFileSaver {
-    private const val TAG = "PhotoFileSaver"
-
-    /**
-     * Save a base64-encoded photo to the target folder on the Android device.
-     * Matches the Windows Electron savePhoto behavior:
-     *   - Creates targetFolder if it doesn't exist
-     *   - Strips data URI prefix from base64
-     *   - Writes JPEG bytes to file
-     *   - Returns the saved file path on success, null on failure
-     *
-     * @param base64Data Full data URI: "data:image/jpeg;base64,..."
-     * @param filename Target filename: "NIM_Nama_1_Toga.jpg"
-     * @param targetFolder Absolute path to save directory (from project config)
-     */
-    fun savePhoto(base64Data: String, filename: String, targetFolder: String): String? {
-        if (targetFolder.isBlank()) {
-            // No target folder specified — use default Saatiril directory
-            return saveToDefaultFolder(base64Data, filename)
-        }
-
-        return try {
-            val dir = File(targetFolder)
-            if (!dir.exists()) dir.mkdirs()
-
-            val pureBase64 = if (base64Data.contains(",")) base64Data.substringAfter(",") else base64Data
-            val bytes = android.util.Base64.decode(pureBase64, android.util.Base64.DEFAULT)
-
-            val file = File(dir, filename)
-            FileOutputStream(file).use { it.write(bytes) }
-
-            Log.i(TAG, "Photo saved: ${file.absolutePath} (${bytes.size} bytes)")
-            file.absolutePath
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to save photo to $targetFolder/$filename: ${e.message}")
-            // Fallback to default directory
-            saveToDefaultFolder(base64Data, filename)
-        }
-    }
-
-    /**
-     * Save to the app's external Pictures/Saatiril directory as fallback.
-     * This works even if targetFolder is not set or not writable.
-     */
-    private fun saveToDefaultFolder(base64Data: String, filename: String): String? {
-        return try {
-            val dir = File(Environment.getExternalStorageDirectory(), "Pictures/Saatiril")
-            if (!dir.exists()) dir.mkdirs()
-
-            val pureBase64 = if (base64Data.contains(",")) base64Data.substringAfter(",") else base64Data
-            val bytes = android.util.Base64.decode(pureBase64, android.util.Base64.DEFAULT)
-
-            val file = File(dir, filename)
-            FileOutputStream(file).use { it.write(bytes) }
-
-            Log.i(TAG, "Photo saved to default: ${file.absolutePath}")
-            file.absolutePath
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to save photo to default folder: ${e.message}")
-            null
         }
     }
 }

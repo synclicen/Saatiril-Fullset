@@ -391,3 +391,64 @@ Stage Summary:
 - Simple fix: wrap comparisons in parentheses
 - All builds now passing successfully
 - APK is available for download from GitHub Actions artifacts
+
+---
+Task ID: 3-4
+Agent: android-fixer
+Task: Fix two critical issues in Android Saatiril camera operator APK - MC Queue List Empty / Search Not Working, and Photos Not Saving to Designated Folder
+
+Work Log:
+
+**Issue 1: MC Queue List Empty / Search Not Working**
+
+Root Cause: In OperatorScreen.kt, `opQueue` only worked in photoshoot mode — the condition `if (!isPhotoshoot || project == null) emptyList()` returned an empty list for single/dual modes. Search only searched within `opQueue`, so it also didn't work in non-photoshoot modes. Missing `mcCallBuffer` meant MC_CALL events that arrived before SYNC_DB weren't tracked.
+
+Fixes Applied:
+1. **OperatorViewModel.kt**: Added `_mcCallBuffer` MutableStateFlow and `mcCallBuffer` StateFlow to track students from MC_CALL events that arrive before SYNC_DB updates the database
+2. **OperatorViewModel.kt - MC_CALL handler**: In photoshoot mode, added student to `mcCallBuffer` (avoids duplicates)
+3. **OperatorViewModel.kt - SYNC_DB handler (handleSyncDb)**: Clear `mcCallBuffer` entries for students that are now 'done' in the merged database
+4. **OperatorViewModel.kt - STUDENT_RESET handler**: Clear matching entry from `mcCallBuffer`
+5. **OperatorViewModel.kt - finalizeCapture()**: Clear matching entry from `mcCallBuffer` after capture completes
+6. **OperatorScreen.kt - opQueue derivation**: Fixed to work for ALL modes:
+   - Photoshoot mode: `db.filter(status == 'sent')` + `mcCallBuffer` entries not already in db as sent/done
+   - Non-photoshoot mode: `channelStudents` (ALL students for this channel, ALL statuses)
+7. **OperatorScreen.kt - opSearchResults**: Fixed to search within the correct list based on mode (searchableList)
+8. **OperatorScreen.kt - OP_SEARCH panel**: Now visible in ALL modes (not just photoshoot), with appropriate title
+9. **OperatorScreen.kt - OpSearchContent**: Added status badges for non-photoshoot mode students (Kirim, Foto, OK)
+10. **OperatorScreen.kt - QueueListContent**: Added `isPhotoshoot` parameter, improved sorting (active→sent→pending→done), improved status detection using `startsWith("active_")` instead of exact match
+
+**Issue 2: Photos Not Saving to Designated Folder**
+
+Root Cause: `targetFolder` from admin is a Windows path (e.g., `C:\Users\...\Photos`) which is invalid on Android. The old `PhotoFileSaver` tried to create that Windows path on Android (fails), then fell back to `Pictures/Saatiril` without project subfolder. Also didn't handle Android 10+ scoped storage properly.
+
+Fixes Applied:
+1. **Created new file: `/home/z/my-project/android-operator/app/src/main/java/com/saatiril/operator/util/PhotoSaver.kt`**:
+   - Three-tier save strategy with fallback paths:
+     - Strategy 1: App-specific external directory (`getExternalFilesDir(PICTURES)/Saatiril/{projectName}/`) — works on Android 10+ scoped storage without permissions
+     - Strategy 2: Legacy public external (`Pictures/Saatiril/{projectName}/`) — only attempted on Android 9 and below
+     - Strategy 3: Internal app storage (`filesDir/Saatiril/{projectName}/`) — always works but not user-visible
+   - Uses project name as subfolder for organization
+   - Validates writes by checking file existence and size after save
+   - Extensive logging for debugging save paths
+   - `sanitizeFolderName()` for safe folder creation
+   - `getSaveDirectoryPath()` for displaying save location to users
+
+2. **OperatorViewModel.kt - finalizeCapture()**: Changed from `PhotoFileSaver.savePhoto()` (old Windows-path-based) to `PhotoSaver.savePhoto()` with Application context and project name. Removed use of `targetFolder` (Windows path).
+
+3. **OperatorScreen.kt**: Removed old `PhotoFileSaver` object (was 60+ lines at bottom of file). Removed unused imports (`Environment`, `File`, `FileOutputStream`, `Log`).
+
+**Files Modified:**
+- `/home/z/my-project/android-operator/app/src/main/java/com/saatiril/operator/data/OperatorViewModel.kt` — Added mcCallBuffer, fixed MC_CALL/SYNC_DB/STUDENT_RESET handlers, fixed finalizeCapture photo saving
+- `/home/z/my-project/android-operator/app/src/main/java/com/saatiril/operator/ui/operator/OperatorScreen.kt` — Fixed queue/search for all modes, removed PhotoFileSaver, cleaned up imports
+- `/home/z/my-project/android-operator/app/src/main/java/com/saatiril/operator/util/PhotoSaver.kt` — NEW: proper Android photo saving with scoped storage support
+
+**Files Verified (no changes needed):**
+- `/home/z/my-project/android-operator/app/src/main/java/com/saatiril/operator/util/Sha256.kt` — Already contains `FilenameUtils` object with correct filename building functions
+
+Stage Summary:
+- MC queue list now works in ALL modes (single, dual, photoshoot)
+- Search works across all modes using the correct student list
+- mcCallBuffer tracks MC_CALL events before SYNC_DB arrives (matches Windows version)
+- Photos save to Android-appropriate paths with project name subfolders
+- Scoped storage on Android 10+ handled via app-specific external directory
+- Three-tier fallback ensures photos are always saved somewhere

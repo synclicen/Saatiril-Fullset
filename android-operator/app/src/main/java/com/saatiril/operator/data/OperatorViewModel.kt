@@ -12,6 +12,7 @@ import com.saatiril.operator.camera.BuiltInCameraManager
 import com.saatiril.operator.camera.CameraCapture
 import com.saatiril.operator.camera.UVCCameraManager
 import com.saatiril.operator.util.FilenameUtils
+import com.saatiril.operator.util.PhotoSaver
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -106,6 +107,15 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     private val _opSearchQuery = MutableStateFlow("")
     val opSearchQuery: StateFlow<String> = _opSearchQuery.asStateFlow()
+
+    // ─── MC Call Buffer ────────────────────────────────────────
+    // In photoshoot mode, MC_CALL events can arrive before SYNC_DB updates
+    // the database with 'sent' status. The buffer holds students from MC_CALL
+    // that aren't yet in the database with 'sent' status.
+    // Matches the Windows version's mcCallBuffer behavior.
+
+    private val _mcCallBuffer = MutableStateFlow<List<Student>>(emptyList())
+    val mcCallBuffer: StateFlow<List<Student>> = _mcCallBuffer.asStateFlow()
 
     // ─── Camera Source ──────────────────────────────────────────
 
@@ -396,6 +406,18 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             _capturePhase.value = CapturePhase.READY_1
             _capturedPhotos.value = emptyList()
 
+            // In photoshoot mode, add student to mcCallBuffer so they appear
+            // in the operator queue even before SYNC_DB arrives with 'sent' status
+            if (CameraModes.isPhotoshootMode(mode)) {
+                val buffer = _mcCallBuffer.value.toMutableList()
+                // Avoid duplicates
+                if (buffer.none { it.id == mcCall.student.id }) {
+                    buffer.add(mcCall.student)
+                    _mcCallBuffer.value = buffer
+                    Log.d(TAG, "MC_CALL: Added ${mcCall.student.nama} to mcCallBuffer (size=${buffer.size})")
+                }
+            }
+
             Log.i(TAG, "MC_CALL: ${mcCall.student.nama} (channel ${mcCall.channel})")
         }
 
@@ -421,6 +443,13 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
                 _currentTarget.value = null
                 _capturePhase.value = CapturePhase.STANDBY
                 _capturedPhotos.value = emptyList()
+            }
+
+            // Clear matching entry from mcCallBuffer
+            val buffer = _mcCallBuffer.value.toMutableList()
+            if (buffer.removeAll { it.id == resetData.studentId }) {
+                _mcCallBuffer.value = buffer
+                Log.d(TAG, "STUDENT_RESET: Cleared ${resetData.studentId} from mcCallBuffer (size=${buffer.size})")
             }
 
             // Update project database — reset student status
@@ -539,6 +568,15 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
         _project.value = mergedProject
 
+        // Clear mcCallBuffer entries that are now 'done' or 'sent' in the merged database
+        // This prevents showing students in the queue that are already being processed
+        val buffer = _mcCallBuffer.value.toMutableList()
+        val doneIds = mergedDb.filter { it.status == "done" }.map { it.id }.toSet()
+        if (buffer.removeAll { doneIds.contains(it.id) }) {
+            _mcCallBuffer.value = buffer
+            Log.d(TAG, "SYNC_DB: Cleared done students from mcCallBuffer (remaining=${buffer.size})")
+        }
+
         // If current target became 'done' in merged data (dual-photoshoot race condition)
         _currentTarget.value?.let { target ->
             val updatedStudent = mergedDb.find { it.id == target.id }
@@ -651,16 +689,20 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             // 3. Send OP_PROGRESS
             socketManager.sendOpProgress("Selesai — Menunggu target...")
 
-            // 4. Save photos to local Android storage (matches Windows Electron savePhoto behavior)
-            //    Each photo gets its own filename. targetFolder from project config.
-            val targetFolder = proj.config.targetFolder
+            // 4. Save photos to local Android storage using PhotoSaver utility
+            //    Each photo gets its own filename. Uses project name as subfolder.
+            //    The Windows targetFolder path is NOT used (invalid on Android).
+            val projectName = proj.name.ifBlank { "Saatiril" }
+            val appContext = getApplication<Application>()
             viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 photos.forEachIndexed { idx, photoBase64 ->
                     val filename = filenames.getOrElse(idx) { "photo_${idx + 1}.jpg" }
-                    val savedPath = com.saatiril.operator.ui.operator.PhotoFileSaver.savePhoto(
+                    Log.d(TAG, "Saving photo $idx: $filename (project=$projectName)")
+                    val savedPath = PhotoSaver.savePhoto(
+                        context = appContext,
                         base64Data = photoBase64,
                         filename = filename,
-                        targetFolder = targetFolder
+                        projectName = projectName
                     )
                     if (savedPath != null) {
                         Log.i(TAG, "Photo saved locally: $savedPath")
@@ -696,6 +738,13 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             _currentTarget.value = null
             _capturedPhotos.value = emptyList()
             _capturePhase.value = CapturePhase.STANDBY
+
+            // 8. Clear matching entry from mcCallBuffer
+            val buffer = _mcCallBuffer.value.toMutableList()
+            if (buffer.removeAll { it.id == student.id }) {
+                _mcCallBuffer.value = buffer
+                Log.d(TAG, "finalizeCapture: Cleared ${student.nama} from mcCallBuffer (size=${buffer.size})")
+            }
 
             Log.i(TAG, "Capture finalized for ${student.nama} — ${photos.size} photo(s) saved")
         } catch (e: Exception) {
