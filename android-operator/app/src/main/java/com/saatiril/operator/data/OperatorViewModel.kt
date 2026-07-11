@@ -242,6 +242,19 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         stateRequestJob = null
     }
 
+    /**
+     * BUG FIX: Proactively request frame from admin if we need it.
+     * Called after auth_success and in other situations where the frame
+     * might not have been received yet.
+     */
+    private fun requestFrameIfNeeded() {
+        val proj = _project.value
+        if (proj != null && (proj.config.frame == "__FRAME_SAVED__" || proj.config.frame == null) && _frameBitmap.value == null) {
+            Log.i(TAG, "requestFrameIfNeeded: Requesting frame for project ${proj.id}")
+            socketManager.requestFrame(proj.id)
+        }
+    }
+
     // ─── Camera Lifecycle ───────────────────────────────────────
 
     private var cameraConnectedCollector: Job? = null
@@ -444,6 +457,10 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             _passwordRequired.value = false
             _authError.value = null
             startStateRequestLoop()
+            // BUG FIX: Proactively request frame after auth success.
+            // If the project was synced before auth completed (unlikely but possible)
+            // or if a previous sync had __FRAME_SAVED__, we need the frame data.
+            requestFrameIfNeeded()
         }
 
         socketManager.on("auth_failed") { reason ->
@@ -598,6 +615,12 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
                 )
             }
             decodeFrameBitmap(frameData.frame)
+            // BUG FIX: After FRAME_DATA updates the project, the opQueue
+            // becomes stale because _opQueue is a MutableStateFlow (not
+            // derived). Without this call, the queue list disappears when
+            // the frame appears because the next SYNC_DB merge recalculates
+            // the queue differently from the stale state.
+            updateOpQueue()
         }
 
         // ─── PHOTOS_SAVED (from other operators in dual mode) ─────
@@ -663,10 +686,22 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
                 Log.d(TAG, "SYNC_DB (first): Cleared ${buffer.size - newBuffer.size} mcCallBuffer entries now in DB")
             }
 
-            // Decode frame bitmap if present
+            // Decode frame bitmap if present (synchronous for immediate display)
             decodeFrameBitmap(incomingProject.config.frame)
             if (incomingProject.config.frame == "__FRAME_SAVED__") {
+                // BUG FIX: Request frame immediately AND schedule a retry.
+                // On first sync, the frame may arrive late because
+                // requestFrame is async. We add a delayed retry to handle
+                // cases where the first request is lost or delayed.
                 socketManager.requestFrame(incomingProject.id)
+                viewModelScope.launch {
+                    delay(3000L)
+                    // Only retry if frame is still not loaded
+                    if (_frameBitmap.value == null && _project.value?.config?.frame == "__FRAME_SAVED__") {
+                        Log.i(TAG, "Frame retry: requesting frame again (3s after first sync)")
+                        socketManager.requestFrame(incomingProject.id)
+                    }
+                }
             }
 
             // Re-find active student for non-photoshoot mode after first sync
@@ -846,8 +881,15 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             Log.d(TAG, "finalizeCapture: filenames=$filenames, version=$newVersion")
 
             // 1. Send STUDENT_DONE first (lightweight — lets MC call next student immediately)
+            // BUG FIX: Also send STUDENT_DONE in photoshoot mode.
+            // The admin needs this event to update the student status display
+            // from "active_N" to "done". Previously, photoshoot mode only sent
+            // PHOTOS_SAVED, but the admin's UI expects STUDENT_DONE for status updates.
+            socketManager.sendStudentDone(student.id)
             if (!CameraModes.isPhotoshootMode(mode)) {
-                socketManager.sendStudentDone(student.id)
+                // Small delay between STUDENT_DONE and PHOTOS_SAVED in standard mode
+                // to ensure the lightweight event gets through first
+                delay(100L)
             }
 
             // 2. Send PHOTOS_SAVED with all photo data
@@ -1008,27 +1050,32 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     // ─── Frame Bitmap Decoding ──────────────────────────────────
 
+    /**
+     * Decode frame bitmap SYNCHRONOUSLY on the calling thread.
+     * Base64 decode of a PNG/JPEG frame is fast enough (typically < 50ms)
+     * that we don't need a coroutine — this avoids the delay of scheduling
+     * onto a coroutine dispatcher, which was causing the frame to appear
+     * late at startup.
+     */
     private fun decodeFrameBitmap(frameBase64: String?) {
         if (frameBase64 == null || frameBase64 == "__FRAME_SAVED__" || frameBase64.isEmpty()) {
             _frameBitmap.value = null
             return
         }
-        
-        viewModelScope.launch {
-            try {
-                val pureBase64 = if (frameBase64.contains(",")) {
-                    frameBase64.substringAfter(",")
-                } else {
-                    frameBase64
-                }
-                val bytes = Base64.decode(pureBase64, Base64.DEFAULT)
-                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                _frameBitmap.value = bitmap
-                Log.i(TAG, "Frame bitmap decoded: ${bitmap?.width}x${bitmap?.height}")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to decode frame bitmap: ${e.message}")
-                _frameBitmap.value = null
+
+        try {
+            val pureBase64 = if (frameBase64.contains(",")) {
+                frameBase64.substringAfter(",")
+            } else {
+                frameBase64
             }
+            val bytes = Base64.decode(pureBase64, Base64.DEFAULT)
+            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            _frameBitmap.value = bitmap
+            Log.i(TAG, "Frame bitmap decoded synchronously: ${bitmap?.width}x${bitmap?.height}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to decode frame bitmap: ${e.message}")
+            _frameBitmap.value = null
         }
     }
 

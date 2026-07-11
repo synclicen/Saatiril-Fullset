@@ -626,6 +626,7 @@ class SocketManager {
     }
 
     fun sendStudentDone(studentId: String) {
+        Log.i(TAG, "sendStudentDone: studentId=$studentId, ch=$myChannel, connected=${socket?.connected()}, authenticated=${isAuthenticated()}")
         emitLanMessage(SocketEvents.STUDENT_DONE, StudentDoneData(
             studentId = studentId,
             channel = myChannel
@@ -633,13 +634,15 @@ class SocketManager {
     }
 
     fun sendPhotosSaved(student: Student, photos: List<String>, version: Int, filename: String) {
-        emitLanMessage(SocketEvents.PHOTOS_SAVED, PhotosSavedData(
+        val data = PhotosSavedData(
             student = student.copy(status = "done"),
             photos = photos,
             channel = myChannel,
             version = version,
             filename = filename
-        ))
+        )
+        Log.i(TAG, "sendPhotosSaved: student=${student.nama} (id=${student.id}), photos=${photos.size}, ch=$myChannel, ver=$version, filename=$filename, connected=${socket?.connected()}, authenticated=${isAuthenticated()}")
+        emitLanMessage(SocketEvents.PHOTOS_SAVED, data)
     }
 
     fun sendOpProgress(status: String) {

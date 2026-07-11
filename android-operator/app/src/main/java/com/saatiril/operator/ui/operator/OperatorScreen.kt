@@ -23,8 +23,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -221,7 +223,10 @@ fun OperatorScreen(
 
         // ─── CAMERA PREVIEW AREA ────────────────────────────
         // Fills remaining space above the panel divider.
-        // Camera is centered at the correct aspect ratio.
+        // Camera is centered at the correct aspect ratio enforced
+        // by the admin's config (e.g., 4:3, 16:9).
+        // BUG FIX: The preview Box now enforces the admin's aspect ratio
+        // so the camera doesn't stretch to fill arbitrary dimensions.
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -229,74 +234,108 @@ fun OperatorScreen(
                 .background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
-            // Camera PreviewView
-            AndroidView(
-                factory = { ctx ->
-                    PreviewView(ctx).apply {
-                        layoutParams = android.widget.FrameLayout.LayoutParams(
-                            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-                        )
-                        scaleType = PreviewView.ScaleType.FILL_CENTER
-                        previewViewRef = this
+            // Measure the available space and constrain the preview to
+            // the admin's aspect ratio. The camera, gridline, frame overlay,
+            // and other overlays all go inside the aspect-ratio-constrained box.
+            var cameraBoxSize by remember { mutableStateOf(IntSize.Zero) }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onSizeChanged { cameraBoxSize = it }
+            ) {
+                // Calculate the correct preview modifier based on available space
+                // and admin's aspect ratio. aspectRatio is w/h (e.g., 4/3 ≈ 1.333).
+                val previewModifier = if (cameraBoxSize != IntSize.Zero) {
+                    val availW = cameraBoxSize.width
+                    val availH = cameraBoxSize.height
+                    val hFromW = availW / aspectRatio  // height if we fill width
+                    if (hFromW <= availH) {
+                        // Width-constrained: fill width, compute height from ratio
+                        Modifier.fillMaxWidth().aspectRatio(1f / aspectRatio)
+                    } else {
+                        // Height-constrained: fill height, compute width from ratio
+                        Modifier.fillMaxHeight().aspectRatio(aspectRatio)
                     }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+                } else {
+                    Modifier.fillMaxSize()
+                }
 
-            // Gridline Overlay
-            if (gridlineSettings.enabled) {
-                AndroidView(
-                    factory = { ctx ->
-                        GridlineOverlay(ctx).apply { updateSettings(gridlineSettings) }
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                    update = { view -> view.updateSettings(gridlineSettings) }
-                )
-            }
-
-            // Frame Overlay
-            frameBitmap?.let { frame ->
-                AndroidView(
-                    factory = { ctx ->
-                        ImageView(ctx).apply {
-                            scaleType = ImageView.ScaleType.FIT_XY
-                            layoutParams = android.widget.FrameLayout.LayoutParams(
-                                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                    update = { view -> view.setImageBitmap(frame) }
-                )
-            }
-
-            // Timer Countdown Overlay
-            if (timerCountdown > 0) {
+                // Constrained preview box — all camera-related overlays go here
                 Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(BG.copy(alpha = 0.3f)),
+                    modifier = previewModifier,
                     contentAlignment = Alignment.Center
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(100.dp)
-                            .clip(CircleShape)
-                            .background(BG.copy(alpha = 0.85f))
-                            .border(3.dp, GOLD, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "$timerCountdown",
-                            style = TextStyle(color = GOLD, fontSize = 48.sp, fontWeight = FontWeight.Bold)
+                    // Camera PreviewView
+                    AndroidView(
+                        factory = { ctx ->
+                            PreviewView(ctx).apply {
+                                layoutParams = android.widget.FrameLayout.LayoutParams(
+                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                                )
+                                scaleType = PreviewView.ScaleType.FILL_CENTER
+                                previewViewRef = this
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    // Gridline Overlay
+                    if (gridlineSettings.enabled) {
+                        AndroidView(
+                            factory = { ctx ->
+                                GridlineOverlay(ctx).apply { updateSettings(gridlineSettings) }
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                            update = { view -> view.updateSettings(gridlineSettings) }
                         )
+                    }
+
+                    // Frame Overlay
+                    frameBitmap?.let { frame ->
+                        AndroidView(
+                            factory = { ctx ->
+                                ImageView(ctx).apply {
+                                    scaleType = ImageView.ScaleType.FIT_XY
+                                    layoutParams = android.widget.FrameLayout.LayoutParams(
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                                    )
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                            update = { view -> view.setImageBitmap(frame) }
+                        )
+                    }
+
+                    // Timer Countdown Overlay
+                    if (timerCountdown > 0) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(BG.copy(alpha = 0.3f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(100.dp)
+                                    .clip(CircleShape)
+                                    .background(BG.copy(alpha = 0.85f))
+                                    .border(3.dp, GOLD, CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "$timerCountdown",
+                                    style = TextStyle(color = GOLD, fontSize = 48.sp, fontWeight = FontWeight.Bold)
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            // Camera not connected warning
+            // Camera not connected warning (full area, not constrained by aspect ratio)
             if (!cameraConnected) {
                 Box(
                     modifier = Modifier
@@ -1014,9 +1053,9 @@ private fun OpSearchContent(
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         OutlinedTextField(
             value = opSearchQuery, onValueChange = onSearchQueryChange,
-            placeholder = { Text("Cari NIM / Nama...", style = TextStyle(color = BORDER, fontSize = 9.sp)) },
-            textStyle = TextStyle(color = Color.White, fontSize = 9.sp),
-            modifier = Modifier.fillMaxWidth().height(28.dp),
+            placeholder = { Text("Cari NIM / Nama...", style = TextStyle(color = BORDER, fontSize = 10.sp)) },
+            textStyle = TextStyle(color = Color.White, fontSize = 10.sp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp),
             shape = RoundedCornerShape(4.dp),
             colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GOLD, unfocusedBorderColor = BORDER, cursorColor = GOLD,
                 focusedContainerColor = PANEL, unfocusedContainerColor = PANEL),
