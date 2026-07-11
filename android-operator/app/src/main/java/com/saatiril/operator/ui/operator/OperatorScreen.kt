@@ -1,6 +1,7 @@
 package com.saatiril.operator.ui.operator
 
 import androidx.compose.animation.*
+import android.Manifest
 import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -45,7 +46,8 @@ private val GREEN = Color(0xFF4ade80)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OperatorScreen(
-    viewModel: OperatorViewModel
+    viewModel: OperatorViewModel,
+    hasCameraPermission: Boolean = false
 ) {
     val context = LocalContext.current
     val lifecycleOwner: LifecycleOwner = when (context) {
@@ -73,21 +75,51 @@ fun OperatorScreen(
     val photosPerSession = CameraModes.photosPerSession(mode)
     val isPhotoshoot = CameraModes.isPhotoshootMode(mode)
 
-    // Track if camera has been initialized to prevent double init
-    var cameraInitialized by remember { mutableStateOf(false) }
-    var hasCameraPermission by remember { mutableStateOf(false) }
-
-    // Check camera permission state
-    LaunchedEffect(Unit) {
-        hasCameraPermission = ContextCompat.checkSelfPermission(
-            context, android.Manifest.permission.CAMERA
-        ) == PermissionChecker.PERMISSION_GRANTED
+    // ─── CRITICAL FIX: Camera permission + initialization ────
+    // hasCameraPermission comes from the parent (MainActivity's permission callback)
+    // Also periodically re-check in case user grants from Settings
+    var localPermissionState by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA)
+                    == PermissionChecker.PERMISSION_GRANTED
+        )
     }
 
-    // Initialize camera when this screen enters composition
-    DisposableEffect(lifecycleOwner) {
-        onDispose {
-            // Camera will be cleaned up in ViewModel.onCleared()
+    // Effective permission = parent-provided OR locally detected
+    val effectivePermission = hasCameraPermission || localPermissionState
+
+    // Store PreviewView reference so we can init camera after permission is granted
+    var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
+
+    // Periodically re-check permission (handles Settings grant)
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1000)
+            val currentPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) 
+                    == PermissionChecker.PERMISSION_GRANTED
+            if (currentPermission != localPermissionState) {
+                localPermissionState = currentPermission
+                Log.i("OperatorScreen", "Permission state changed to: $currentPermission")
+            }
+        }
+    }
+
+    // Initialize camera when BOTH permission is granted AND previewView is ready
+    // This replaces the broken pattern of init-ing inside AndroidView.factory
+    LaunchedEffect(effectivePermission, previewViewRef) {
+        val pv = previewViewRef
+        if (effectivePermission && pv != null) {
+            Log.i("OperatorScreen", "Init camera: permission=$effectivePermission, previewView=available")
+            try {
+                viewModel.initCamera(lifecycleOwner, pv)
+            } catch (e: SecurityException) {
+                Log.e("OperatorScreen", "Camera permission not granted: ${e.message}")
+                localPermissionState = false // Reset so we can retry
+            } catch (e: Exception) {
+                Log.e("OperatorScreen", "Failed to init camera: ${e.message}")
+            }
+        } else {
+            Log.d("OperatorScreen", "Camera init waiting: permission=$effectivePermission, previewView=${pv != null}")
         }
     }
 
@@ -101,6 +133,7 @@ fun OperatorScreen(
             modifier = Modifier.fillMaxSize()
         ) {
             // Camera preview using CameraX PreviewView
+            // CRITICAL FIX: Factory ONLY creates the PreviewView — camera init happens in LaunchedEffect
             AndroidView(
                 factory = { ctx ->
                     PreviewView(ctx).apply {
@@ -110,18 +143,8 @@ fun OperatorScreen(
                         )
                         scaleType = PreviewView.ScaleType.FILL_CENTER
 
-                        // Initialize camera with this PreviewView (only once)
-                        // CRITICAL: Only init camera if permission is granted
-                        if (!cameraInitialized && hasCameraPermission) {
-                            cameraInitialized = true
-                            try {
-                                viewModel.initCamera(lifecycleOwner, this)
-                            } catch (e: SecurityException) {
-                                Log.e("OperatorScreen", "Camera permission not granted: ${e.message}")
-                            } catch (e: Exception) {
-                                Log.e("OperatorScreen", "Failed to init camera: ${e.message}")
-                            }
-                        }
+                        // Store reference for camera init in LaunchedEffect
+                        previewViewRef = this
                     }
                 },
                 modifier = Modifier.fillMaxSize()
@@ -159,10 +182,44 @@ fun OperatorScreen(
                             modifier = Modifier.size(48.dp)
                         )
                         Text(
-                            if (cameraSource == "none") "Kamera tidak terdeteksi" else "Menghubungkan kamera...",
+                            if (!effectivePermission) "Izin kamera diperlukan"
+                            else if (cameraSource == "none") "Kamera tidak terdeteksi"
+                            else "Menghubungkan kamera...",
                             style = TextStyle(color = MUTED, fontSize = 16.sp)
                         )
-                        if (cameraSource != "none") {
+                        if (!effectivePermission) {
+                            // Show button to request permission
+                            Button(
+                                onClick = {
+                                    // Request permission via activity
+                                    val activity = context as? ComponentActivity
+                                    activity?.let {
+                                        ContextCompat.checkSelfPermission(it, Manifest.permission.CAMERA)
+                                        // Use the activity's permission launcher if available
+                                        // Otherwise, direct the user to app settings
+                                        try {
+                                            val intent = android.content.Intent(
+                                                android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                                android.net.Uri.fromParts("package", it.packageName, null)
+                                            )
+                                            it.startActivity(intent)
+                                        } catch (e: Exception) {
+                                            Log.e("OperatorScreen", "Cannot open settings: ${e.message}")
+                                        }
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = GOLD),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Buka Pengaturan", color = BG, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+                            Text(
+                                "Buka Settings > Izin > Kamera > Izinkan",
+                                style = TextStyle(color = MUTED.copy(alpha = 0.6f), fontSize = 11.sp)
+                            )
+                        } else if (cameraSource != "none") {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(24.dp),
                                 color = GOLD,

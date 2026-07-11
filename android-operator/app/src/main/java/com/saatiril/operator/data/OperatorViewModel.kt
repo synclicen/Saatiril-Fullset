@@ -131,39 +131,59 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     // ─── Camera Lifecycle ───────────────────────────────────────
 
+    // CRITICAL FIX: Track camera collector Jobs to prevent duplicate collectors
+    // on re-init (e.g., when permission is granted after first attempt)
+    private var cameraConnectedCollector: Job? = null
+    private var cameraTypeCollector: Job? = null
+    private var uvcConnectedCollector: Job? = null
+    private var uvcManagerInitialized: Boolean = false
+
     /**
      * Initialize camera when entering OperatorScreen.
      * Must be called with the Activity's LifecycleOwner and a PreviewView.
+     *
+     * IDEMPOTENT: Safe to call multiple times. Old flow collectors are cancelled
+     * before creating new ones. BuiltInCameraManager.init() is also idempotent.
      */
     fun initCamera(lifecycleOwner: LifecycleOwner, previewView: androidx.camera.view.PreviewView) {
-        uvcCameraManager.init()
+        // UVC manager init is also idempotent, but we only need to init once
+        if (!uvcManagerInitialized) {
+            uvcCameraManager.init()
+            uvcManagerInitialized = true
+        }
+
+        // CRITICAL FIX: Cancel old collectors FIRST to prevent receiving transient state
+        // when BuiltInCameraManager.init() resets _isConnected during camera selection
+        cameraConnectedCollector?.cancel()
+        cameraTypeCollector?.cancel()
+        uvcConnectedCollector?.cancel()
+
+        // BuiltInCameraManager.init() is now idempotent — handles re-init gracefully
         builtInCameraManager.init(lifecycleOwner, previewView)
 
-        // Monitor camera connection state
-        viewModelScope.launch {
+        // Create new collectors after init
+        cameraConnectedCollector = viewModelScope.launch {
             builtInCameraManager.isConnected.collect { connected ->
                 _cameraConnected.value = connected
                 updateCameraSource()
             }
         }
 
-        // Monitor camera type changes (external/back/front)
-        viewModelScope.launch {
+        cameraTypeCollector = viewModelScope.launch {
             builtInCameraManager.cameraType.collect { type ->
                 updateCameraSource()
             }
         }
 
-        // Monitor UVC device attachment
-        viewModelScope.launch {
+        uvcConnectedCollector = viewModelScope.launch {
             uvcCameraManager.isConnected.collect { uvcConnected ->
                 _uvcDeviceAttached.value = uvcConnected
-                // Always rescan when UVC state changes — the manager will
-                // determine if it needs to switch to/from external camera
                 builtInCameraManager.rescanForExternalCamera()
                 updateCameraSource()
             }
         }
+
+        Log.i(TAG, "Camera initialized — collectors active, cameraSource=${_cameraSource.value}")
     }
 
     /**
@@ -713,6 +733,10 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     override fun onCleared() {
         super.onCleared()
         stopStateRequestLoop()
+        // Cancel camera collectors
+        cameraConnectedCollector?.cancel()
+        cameraTypeCollector?.cancel()
+        uvcConnectedCollector?.cancel()
         socketManager.destroy()
         builtInCameraManager.destroy()
         uvcCameraManager.destroy()
