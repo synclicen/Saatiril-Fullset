@@ -92,6 +92,21 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private val _gridlineSettings = MutableStateFlow(GridlineSettings())
     val gridlineSettings: StateFlow<GridlineSettings> = _gridlineSettings.asStateFlow()
 
+    // ─── Shutter Mode ──────────────────────────────────────────
+
+    private val _shutterMode = MutableStateFlow("manual") // "manual", "timer-3", "timer-5", "timer-10", "ai"
+    val shutterMode: StateFlow<String> = _shutterMode.asStateFlow()
+
+    private val _timerCountdown = MutableStateFlow(0)
+    val timerCountdown: StateFlow<Int> = _timerCountdown.asStateFlow()
+
+    private var timerJob: Job? = null
+
+    // ─── Op Search (Photoshoot Mode) ────────────────────────────
+
+    private val _opSearchQuery = MutableStateFlow("")
+    val opSearchQuery: StateFlow<String> = _opSearchQuery.asStateFlow()
+
     // ─── Camera Source ──────────────────────────────────────────
 
     private val _cameraSource = MutableStateFlow("none") // "uvc", "builtin", "none"
@@ -215,6 +230,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     /**
      * Capture a photo from the current camera.
+     * Supports timer mode: starts countdown before capture.
      * The flow: camera captures → CameraCapture processes (crop, filter, frame) → ViewModel receives Bitmap → base64 encode → send
      */
     fun triggerCapture() {
@@ -222,6 +238,23 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         if (phase == CapturePhase.SENDING || _isSending.value) return
         if (phase != CapturePhase.READY_1 && phase != CapturePhase.READY_2) return
 
+        // If timer mode, start countdown instead of immediate capture
+        if (isTimerMode() && _timerCountdown.value <= 0) {
+            startTimer { doCapture() }
+            return
+        }
+
+        doCapture()
+    }
+
+    /**
+     * Cancel timer countdown and revert to ready state.
+     */
+    fun cancelTimerCapture() {
+        cancelTimer()
+    }
+
+    private fun doCapture() {
         builtInCameraManager.capturePhoto { bitmap ->
             if (bitmap == null) {
                 Log.e(TAG, "Capture returned null bitmap")
@@ -662,6 +695,59 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         return "data:image/jpeg;base64,$base64"
     }
 
+    // ─── Shutter Mode ──────────────────────────────────────────
+
+    fun setShutterMode(mode: String) {
+        _shutterMode.value = mode
+        cancelTimer()
+    }
+
+    fun setOpSearchQuery(query: String) {
+        _opSearchQuery.value = query
+    }
+
+    /**
+     * Manually set the current target (used in photoshoot mode when operator selects from search).
+     */
+    fun setOpCurrentTarget(student: Student) {
+        _currentTarget.value = student
+        _capturePhase.value = CapturePhase.READY_1
+        _capturedPhotos.value = emptyList()
+        socketManager.sendOpProgress("Target dipilih: ${student.nama}")
+    }
+
+    fun getTimerDuration(): Int = when (_shutterMode.value) {
+        "timer-3" -> 3
+        "timer-5" -> 5
+        "timer-10" -> 10
+        else -> 0
+    }
+
+    fun isTimerMode(): Boolean = _shutterMode.value.startsWith("timer-")
+
+    private fun startTimer(onComplete: () -> Unit) {
+        cancelTimer()
+        val duration = getTimerDuration()
+        if (duration <= 0) { onComplete(); return }
+
+        _timerCountdown.value = duration
+        timerJob = viewModelScope.launch {
+            while (_timerCountdown.value > 0) {
+                delay(1000)
+                _timerCountdown.value -= 1
+            }
+            if (_timerCountdown.value <= 0) {
+                onComplete()
+            }
+        }
+    }
+
+    fun cancelTimer() {
+        timerJob?.cancel()
+        timerJob = null
+        _timerCountdown.value = 0
+    }
+
     // ─── Gridline Settings ──────────────────────────────────────
 
     fun setGridlineEnabled(enabled: Boolean) {
@@ -733,6 +819,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     override fun onCleared() {
         super.onCleared()
         stopStateRequestLoop()
+        cancelTimer()
         // Cancel camera collectors
         cameraConnectedCollector?.cancel()
         cameraTypeCollector?.cancel()
