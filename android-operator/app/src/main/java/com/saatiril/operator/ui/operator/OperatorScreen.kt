@@ -45,7 +45,10 @@ fun OperatorScreen(
     viewModel: OperatorViewModel
 ) {
     val context = LocalContext.current
-    val lifecycleOwner = (context as ComponentActivity) as LifecycleOwner
+    val lifecycleOwner: LifecycleOwner = when (context) {
+        is LifecycleOwner -> context
+        else -> (context as ComponentActivity)
+    }
 
     val project by viewModel.project.collectAsState()
     val currentTarget by viewModel.currentTarget.collectAsState()

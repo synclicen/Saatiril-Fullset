@@ -1,16 +1,27 @@
 package com.saatiril.operator.data
 
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.google.gson.Gson
 import io.socket.client.IO
 import io.socket.client.Socket
 import org.json.JSONObject
 import java.security.MessageDigest
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Manages Socket.io connection to the Saatiril server.
  * Handles authentication, event relay, and reconnection.
- * 
+ *
+ * Thread safety:
+ * - All socket callbacks run on Socket.io's background IO thread
+ * - ViewModel listeners are notified via the main handler to ensure
+ *   Compose StateFlow updates happen on the main thread
+ * - connectionState is @Volatile for cross-thread visibility
+ * - eventQueue uses synchronized access
+ * - notifyListeners wraps each callback in try-catch to prevent crashes
+ *
  * Protocol compatibility: matches web client (socket.ts) and server (index.ts)
  * - path: "/" (must match server config)
  * - Events: identify, auth-requirement, auth-success, auth-failed, lan-message, saatiril-ping/pong
@@ -18,12 +29,12 @@ import java.security.MessageDigest
  * - Critical events queued when disconnected and replayed on reconnect
  */
 class SocketManager {
-    
+
     companion object {
         private const val TAG = "SocketManager"
         private const val IDENTIFY_TIMEOUT_MS = 30_000L
         private const val PING_INTERVAL_MS = 5_000L
-        
+
         // Critical events that must be queued when disconnected
         private val CRITICAL_EVENTS = setOf(
             SocketEvents.PHOTOS_SAVED,
@@ -41,27 +52,39 @@ class SocketManager {
             return hashBytes.joinToString("") { "%02x".format(it) }
         }
     }
-    
+
     private val gson = Gson()
     private var socket: Socket? = null
+
+    // @Volatile ensures cross-thread visibility for connectionState
+    @Volatile
     private var connectionState = ConnectionState.DISCONNECTED
+
+    @Volatile
     private var passwordHash: String? = null
+
+    @Volatile
     private var myChannel: Int = 1
+
     private var pingIntervalJob: java.util.Timer? = null
-    
-    // Event listeners — ConcurrentHashMap for thread safety
-    private val listeners = java.util.concurrent.ConcurrentHashMap<String, MutableList<(Any?) -> Unit>>()
-    
-    // Critical event queue — events emitted while disconnected are replayed on reconnect
+
+    // Main thread handler for posting listener notifications
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    // Event listeners — CopyOnWriteArrayList for thread-safe iteration
+    private val listeners = java.util.concurrent.ConcurrentHashMap<String, CopyOnWriteArrayList<(Any?) -> Unit>>()
+
+    // Critical event queue — synchronized access for thread safety
     private data class QueuedEvent(
         val event: String,
         val data: Any,
         var retries: Int = 0
     )
     private val eventQueue = mutableListOf<QueuedEvent>()
-    
+    private val eventQueueLock = Any()
+
     // ─── Connection ─────────────────────────────────────────────
-    
+
     fun connect(serverUrl: String, channel: Int, password: String? = null) {
         // Disconnect existing socket if any, but preserve ViewModel listeners
         if (socket != null) {
@@ -72,48 +95,51 @@ class SocketManager {
             socket = null
             // NOTE: Do NOT clear listeners here — ViewModel listeners must persist across reconnects
         }
-        
+
         myChannel = channel
         passwordHash = password?.let { sha256(it) }
         connectionState = ConnectionState.CONNECTING
-        notifyListeners("state_changed", connectionState)
-        
+        notifyListenersOnUiThread("state_changed", connectionState)
+
         try {
             val options = IO.Options().apply {
                 path = "/"  // MUST match server config (server uses path: '/')
                 transports = arrayOf("websocket", "polling")
                 reconnection = true
-                reconnectionAttempts = Int.MAX_VALUE
+                reconnectionAttempts = 20  // Reasonable limit instead of Int.MAX_VALUE
                 reconnectionDelay = 1000
                 reconnectionDelayMax = 10_000  // Match web client
                 timeout = 15_000                // Match web client
                 forceNew = true                 // Match web client — prevent stale socket reuse
             }
-            
+
             socket = IO.socket(serverUrl, options)
             setupSocketListeners()
             socket?.connect()
-            
+
             Log.i(TAG, "Connecting to $serverUrl as operator channel $channel")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to connect: ${e.message}")
+            Log.e(TAG, "Failed to create socket connection: ${e.message}", e)
             connectionState = ConnectionState.DISCONNECTED
-            notifyListeners("connection_error", e.message)
+            notifyListenersOnUiThread("state_changed", ConnectionState.DISCONNECTED)
+            notifyListenersOnUiThread("connection_error", e.message ?: "Connection failed")
         }
     }
-    
+
     fun disconnect() {
         stopPingInterval()
         socket?.disconnect()
         socket?.off()
         socket = null
         connectionState = ConnectionState.DISCONNECTED
-        notifyListeners("state_changed", connectionState)
+        notifyListenersOnUiThread("state_changed", connectionState)
         // NOTE: Do NOT clear listeners here — they should persist for reconnect
         // Use destroy() for full cleanup when ViewModel is being destroyed
-        eventQueue.clear()
+        synchronized(eventQueueLock) {
+            eventQueue.clear()
+        }
     }
-    
+
     /**
      * Full cleanup including listener removal.
      * Called only from ViewModel.onCleared() when the ViewModel is permanently destroyed.
@@ -121,248 +147,274 @@ class SocketManager {
     fun destroy() {
         disconnect()
         listeners.clear()
+        mainHandler.removeCallbacksAndMessages(null)
     }
-    
+
     fun isConnected(): Boolean = socket?.connected() == true
-    
+
     fun isAuthenticated(): Boolean = connectionState == ConnectionState.AUTHENTICATED
-    
+
     fun getState(): ConnectionState = connectionState
-    
+
     // ─── Socket Event Listeners ─────────────────────────────────
-    
+
     private fun setupSocketListeners() {
         val s = socket ?: return
-        
+
         s.on(Socket.EVENT_CONNECT) {
             Log.i(TAG, "Socket connected")
             connectionState = ConnectionState.CONNECTED
-            notifyListeners("state_changed", connectionState)
-            
+            notifyListenersOnUiThread("state_changed", connectionState)
+
             // Send identify immediately (with password hash if available)
             identify()
         }
-        
+
         s.on(Socket.EVENT_DISCONNECT) { args ->
             Log.w(TAG, "Socket disconnected: ${args.getOrElse(0) { "unknown" }}")
             connectionState = ConnectionState.DISCONNECTED
             stopPingInterval()
-            notifyListeners("state_changed", connectionState)
+            notifyListenersOnUiThread("state_changed", connectionState)
         }
-        
+
         s.on(Socket.EVENT_CONNECT_ERROR) { args ->
-            Log.e(TAG, "Connection error: ${args.getOrElse(0) { "unknown" }}")
+            val errorMsg = args.getOrElse(0) { "unknown" }
+            Log.e(TAG, "Connection error: $errorMsg")
             // Don't set DISCONNECTED here — Socket.io auto-reconnects
             // Keep state as CONNECTING so UI shows "Menghubungkan..." instead of "Terputus"
-            if (connectionState != ConnectionState.AUTHENTICATING && 
+            if (connectionState != ConnectionState.AUTHENTICATING &&
                 connectionState != ConnectionState.AUTH_FAILED) {
                 connectionState = ConnectionState.CONNECTING
             }
-            notifyListeners("connection_error", args.getOrElse(0) { "Connection failed" })
-            notifyListeners("state_changed", connectionState)
+            notifyListenersOnUiThread("connection_error", errorMsg?.toString() ?: "Connection failed")
+            notifyListenersOnUiThread("state_changed", connectionState)
         }
-        
+
         // ── Auth events ──────────────────────────────────────────────
-        
+
         s.on(SocketEvents.AUTH_REQUIREMENT) { args ->
-            val json = args.firstOrNull() as? JSONObject
-            val passwordRequired = json?.optBoolean("passwordRequired") ?: false
-            Log.i(TAG, "Auth requirement: passwordRequired=$passwordRequired")
-            
-            if (passwordRequired) {
-                // Always show password prompt when server requires it
-                // (even if we already submitted a wrong password)
-                connectionState = ConnectionState.AUTHENTICATING
-                notifyListeners("password_required", null)
-            } else {
-                // No password required — if we were in auth-failed state, re-identify
-                if (connectionState == ConnectionState.AUTH_FAILED || 
-                    connectionState == ConnectionState.AUTHENTICATING) {
-                    passwordHash = null
-                    identify()
+            try {
+                val json = args.firstOrNull() as? JSONObject
+                val passwordRequired = json?.optBoolean("passwordRequired") ?: false
+                Log.i(TAG, "Auth requirement: passwordRequired=$passwordRequired")
+
+                if (passwordRequired) {
+                    // Always show password prompt when server requires it
+                    // (even if we already submitted a wrong password)
+                    connectionState = ConnectionState.AUTHENTICATING
+                    notifyListenersOnUiThread("password_required", null)
+                } else {
+                    // No password required — if we were in auth-failed state, re-identify
+                    if (connectionState == ConnectionState.AUTH_FAILED ||
+                        connectionState == ConnectionState.AUTHENTICATING) {
+                        passwordHash = null
+                        identify()
+                    }
                 }
+
+                notifyListenersOnUiThread("state_changed", connectionState)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error handling auth-requirement: ${e.message}", e)
             }
-            
-            notifyListeners("state_changed", connectionState)
         }
-        
+
         s.on(SocketEvents.AUTH_SUCCESS) { args ->
-            val json = args.firstOrNull() as? JSONObject
-            Log.i(TAG, "Auth success: $json")
-            connectionState = ConnectionState.AUTHENTICATED
-            notifyListeners("auth_success", json?.toString())
-            notifyListeners("state_changed", connectionState)
-            
-            // Start ping interval for latency measurement
-            startPingInterval()
-            
-            // Flush any queued critical events that were waiting for auth
-            flushEventQueue()
-            
-            // Request project state from admin
-            requestState()
+            try {
+                val json = args.firstOrNull() as? JSONObject
+                Log.i(TAG, "Auth success: $json")
+                connectionState = ConnectionState.AUTHENTICATED
+                notifyListenersOnUiThread("auth_success", json?.toString())
+                notifyListenersOnUiThread("state_changed", connectionState)
+
+                // Start ping interval for latency measurement
+                startPingInterval()
+
+                // Flush any queued critical events that were waiting for auth
+                flushEventQueue()
+
+                // Request project state from admin
+                requestState()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error handling auth-success: ${e.message}", e)
+            }
         }
-        
+
         s.on(SocketEvents.AUTH_FAILED) { args ->
-            val json = args.firstOrNull() as? JSONObject
-            val reason = json?.optString("reason") ?: "unknown"
-            Log.w(TAG, "Auth failed: $reason")
-            connectionState = ConnectionState.AUTH_FAILED
-            notifyListeners("auth_failed", reason)
-            notifyListeners("state_changed", connectionState)
+            try {
+                val json = args.firstOrNull() as? JSONObject
+                val reason = json?.optString("reason") ?: "unknown"
+                Log.w(TAG, "Auth failed: $reason")
+                connectionState = ConnectionState.AUTH_FAILED
+                notifyListenersOnUiThread("auth_failed", reason)
+                notifyListenersOnUiThread("state_changed", connectionState)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error handling auth-failed: ${e.message}", e)
+            }
         }
-        
+
         // ── Session password lifecycle ───────────────────────────────
-        
+
         s.on(SocketEvents.SET_SESSION_PASSWORD) { args ->
             Log.i(TAG, "Session password set by admin — will need to re-authenticate")
             // The auth-requirement broadcast from the server handles the flow
         }
-        
+
         s.on(SocketEvents.CLEAR_SESSION_PASSWORD) {
             Log.i(TAG, "Session password cleared by admin")
             // If we were stuck in auth-failed, re-identify without password
-            if (connectionState == ConnectionState.AUTH_FAILED || 
+            if (connectionState == ConnectionState.AUTH_FAILED ||
                 connectionState == ConnectionState.AUTHENTICATING) {
                 passwordHash = null
                 identify()
             }
         }
-        
+
         // ── Latency measurement ──────────────────────────────────────
-        
+
         s.on(SocketEvents.SAATIRIL_PONG) { args ->
-            // Defensive number parsing — Java socket.io may return Long, Int, or Double
-            val timestamp = when (val arg = args.firstOrNull()) {
-                is Long -> arg
-                is Int -> arg.toLong()
-                is Double -> arg.toLong()
-                is Number -> arg.toLong()
-                else -> return@on
+            try {
+                // Defensive number parsing — Java socket.io may return Long, Int, or Double
+                val timestamp = when (val arg = args.firstOrNull()) {
+                    is Long -> arg
+                    is Int -> arg.toLong()
+                    is Double -> arg.toLong()
+                    is Number -> arg.toLong()
+                    else -> return@on
+                }
+                val latency = System.currentTimeMillis() - timestamp
+                notifyListenersOnUiThread("latency", latency)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error handling saatiril-pong: ${e.message}", e)
             }
-            val latency = System.currentTimeMillis() - timestamp
-            notifyListeners("latency", latency)
         }
-        
+
         // ── LAN messages (main communication channel) ────────────────
-        
+
         s.on(SocketEvents.LAN_MESSAGE) { args ->
-            val json = args.firstOrNull() as? JSONObject ?: return@on
-            handleLanMessage(json)
+            try {
+                val json = args.firstOrNull() as? JSONObject ?: return@on
+                handleLanMessage(json)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error handling lan-message: ${e.message}", e)
+            }
         }
     }
-    
+
     // ─── LAN Message Handler ─────────────────────────────────────
-    
+
     private fun handleLanMessage(json: JSONObject) {
         val event = json.optString("event")
         val data = json.opt("data")
-        
+
         Log.d(TAG, "LAN message: $event")
-        
+
         when (event) {
             SocketEvents.MC_CALL -> {
                 val mcCallData = parseData<McCallData>(data)
                 if (mcCallData != null) {
-                    notifyListeners(SocketEvents.MC_CALL, mcCallData)
+                    notifyListenersOnUiThread(SocketEvents.MC_CALL, mcCallData)
                 }
             }
-            
+
             SocketEvents.SYNC_DB -> {
                 val syncData = parseData<SyncDbData>(data)
                 if (syncData != null) {
-                    notifyListeners(SocketEvents.SYNC_DB, syncData)
+                    notifyListenersOnUiThread(SocketEvents.SYNC_DB, syncData)
                 }
             }
-            
+
             SocketEvents.STUDENT_RESET -> {
                 val resetData = parseData<StudentResetData>(data)
                 if (resetData != null) {
-                    notifyListeners(SocketEvents.STUDENT_RESET, resetData)
+                    notifyListenersOnUiThread(SocketEvents.STUDENT_RESET, resetData)
                 }
             }
-            
+
             SocketEvents.FRAME_DATA -> {
                 val frameData = parseData<FrameDataPayload>(data)
                 if (frameData != null) {
-                    notifyListeners(SocketEvents.FRAME_DATA, frameData)
+                    notifyListenersOnUiThread(SocketEvents.FRAME_DATA, frameData)
                 }
             }
-            
+
             SocketEvents.PHOTOS_SAVED -> {
                 // Critical for dual-photoshoot mode: know when other operator finishes
                 val photosData = parseData<PhotosSavedData>(data)
                 if (photosData != null) {
-                    notifyListeners(SocketEvents.PHOTOS_SAVED, photosData)
+                    notifyListenersOnUiThread(SocketEvents.PHOTOS_SAVED, photosData)
                 }
             }
-            
+
             SocketEvents.STUDENT_DONE -> {
                 // In dual mode: know when other operator marks student as done
                 val doneData = parseData<StudentDoneData>(data)
                 if (doneData != null) {
-                    notifyListeners(SocketEvents.STUDENT_DONE, doneData)
+                    notifyListenersOnUiThread(SocketEvents.STUDENT_DONE, doneData)
                 }
             }
-            
+
             SocketEvents.OP_PROGRESS -> {
                 // Other operator's progress — informational only
             }
-            
+
             SocketEvents.SERVER_SHUTDOWN -> {
                 // Server sends shutdown via lan-message, not as direct event
                 Log.w(TAG, "Server shutdown via LAN message: $data")
-                notifyListeners("server_shutdown", data)
+                notifyListenersOnUiThread("server_shutdown", data)
             }
-            
+
             else -> {
                 Log.d(TAG, "Unhandled LAN event: $event")
             }
         }
     }
-    
+
     // ─── Outgoing Events ────────────────────────────────────────
-    
+
     private fun identify() {
-        val payload = IdentifyPayload(
-            role = Roles.OPERATOR,
-            channel = myChannel,
-            sessionPasswordHash = passwordHash
-        )
-        val json = gson.toJson(payload)
-        socket?.emit(SocketEvents.IDENTIFY, JSONObject(json))
-        Log.i(TAG, "Identifying as operator channel $myChannel, hasPassword=${passwordHash != null}")
+        try {
+            val payload = IdentifyPayload(
+                role = Roles.OPERATOR,
+                channel = myChannel,
+                sessionPasswordHash = passwordHash
+            )
+            val json = gson.toJson(payload)
+            socket?.emit(SocketEvents.IDENTIFY, JSONObject(json))
+            Log.i(TAG, "Identifying as operator channel $myChannel, hasPassword=${passwordHash != null}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending identify: ${e.message}", e)
+        }
     }
-    
+
     fun resendWithPassword(password: String) {
         passwordHash = sha256(password)
         identify()
     }
-    
+
     fun requestState() {
         connectionState = ConnectionState.WAITING_FOR_DATA
-        notifyListeners("state_changed", connectionState)
-        
+        notifyListenersOnUiThread("state_changed", connectionState)
+
         emitLanMessage(SocketEvents.REQUEST_STATE, RequestStateData(
             role = Roles.OPERATOR,
             channel = myChannel
         ))
     }
-    
+
     fun requestFrame(projectId: String) {
         emitLanMessage(SocketEvents.REQUEST_FRAME, RequestFrameData(
             projectId = projectId,
             requesterRole = Roles.OPERATOR
         ))
     }
-    
+
     fun sendStudentDone(studentId: String) {
         emitLanMessage(SocketEvents.STUDENT_DONE, StudentDoneData(
             studentId = studentId,
             channel = myChannel
         ))
     }
-    
+
     fun sendPhotosSaved(student: Student, photos: List<String>, version: Int, filename: String) {
         // IMPORTANT: Set student status to "done" before sending (matches web client behavior)
         emitLanMessage(SocketEvents.PHOTOS_SAVED, PhotosSavedData(
@@ -373,14 +425,14 @@ class SocketManager {
             filename = filename
         ))
     }
-    
+
     fun sendOpProgress(status: String) {
         emitLanMessage(SocketEvents.OP_PROGRESS, OpProgressData(
             channel = myChannel,
             status = status
         ))
     }
-    
+
     fun sendSyncDb(project: Project) {
         // Strip frame and photos before sending (like web app does)
         val strippedProject = project.copy(
@@ -392,100 +444,143 @@ class SocketManager {
         )
         emitLanMessage(SocketEvents.SYNC_DB, SyncDbData(project = strippedProject))
     }
-    
+
     // ─── Critical Event Queue ────────────────────────────────────
-    
+
     private fun emitLanMessage(event: String, data: Any) {
-        val dataJsonStr = gson.toJson(data)
-        val payload = JSONObject().apply {
-            put("event", event)
-            // Use putWithJsonAutoDetect to handle both JSONObject and JSONArray data
-            // gson.toJson() may produce {...} or [...] — we need to wrap correctly
-            put("data", if (dataJsonStr.trimStart().startsWith("[")) {
-                org.json.JSONArray(dataJsonStr)
-            } else {
-                JSONObject(dataJsonStr)
-            })
-        }
-        
-        if (socket?.connected() == true && isAuthenticated()) {
-            socket?.emit(SocketEvents.LAN_MESSAGE, payload)
-            Log.d(TAG, "Emitted LAN message: $event")
-        } else if (event in CRITICAL_EVENTS) {
-            // Queue critical events for later delivery
-            if (eventQueue.size >= MAX_QUEUE_SIZE) {
-                eventQueue.removeAt(0)
-            }
-            eventQueue.add(QueuedEvent(event, data))
-            Log.w(TAG, "Queued critical event: $event (disconnected, queue: ${eventQueue.size})")
-        } else {
-            Log.w(TAG, "Dropped non-critical event while disconnected: $event")
-        }
-    }
-    
-    private fun flushEventQueue() {
-        if (eventQueue.isEmpty()) return
-        
-        val toSend = eventQueue.toList()
-        eventQueue.clear()
-        
-        for (item in toSend) {
-            if (item.retries >= MAX_RETRIES) {
-                Log.w(TAG, "Dropping event after ${MAX_RETRIES} retries: ${item.event}")
-                continue
-            }
-            item.retries++
-            
-            val dataJsonStr = gson.toJson(item.data)
+        try {
+            val dataJsonStr = gson.toJson(data)
             val payload = JSONObject().apply {
-                put("event", item.event)
+                put("event", event)
                 put("data", if (dataJsonStr.trimStart().startsWith("[")) {
                     org.json.JSONArray(dataJsonStr)
                 } else {
                     JSONObject(dataJsonStr)
                 })
             }
-            socket?.emit(SocketEvents.LAN_MESSAGE, payload)
-            Log.i(TAG, "Flushed queued event: ${item.event} (attempt ${item.retries})")
+
+            if (socket?.connected() == true && isAuthenticated()) {
+                socket?.emit(SocketEvents.LAN_MESSAGE, payload)
+                Log.d(TAG, "Emitted LAN message: $event")
+            } else if (event in CRITICAL_EVENTS) {
+                // Queue critical events for later delivery
+                synchronized(eventQueueLock) {
+                    if (eventQueue.size >= MAX_QUEUE_SIZE) {
+                        eventQueue.removeAt(0)
+                    }
+                    eventQueue.add(QueuedEvent(event, data))
+                    Log.w(TAG, "Queued critical event: $event (disconnected, queue: ${eventQueue.size})")
+                }
+            } else {
+                Log.w(TAG, "Dropped non-critical event while disconnected: $event")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error emitting LAN message $event: ${e.message}", e)
         }
     }
-    
+
+    private fun flushEventQueue() {
+        val toSend: List<QueuedEvent>
+        synchronized(eventQueueLock) {
+            if (eventQueue.isEmpty()) return
+            toSend = eventQueue.toList()
+            eventQueue.clear()
+        }
+
+        for (item in toSend) {
+            if (item.retries >= MAX_RETRIES) {
+                Log.w(TAG, "Dropping event after $MAX_RETRIES retries: ${item.event}")
+                continue
+            }
+            item.retries++
+
+            try {
+                val dataJsonStr = gson.toJson(item.data)
+                val payload = JSONObject().apply {
+                    put("event", item.event)
+                    put("data", if (dataJsonStr.trimStart().startsWith("[")) {
+                        org.json.JSONArray(dataJsonStr)
+                    } else {
+                        JSONObject(dataJsonStr)
+                    })
+                }
+                socket?.emit(SocketEvents.LAN_MESSAGE, payload)
+                Log.i(TAG, "Flushed queued event: ${item.event} (attempt ${item.retries})")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error flushing queued event ${item.event}: ${e.message}", e)
+            }
+        }
+    }
+
     // ─── Ping / Latency ────────────────────────────────────────
-    
+
     private fun startPingInterval() {
         stopPingInterval()
-        pingIntervalJob = java.util.Timer().apply {
+        pingIntervalJob = java.util.Timer("SaatirilPing", true).apply {
             scheduleAtFixedRate(object : java.util.TimerTask() {
                 override fun run() {
-                    if (socket?.connected() == true) {
-                        socket?.emit(SocketEvents.SAATIRIL_PING, System.currentTimeMillis())
+                    try {
+                        if (socket?.connected() == true) {
+                            socket?.emit(SocketEvents.SAATIRIL_PING, System.currentTimeMillis())
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error sending ping: ${e.message}", e)
                     }
                 }
             }, PING_INTERVAL_MS, PING_INTERVAL_MS)
         }
     }
-    
+
     private fun stopPingInterval() {
         pingIntervalJob?.cancel()
         pingIntervalJob = null
     }
-    
+
     // ─── Event System ──────────────────────────────────────────
-    
+
     fun on(event: String, listener: (Any?) -> Unit) {
-        listeners.getOrPut(event) { mutableListOf() }.add(listener)
+        listeners.getOrPut(event) { CopyOnWriteArrayList() }.add(listener)
     }
-    
+
     fun off(event: String, listener: (Any?) -> Unit) {
         listeners[event]?.remove(listener)
     }
-    
+
+    /**
+     * Notify listeners directly (for calls from the main thread).
+     * Each callback is wrapped in try-catch to prevent one failing
+     * listener from crashing the entire app.
+     */
     private fun notifyListeners(event: String, data: Any?) {
-        listeners[event]?.toList()?.forEach { it(data) }
+        listeners[event]?.forEach { listener ->
+            try {
+                listener(data)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in listener for event '$event': ${e.message}", e)
+            }
+        }
     }
-    
+
+    /**
+     * Notify listeners on the UI thread.
+     * Socket.io callbacks run on background IO threads, but Compose
+     * StateFlow collection and UI updates should happen on the main thread.
+     * This ensures all ViewModel state changes are thread-safe.
+     */
+    private fun notifyListenersOnUiThread(event: String, data: Any?) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            // Already on main thread — notify directly
+            notifyListeners(event, data)
+        } else {
+            // Post to main thread
+            mainHandler.post {
+                notifyListeners(event, data)
+            }
+        }
+    }
+
     // ─── Utility ───────────────────────────────────────────────
-    
+
     private inline fun <reified T> parseData(data: Any?): T? {
         return try {
             val jsonString = when (data) {
@@ -499,5 +594,5 @@ class SocketManager {
             null
         }
     }
-    
+
 }
