@@ -515,13 +515,16 @@ class SocketManager {
     private fun parseProjectFromJson(obj: JSONObject): Project {
         val configObj = obj.optJSONObject("config")
         val config = if (configObj != null) {
+            // Handle nullable fields carefully: optString doesn't accept null fallback
+            val frameValue = configObj.optString("frame", "")
+            val sessionPasswordValue = configObj.optString("sessionPassword", configObj.optString("session_password", ""))
             ProjectConfig(
                 mode = configObj.optString("mode", "single"),
                 ratio = configObj.optString("ratio", "4:3"),
                 preset = configObj.optString("preset", "original"),
                 targetFolder = configObj.optString("targetFolder", configObj.optString("target_folder", "")),
-                frame = configObj.optString("frame", null),
-                sessionPassword = configObj.optString("sessionPassword", configObj.optString("session_password", null))
+                frame = frameValue.ifBlank { null },
+                sessionPassword = sessionPasswordValue.ifBlank { null }
             )
         } else {
             ProjectConfig()
@@ -565,10 +568,11 @@ class SocketManager {
         val versionsObj = obj.optJSONObject("captureVersions")
         val captureVersions = mutableMapOf<String, Int>()
         if (versionsObj != null) {
-            val keys = versionsObj.keys()
-            while (keys.hasNext()) {
-                val key = keys.next()
-                captureVersions[key] = versionsObj.getInt(key)
+            val keysIterator = versionsObj.keys()
+            while (keysIterator.hasNext()) {
+                val rawKey = keysIterator.next()
+                val key = rawKey?.toString() ?: continue
+                captureVersions[key] = versionsObj.optInt(key, 0)
             }
         }
 
