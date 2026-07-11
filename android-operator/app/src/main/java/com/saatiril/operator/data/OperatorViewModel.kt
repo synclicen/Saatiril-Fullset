@@ -619,19 +619,21 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             val currentVersion = proj.captureVersions[versionKey] ?: 0
             val newVersion = currentVersion + 1
 
-            // Build filename
-            val filename = if (CameraModes.isPhotoshootMode(mode)) {
-                FilenameUtils.buildPhotoshootFilename(
-                    student.nim, student.nama, _myChannel.value, newVersion
-                )
+            // Build filenames — one per photo, matching Windows version naming convention
+            // Standard mode: Photo 1 = Toga (suffix 1), Photo 2 = Ijazah (suffix 2)
+            // Photoshoot mode: Single photo, channel suffix only if > 1
+            val filenames: List<String> = if (CameraModes.isPhotoshootMode(mode)) {
+                listOf(FilenameUtils.buildPhotoshootFilename(student.nim, student.nama, _myChannel.value, newVersion))
             } else {
-                // Standard mode: first file uses suffix 1 (Toga), second uses suffix 2 (Ijazah)
-                // But we send all photos in one event, so use channel as suffix
-                val suffix = _myChannel.value
-                FilenameUtils.buildStandardFilename(
-                    student.nim, student.nama, suffix, "Toga", newVersion
-                )
+                photos.mapIndexed { idx, _ ->
+                    val suffix = idx + 1  // 1 = Toga, 2 = Ijazah
+                    val type = if (suffix == 1) "Toga" else "Ijazah"
+                    FilenameUtils.buildStandardFilename(student.nim, student.nama, suffix, type, newVersion)
+                }
             }
+
+            // Primary filename for the PHOTOS_SAVED event (backward compatibility)
+            val primaryFilename = filenames.firstOrNull() ?: ""
 
             // 1. Send STUDENT_DONE first (lightweight, lets MC call next student immediately)
             if (!CameraModes.isPhotoshootMode(mode)) {
@@ -639,18 +641,36 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             }
 
             // 2. Send PHOTOS_SAVED with all photo data
-            // Student status is set to "done" inside sendPhotosSaved (matches web client)
             socketManager.sendPhotosSaved(
                 student = student,
                 photos = photos,
                 version = newVersion,
-                filename = filename
+                filename = primaryFilename
             )
 
             // 3. Send OP_PROGRESS
             socketManager.sendOpProgress("Selesai — Menunggu target...")
 
-            // 4. Update local project state
+            // 4. Save photos to local Android storage (matches Windows Electron savePhoto behavior)
+            //    Each photo gets its own filename. targetFolder from project config.
+            val targetFolder = proj.config.targetFolder
+            viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                photos.forEachIndexed { idx, photoBase64 ->
+                    val filename = filenames.getOrElse(idx) { "photo_${idx + 1}.jpg" }
+                    val savedPath = com.saatiril.operator.ui.operator.PhotoFileSaver.savePhoto(
+                        base64Data = photoBase64,
+                        filename = filename,
+                        targetFolder = targetFolder
+                    )
+                    if (savedPath != null) {
+                        Log.i(TAG, "Photo saved locally: $savedPath")
+                    } else {
+                        Log.w(TAG, "Failed to save photo locally: $filename")
+                    }
+                }
+            }
+
+            // 5. Update local project state
             val updatedDb = proj.database.map { s ->
                 if (s.id == student.id) s.copy(status = "done") else s
             }
@@ -658,7 +678,6 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
                 this[versionKey] = newVersion
             }
             val updatedHistory = proj.photoHistory.toMutableList().apply {
-                // Remove existing entry for this student+channel if any
                 removeAll { it.student.id == student.id && it.channel == _myChannel.value }
                 add(PhotoHistoryItem(student = student, photos = photos, channel = _myChannel.value))
             }
@@ -670,15 +689,15 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             )
             _project.value = updatedProject
 
-            // 5. Send SYNC_DB to sync with other clients
+            // 6. Send SYNC_DB to sync with other clients
             socketManager.sendSyncDb(updatedProject)
 
-            // 6. Reset capture state
+            // 7. Reset capture state
             _currentTarget.value = null
             _capturedPhotos.value = emptyList()
             _capturePhase.value = CapturePhase.STANDBY
 
-            Log.i(TAG, "Capture finalized for ${student.nama}")
+            Log.i(TAG, "Capture finalized for ${student.nama} — ${photos.size} photo(s) saved")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to finalize capture: ${e.message}")
             _capturePhase.value = CapturePhase.READY_1 // Revert on error

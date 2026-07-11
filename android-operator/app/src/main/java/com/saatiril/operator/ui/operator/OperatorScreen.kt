@@ -1,13 +1,16 @@
 package com.saatiril.operator.ui.operator
 
-import androidx.compose.animation.*
 import android.Manifest
+import android.os.Environment
 import android.util.Log
+import android.widget.ImageView
+import androidx.activity.ComponentActivity
+import androidx.camera.view.PreviewView
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -23,21 +26,23 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.camera.view.PreviewView
-import androidx.activity.ComponentActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.PermissionChecker
 import androidx.lifecycle.LifecycleOwner
 import com.saatiril.operator.data.*
 import com.saatiril.operator.ui.gridline.GridlineOverlay
+import java.io.File
+import java.io.FileOutputStream
 
 // ─── Theme Colors ──────────────────────────────────────────
 private val BG = Color(0xFF1a0b2e)
@@ -60,13 +65,35 @@ private val SHUTTER_MODES = listOf(
     "ai" to "AI"
 )
 
-// ─── Draggable Panel State ─────────────────────────────────
-data class PanelOffset(val x: Float, val y: Float)
+// ─── Panel IDs ─────────────────────────────────────────────
+object Panels {
+    const val TARGET_INFO = "target_info"
+    const val SHUTTER_MODE = "shutter_mode"
+    const val GRIDLINE = "gridline"
+    const val OP_SEARCH = "op_search"
+    const val QUEUE_LIST = "queue_list"
+
+    val ALL = listOf(TARGET_INFO, SHUTTER_MODE, GRIDLINE, OP_SEARCH, QUEUE_LIST)
+    val LABELS = mapOf(
+        TARGET_INFO to "Info Target",
+        SHUTTER_MODE to "Mode Shutter",
+        GRIDLINE to "Gridline",
+        OP_SEARCH to "Antrean MC",
+        QUEUE_LIST to "Daftar Antrean"
+    )
+}
 
 /**
- * Main Operator Screen — matches the Windows/web operator panel layout.
- * Features draggable/resizable floating panels so the operator can freely
- * arrange the UI without blocking the camera preview.
+ * Main Operator Screen — matches Windows/web operator panel layout.
+ *
+ * Layout: Full screen split into:
+ *   - Camera preview (respects admin's aspect ratio, NEVER covered by panels)
+ *   - Bottom panel area (collapsible, scrollable, resizable via drag divider)
+ *   - Panels are stacked vertically, each can be closed individually
+ *   - Panel selector checklist to choose which panels to display
+ *
+ * Photos are saved to the targetFolder on the Android device
+ * (matching the Windows/Electron file save behavior).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -91,7 +118,6 @@ fun OperatorScreen(
     val connectionState by viewModel.connectionState.collectAsState()
     val myChannel by viewModel.myChannel.collectAsState()
     val cameraConnected by viewModel.cameraConnected.collectAsState()
-    val uvcDeviceAttached by viewModel.uvcDeviceAttached.collectAsState()
     val cameraSource by viewModel.cameraSource.collectAsState()
     val shutterMode by viewModel.shutterMode.collectAsState()
     val timerCountdown by viewModel.timerCountdown.collectAsState()
@@ -103,18 +129,19 @@ fun OperatorScreen(
     val photosPerSession = CameraModes.photosPerSession(mode)
     val isPhotoshoot = CameraModes.isPhotoshootMode(mode)
 
-    // ─── Panel visibility state ─────────────────────────────
-    var showGridlineSettings by remember { mutableStateOf(false) }
-    var showQueueList by remember { mutableStateOf(true) }
-    var showShutterMode by remember { mutableStateOf(true) }
-    var showTargetInfo by remember { mutableStateOf(true) }
+    // ─── Panel visibility state (persisted via remember) ────
+    var visiblePanels by remember {
+        mutableStateOf(setOf(Panels.TARGET_INFO, Panels.SHUTTER_MODE, Panels.QUEUE_LIST))
+    }
+    var showPanelSelector by remember { mutableStateOf(false) }
 
-    // ─── Draggable panel offsets ────────────────────────────
-    var targetInfoOffset by remember { mutableStateOf(PanelOffset(0f, 0f)) }
-    var shutterModeOffset by remember { mutableStateOf(PanelOffset(0f, 0f)) }
-    var gridlineSettingsOffset by remember { mutableStateOf(PanelOffset(0f, 0f)) }
-    var queueListOffset by remember { mutableStateOf(PanelOffset(0f, 0f)) }
-    var opSearchOffset by remember { mutableStateOf(PanelOffset(0f, 0f)) }
+    // ─── Bottom panel height (resizable via drag) ───────────
+    // Default: 40% of screen for panels, 60% for camera
+    val screenHeight = LocalContext.current.resources.displayMetrics.heightPixels
+    val defaultPanelHeight = (screenHeight * 0.40f)
+    var panelAreaHeight by remember { mutableStateOf(defaultPanelHeight) }
+    val minPanelHeight = (screenHeight * 0.15f)
+    val maxPanelHeight = (screenHeight * 0.65f)
 
     // ─── Camera permission + initialization ─────────────────
     var localPermissionState by remember {
@@ -138,21 +165,17 @@ fun OperatorScreen(
     LaunchedEffect(effectivePermission, previewViewRef) {
         val pv = previewViewRef
         if (effectivePermission && pv != null) {
-            try {
-                viewModel.initCamera(lifecycleOwner, pv)
-            } catch (e: SecurityException) {
-                localPermissionState = false
-            } catch (_: Exception) {}
+            try { viewModel.initCamera(lifecycleOwner, pv) }
+            catch (e: SecurityException) { localPermissionState = false }
+            catch (_: Exception) {}
         }
     }
 
     // ─── Derived data ───────────────────────────────────────
     val channelStudents = remember(project, myChannel, isPhotoshoot) {
         val db = project?.database ?: emptyList()
-        if (isPhotoshoot) db
-        else db.filter { it.assignedChannel == myChannel }
+        if (isPhotoshoot) db else db.filter { it.assignedChannel == myChannel }
     }
-
     val remainingCount = channelStudents.count { it.status == "pending" }
 
     val opQueue = remember(project, myChannel, isPhotoshoot) {
@@ -161,11 +184,9 @@ fun OperatorScreen(
             val alreadyPhotographed = project!!.photoHistory
                 .filter { it.channel == myChannel }
                 .map { it.student.id }.toSet()
-            val doneIds = project!!.database.filter { it.status == "done" }.map { it.id }.toSet()
             project!!.database.filter { it.status == "sent" && !alreadyPhotographed.contains(it.id) }
         }
     }
-
     val opSearchResults = remember(opQueue, opSearchQuery) {
         if (opSearchQuery.isBlank()) opQueue
         else {
@@ -173,25 +194,47 @@ fun OperatorScreen(
             opQueue.filter { it.nim.lowercase().contains(q) || it.nama.lowercase().contains(q) }
         }
     }
-
     val hasActiveTarget = currentTarget != null
+    val aspectRatio = config?.parseAspectRatio() ?: (4f / 3f)
 
-    // Progress text for capture button
-    val progressText = when (capturePhase) {
-        CapturePhase.STANDBY -> "Standby"
-        CapturePhase.READY_1 -> if (isPhotoshoot) "Siap Foto" else "Pose 1 — Toga"
-        CapturePhase.READY_2 -> "Pose 2 — Ijazah"
-        CapturePhase.SENDING -> "Mengirim..."
-    }
-
-    // ─── ROOT LAYOUT ────────────────────────────────────────
-    Box(
+    // ═══════════════════════════════════════════════════════
+    // ROOT LAYOUT: Column with Camera on top, Panels at bottom
+    // Camera preview NEVER gets covered — panels sit below a
+    // draggable divider
+    // ═══════════════════════════════════════════════════════
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .background(BG)
     ) {
-        // ─── CAMERA PREVIEW (full screen) ───────────────────
-        Box(modifier = Modifier.fillMaxSize()) {
+        // ─── TOP BAR ────────────────────────────────────────
+        TopBar(
+            projectName = project?.name,
+            connectionState = connectionState,
+            latencyMs = latencyMs,
+            cameraSource = cameraSource,
+            myChannel = myChannel,
+            config = config,
+            gridlineEnabled = gridlineSettings.enabled,
+            hasActiveTarget = hasActiveTarget,
+            currentTarget = currentTarget,
+            capturePhase = capturePhase,
+            isPhotoshoot = isPhotoshoot,
+            onSwitchCamera = { viewModel.switchCamera() },
+            onTogglePanelSelector = { showPanelSelector = !showPanelSelector }
+        )
+
+        // ─── CAMERA PREVIEW AREA ────────────────────────────
+        // Fills remaining space above the panel divider.
+        // Camera is centered at the correct aspect ratio.
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .background(Color.Black),
+            contentAlignment = Alignment.Center
+        ) {
+            // Camera PreviewView
             AndroidView(
                 factory = { ctx ->
                     PreviewView(ctx).apply {
@@ -210,9 +253,7 @@ fun OperatorScreen(
             if (gridlineSettings.enabled) {
                 AndroidView(
                     factory = { ctx ->
-                        GridlineOverlay(ctx).apply {
-                            updateSettings(gridlineSettings)
-                        }
+                        GridlineOverlay(ctx).apply { updateSettings(gridlineSettings) }
                     },
                     modifier = Modifier.fillMaxSize(),
                     update = { view -> view.updateSettings(gridlineSettings) }
@@ -223,8 +264,8 @@ fun OperatorScreen(
             frameBitmap?.let { frame ->
                 AndroidView(
                     factory = { ctx ->
-                        android.widget.ImageView(ctx).apply {
-                            scaleType = android.widget.ImageView.ScaleType.FIT_XY
+                        ImageView(ctx).apply {
+                            scaleType = ImageView.ScaleType.FIT_XY
                             layoutParams = android.widget.FrameLayout.LayoutParams(
                                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
                                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT
@@ -246,19 +287,15 @@ fun OperatorScreen(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(120.dp)
+                            .size(100.dp)
                             .clip(CircleShape)
-                            .background(BG.copy(alpha = 0.8f))
-                            .border(4.dp, GOLD, CircleShape),
+                            .background(BG.copy(alpha = 0.85f))
+                            .border(3.dp, GOLD, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             "$timerCountdown",
-                            style = TextStyle(
-                                color = GOLD,
-                                fontSize = 56.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            style = TextStyle(color = GOLD, fontSize = 48.sp, fontWeight = FontWeight.Bold)
                         )
                     }
                 }
@@ -276,308 +313,297 @@ fun OperatorScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(
-                            Icons.Default.VideocamOff,
-                            contentDescription = null,
-                            tint = MUTED,
-                            modifier = Modifier.size(48.dp)
-                        )
+                        Icon(Icons.Default.VideocamOff, contentDescription = null, tint = MUTED, modifier = Modifier.size(40.dp))
                         Text(
                             if (!effectivePermission) "Izin kamera diperlukan"
                             else if (cameraSource == "none") "Kamera tidak terdeteksi"
                             else "Menghubungkan kamera...",
-                            style = TextStyle(color = MUTED, fontSize = 16.sp)
+                            style = TextStyle(color = MUTED, fontSize = 14.sp)
                         )
                         if (!effectivePermission) {
                             Button(
                                 onClick = {
-                                    val activity = context as? ComponentActivity
-                                    activity?.let {
+                                    (context as? ComponentActivity)?.let { act ->
                                         try {
                                             val intent = android.content.Intent(
                                                 android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                                android.net.Uri.fromParts("package", it.packageName, null)
+                                                android.net.Uri.fromParts("package", act.packageName, null)
                                             )
-                                            it.startActivity(intent)
+                                            act.startActivity(intent)
                                         } catch (_: Exception) {}
                                     }
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = GOLD),
                                 shape = RoundedCornerShape(8.dp)
                             ) {
-                                Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(14.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Buka Pengaturan", color = BG, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text("Buka Pengaturan", color = BG, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
-                            Text(
-                                "Buka Settings > Izin > Kamera > Izinkan",
-                                style = TextStyle(color = MUTED.copy(alpha = 0.6f), fontSize = 11.sp)
-                            )
                         } else if (cameraSource != "none") {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                color = GOLD,
-                                strokeWidth = 2.dp
-                            )
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = GOLD, strokeWidth = 2.dp)
+                        }
+                    }
+                }
+            }
+
+            // Standby message (no target)
+            if (currentTarget == null && connectionState == ConnectionState.AUTHENTICATED && cameraConnected) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = PANEL.copy(alpha = 0.85f)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(Icons.Default.PersonSearch, contentDescription = null, tint = MUTED, modifier = Modifier.size(32.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("Menunggu target dari MC...", style = TextStyle(color = MUTED, fontSize = 12.sp))
                         }
                     }
                 }
             }
         }
 
-        // ─── TOP BAR ────────────────────────────────────────
-        Row(
+        // ─── DRAGGABLE DIVIDER ──────────────────────────────
+        // Drag up/down to resize camera vs panel area
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(BG.copy(alpha = 0.85f))
-                .padding(horizontal = 12.dp, vertical = 6.dp)
-                .align(Alignment.TopStart),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .height(20.dp)
+                .background(PANEL)
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures { _, dragAmount ->
+                        // dragAmount is in pixels; panelAreaHeight is also in pixels
+                        val newHeight = panelAreaHeight - dragAmount
+                        panelAreaHeight = newHeight.coerceIn(minPanelHeight, maxPanelHeight)
+                    }
+                },
+            contentAlignment = Alignment.Center
         ) {
-            // Left: Connection status
+            // Drag handle indicator
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    Icons.Default.Wifi,
-                    contentDescription = null,
-                    tint = if (connectionState == ConnectionState.AUTHENTICATED) GREEN else RED,
-                    modifier = Modifier.size(14.dp)
+                    Icons.Default.MoreVert,
+                    contentDescription = "Resize",
+                    tint = MUTED.copy(alpha = 0.5f),
+                    modifier = Modifier.size(16.dp)
                 )
-                Text(
-                    if (connectionState == ConnectionState.AUTHENTICATED) "Terhubung" else "Terputus",
-                    style = TextStyle(color = Color.White, fontSize = 11.sp)
-                )
-                if (latencyMs >= 0) {
-                    Text(
-                        "${latencyMs}ms",
-                        style = TextStyle(
-                            color = when {
-                                latencyMs < 5 -> GREEN
-                                latencyMs < 15 -> Color.Yellow
-                                latencyMs < 30 -> Color(0xFFfb923c)
-                                else -> RED
-                            },
-                            fontSize = 10.sp
-                        )
-                    )
-                }
-            }
-
-            // Center: Project info
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    project?.name ?: "Saatiril",
-                    style = TextStyle(color = GOLD, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                )
-                val cameraLabel = when (cameraSource) {
-                    "uvc" -> "USB Capture"
-                    "builtin" -> "Kamera HP"
-                    else -> "Kamera"
-                }
-                Text(
-                    "Kamera $myChannel • $cameraLabel • ${config?.ratio ?: "4:3"} • ${config?.preset ?: "original"}",
-                    style = TextStyle(color = MUTED, fontSize = 10.sp)
-                )
-            }
-
-            // Right: Quick action buttons
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                IconButton(
-                    onClick = { viewModel.switchCamera() },
-                    modifier = Modifier.size(28.dp)
-                ) {
-                    Icon(Icons.Default.Cameraswitch, contentDescription = "Switch Camera", tint = MUTED, modifier = Modifier.size(16.dp))
-                }
-                IconButton(
-                    onClick = { showShutterMode = !showShutterMode },
-                    modifier = Modifier.size(28.dp)
-                ) {
-                    Icon(
-                        when (shutterMode) {
-                            "ai" -> Icons.Default.AutoAwesome
-                            else -> if (shutterMode.startsWith("timer")) Icons.Default.Timer else Icons.Default.Camera
-                        },
-                        contentDescription = "Shutter Mode",
-                        tint = if (showShutterMode) GOLD else MUTED,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-                IconButton(
-                    onClick = { showGridlineSettings = !showGridlineSettings },
-                    modifier = Modifier.size(28.dp)
-                ) {
-                    Icon(Icons.Default.Grid3x3, contentDescription = "Gridline", tint = if (gridlineSettings.enabled) GOLD else MUTED, modifier = Modifier.size(16.dp))
-                }
-                IconButton(
-                    onClick = { showQueueList = !showQueueList },
-                    modifier = Modifier.size(28.dp)
-                ) {
-                    Icon(Icons.Default.List, contentDescription = "Queue", tint = if (showQueueList) GOLD else MUTED, modifier = Modifier.size(16.dp))
-                }
             }
         }
 
-        // ─── DRAGGABLE: TARGET INFO PANEL ──────────────────
-        if (showTargetInfo && hasActiveTarget) {
-            currentTarget?.let { target ->
-                DraggablePanel(
-                    initialOffset = targetInfoOffset,
-                    onOffsetChange = { targetInfoOffset = it }
-                ) {
-                    TargetInfoCard(
-                        target = target,
-                        capturePhase = capturePhase,
-                        isPhotoshoot = isPhotoshoot,
-                        isSending = isSending
-                    )
-                }
-            }
-        }
-
-        // ─── DRAGGABLE: STANDBY MESSAGE ────────────────────
-        if (currentTarget == null && connectionState == ConnectionState.AUTHENTICATED) {
-            Card(
+        // ─── BOTTOM PANEL AREA ──────────────────────────────
+        // Fixed height, scrollable, contains all visible panels
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(with(LocalDensity.current) { panelAreaHeight.toDp() })
+                .background(PANEL)
+        ) {
+            Column(
                 modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(16.dp),
-                colors = CardDefaults.cardColors(containerColor = PANEL.copy(alpha = 0.85f)),
+                    .fillMaxSize()
+            ) {
+                // ─── CAPTURE BUTTON (always visible at top of panel area) ──
+                CaptureButtonBar(
+                    capturePhase = capturePhase,
+                    isSending = isSending,
+                    isPhotoshoot = isPhotoshoot,
+                    shutterMode = shutterMode,
+                    timerCountdown = timerCountdown,
+                    photosPerSession = photosPerSession,
+                    capturedPhotoCount = capturedPhotos.size,
+                    onCapture = { viewModel.triggerCapture() },
+                    onCancelTimer = { viewModel.cancelTimerCapture() }
+                )
+
+                // ─── SCROLLABLE PANELS ──────────────────────────────
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
+                ) {
+                    // Panel selector toggle
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showPanelSelector = !showPanelSelector }
+                                .padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                if (showPanelSelector) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                contentDescription = null,
+                                tint = MUTED,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                "Pilih Panel",
+                                style = TextStyle(color = MUTED, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            )
+                            // Quick toggle chips
+                            Panels.ALL.forEach { panelId ->
+                                val isVisible = panelId in visiblePanels
+                                val label = Panels.LABELS[panelId] ?: panelId
+                                Row(
+                                    modifier = Modifier
+                                        .background(
+                                            if (isVisible) GOLD.copy(alpha = 0.2f) else CARD,
+                                            RoundedCornerShape(4.dp)
+                                        )
+                                        .border(
+                                            BorderStroke(1.dp, if (isVisible) GOLD else BORDER),
+                                            RoundedCornerShape(4.dp)
+                                        )
+                                        .clickable {
+                                            visiblePanels = if (isVisible) {
+                                                visiblePanels - panelId
+                                            } else {
+                                                visiblePanels + panelId
+                                            }
+                                        }
+                                        .padding(horizontal = 4.dp, vertical = 1.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        if (isVisible) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                                        contentDescription = null,
+                                        tint = if (isVisible) GOLD else MUTED,
+                                        modifier = Modifier.size(10.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(2.dp))
+                                    Text(label, style = TextStyle(
+                                        color = if (isVisible) GOLD else MUTED,
+                                        fontSize = 7.sp,
+                                        fontWeight = FontWeight.Bold
+                                    ))
+                                }
+                            }
+                        }
+                    }
+
+                    // TARGET INFO panel
+                    if (Panels.TARGET_INFO in visiblePanels) {
+                        item {
+                            CollapsiblePanel(
+                                title = "Info Target",
+                                onClose = { visiblePanels = visiblePanels - Panels.TARGET_INFO }
+                            ) {
+                                if (hasActiveTarget && currentTarget != null) {
+                                    TargetInfoContent(
+                                        target = currentTarget!!,
+                                        capturePhase = capturePhase,
+                                        isPhotoshoot = isPhotoshoot,
+                                        isSending = isSending
+                                    )
+                                } else {
+                                    Text("Menunggu panggilan MC...", style = TextStyle(color = MUTED, fontSize = 10.sp, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic))
+                                }
+                            }
+                        }
+                    }
+
+                    // SHUTTER MODE panel
+                    if (Panels.SHUTTER_MODE in visiblePanels) {
+                        item {
+                            CollapsiblePanel(
+                                title = "Mode Shutter",
+                                onClose = { visiblePanels = visiblePanels - Panels.SHUTTER_MODE }
+                            ) {
+                                ShutterModeContent(
+                                    currentMode = shutterMode,
+                                    onModeChange = { viewModel.setShutterMode(it) },
+                                    cameraMode = mode
+                                )
+                            }
+                        }
+                    }
+
+                    // GRIDLINE panel
+                    if (Panels.GRIDLINE in visiblePanels) {
+                        item {
+                            CollapsiblePanel(
+                                title = "Gridline",
+                                onClose = { visiblePanels = visiblePanels - Panels.GRIDLINE }
+                            ) {
+                                GridlineSettingsContent(
+                                    settings = gridlineSettings,
+                                    onEnabledChange = { viewModel.setGridlineEnabled(it) },
+                                    onTypeChange = { viewModel.setGridlineType(it) },
+                                    onThicknessChange = { viewModel.setGridlineThickness(it) },
+                                    onColorChange = { viewModel.setGridlineColor(it) }
+                                )
+                            }
+                        }
+                    }
+
+                    // OP SEARCH panel (photoshoot only)
+                    if (Panels.OP_SEARCH in visiblePanels && isPhotoshoot) {
+                        item {
+                            CollapsiblePanel(
+                                title = "Antre dari MC (${opQueue.size})",
+                                onClose = { visiblePanels = visiblePanels - Panels.OP_SEARCH }
+                            ) {
+                                OpSearchContent(
+                                    opQueue = opQueue,
+                                    opSearchResults = opSearchResults,
+                                    opSearchQuery = opSearchQuery,
+                                    currentTargetId = currentTarget?.id,
+                                    onSearchQueryChange = { viewModel.setOpSearchQuery(it) },
+                                    onSelectTarget = { viewModel.setOpCurrentTarget(it) },
+                                    isSending = isSending
+                                )
+                            }
+                        }
+                    }
+
+                    // QUEUE LIST panel
+                    if (Panels.QUEUE_LIST in visiblePanels) {
+                        item {
+                            CollapsiblePanel(
+                                title = "Antrean: $remainingCount • Ch.$myChannel",
+                                onClose = { visiblePanels = visiblePanels - Panels.QUEUE_LIST }
+                            ) {
+                                QueueListContent(
+                                    channelStudents = channelStudents,
+                                    myChannel = myChannel
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ─── DISCONNECTION OVERLAY ──────────────────────────────
+    if (connectionState == ConnectionState.DISCONNECTED) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = {}) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = PANEL),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Icon(Icons.Default.PersonSearch, contentDescription = null, tint = MUTED, modifier = Modifier.size(40.dp))
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text("Menunggu target dari MC...", style = TextStyle(color = MUTED, fontSize = 14.sp))
-                }
-            }
-        }
-
-        // ─── DRAGGABLE: SHUTTER MODE PANEL ─────────────────
-        if (showShutterMode) {
-            DraggablePanel(
-                initialOffset = shutterModeOffset,
-                onOffsetChange = { shutterModeOffset = it }
-            ) {
-                ShutterModePanel(
-                    currentMode = shutterMode,
-                    onModeChange = { viewModel.setShutterMode(it) },
-                    mode = mode
-                )
-            }
-        }
-
-        // ─── DRAGGABLE: GRIDLINE SETTINGS PANEL ────────────
-        if (showGridlineSettings) {
-            DraggablePanel(
-                initialOffset = gridlineSettingsOffset,
-                onOffsetChange = { gridlineSettingsOffset = it }
-            ) {
-                GridlineSettingsPanel(
-                    settings = gridlineSettings,
-                    onEnabledChange = { viewModel.setGridlineEnabled(it) },
-                    onTypeChange = { viewModel.setGridlineType(it) },
-                    onThicknessChange = { viewModel.setGridlineThickness(it) },
-                    onColorChange = { viewModel.setGridlineColor(it) },
-                    onClose = { showGridlineSettings = false }
-                )
-            }
-        }
-
-        // ─── DRAGGABLE: OP SEARCH PANEL (Photoshoot Mode) ──
-        if (isPhotoshoot && showQueueList) {
-            DraggablePanel(
-                initialOffset = opSearchOffset,
-                onOffsetChange = { opSearchOffset = it }
-            ) {
-                OpSearchPanel(
-                    opQueue = opQueue,
-                    opSearchResults = opSearchResults,
-                    opSearchQuery = opSearchQuery,
-                    currentTargetId = currentTarget?.id,
-                    onSearchQueryChange = { viewModel.setOpSearchQuery(it) },
-                    onSelectTarget = { viewModel.setOpCurrentTarget(it) },
-                    isSending = isSending
-                )
-            }
-        }
-
-        // ─── DRAGGABLE: QUEUE LIST PANEL ───────────────────
-        if (showQueueList) {
-            DraggablePanel(
-                initialOffset = queueListOffset,
-                onOffsetChange = { queueListOffset = it }
-            ) {
-                QueueListPanel(
-                    channelStudents = channelStudents,
-                    myChannel = myChannel,
-                    remainingCount = remainingCount,
-                    isPhotoshoot = isPhotoshoot
-                )
-            }
-        }
-
-        // ─── CAPTURE BUTTON BAR (Bottom) ───────────────────
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .background(PANEL.copy(alpha = 0.9f))
-                .border(BorderStroke(1.dp, BORDER.copy(alpha = 0.5f)))
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            // Photo count indicator
-            if (hasActiveTarget && !isPhotoshoot) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.padding(bottom = 6.dp)
-                ) {
-                    repeat(photosPerSession) { i ->
-                        Box(
-                            modifier = Modifier
-                                .size(10.dp)
-                                .clip(CircleShape)
-                                .background(if (i < capturedPhotos.size) GREEN else BORDER)
-                        )
-                    }
-                }
-            }
-
-            // Capture button — matches Windows version's states
-            CaptureButton(
-                capturePhase = capturePhase,
-                isSending = isSending,
-                isPhotoshoot = isPhotoshoot,
-                shutterMode = shutterMode,
-                timerCountdown = timerCountdown,
-                onCapture = { viewModel.triggerCapture() },
-                onCancelTimer = { viewModel.cancelTimerCapture() }
-            )
-        }
-
-        // ─── DISCONNECTION OVERLAY ──────────────────────────
-        if (connectionState == ConnectionState.DISCONNECTED) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(BG.copy(alpha = 0.85f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
+                    modifier = Modifier.padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Default.WifiOff, contentDescription = null, tint = RED, modifier = Modifier.size(44.dp))
-                    Text("Koneksi Terputus", style = TextStyle(color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold))
-                    Text("Mencoba menghubungkan kembali...", style = TextStyle(color = MUTED, fontSize = 13.sp))
-                    CircularProgressIndicator(modifier = Modifier.size(22.dp), color = GOLD, strokeWidth = 2.dp)
+                    Icon(Icons.Default.WifiOff, contentDescription = null, tint = RED, modifier = Modifier.size(36.dp))
+                    Text("Koneksi Terputus", style = TextStyle(color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold))
+                    Text("Mencoba menghubungkan kembali...", style = TextStyle(color = MUTED, fontSize = 12.sp))
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = GOLD, strokeWidth = 2.dp)
                 }
             }
         }
@@ -585,369 +611,394 @@ fun OperatorScreen(
 }
 
 // ═══════════════════════════════════════════════════════════
-// DRAGGABLE PANEL WRAPPER
+// TOP BAR
 // ═══════════════════════════════════════════════════════════
 
 @Composable
-fun DraggablePanel(
-    initialOffset: PanelOffset,
-    onOffsetChange: (PanelOffset) -> Unit,
-    content: @Composable () -> Unit
-) {
-    var offsetX by remember { mutableStateOf(initialOffset.x) }
-    var offsetY by remember { mutableStateOf(initialOffset.y) }
-
-    Box(
-        modifier = Modifier
-            .offset { androidx.compose.ui.unit.IntOffset(offsetX.toInt(), offsetY.toInt()) }
-            .pointerInput(Unit) {
-                detectDragGestures { change, dragAmount ->
-                    change.consume()
-                    offsetX += dragAmount.x
-                    offsetY += dragAmount.y
-                    onOffsetChange(PanelOffset(offsetX, offsetY))
-                }
-            }
-    ) {
-        content()
-    }
-}
-
-// ═══════════════════════════════════════════════════════════
-// TARGET INFO CARD
-// ═══════════════════════════════════════════════════════════
-
-@Composable
-fun TargetInfoCard(
-    target: Student,
+private fun TopBar(
+    projectName: String?,
+    connectionState: ConnectionState,
+    latencyMs: Long,
+    cameraSource: String,
+    myChannel: Int,
+    config: ProjectConfig?,
+    gridlineEnabled: Boolean,
+    hasActiveTarget: Boolean,
+    currentTarget: Student?,
     capturePhase: CapturePhase,
     isPhotoshoot: Boolean,
-    isSending: Boolean
+    onSwitchCamera: () -> Unit,
+    onTogglePanelSelector: () -> Unit
 ) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = CARD.copy(alpha = 0.95f)),
-        shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(2.dp, GOLD)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(PANEL)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Row(
-            modifier = Modifier.padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Avatar circle
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(PANEL)
-                    .border(2.dp, GOLD, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.Person, contentDescription = null, tint = GOLD, modifier = Modifier.size(18.dp))
-            }
+        // Left: Connection
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Icon(Icons.Default.Wifi, contentDescription = null,
+                tint = if (connectionState == ConnectionState.AUTHENTICATED) GREEN else RED, modifier = Modifier.size(12.dp))
+            Text(if (connectionState == ConnectionState.AUTHENTICATED) "Terhubung" else "Terputus",
+                style = TextStyle(color = Color.White, fontSize = 10.sp))
+            if (latencyMs >= 0) Text("${latencyMs}ms",
+                style = TextStyle(color = when { latencyMs < 5 -> GREEN; latencyMs < 15 -> Color.Yellow; else -> RED }, fontSize = 9.sp))
+        }
 
-            // Info
-            Column(modifier = Modifier.weight(1f, fill = false)) {
-                Text(
-                    target.nama,
-                    style = TextStyle(color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(target.nim, style = TextStyle(color = MUTED, fontSize = 11.sp, fontFamily = FontFamily.Monospace))
-            }
-
-            // Status badge
-            val (badgeBg, badgeText, badgeBorder) = when (capturePhase) {
-                CapturePhase.READY_1 -> Triple(GOLD.copy(alpha = 0.2f), GOLD, GOLD.copy(alpha = 0.4f))
-                CapturePhase.READY_2 -> Triple(DARK_GREEN.copy(alpha = 0.2f), GREEN, DARK_GREEN.copy(alpha = 0.4f))
-                CapturePhase.SENDING -> Triple(BORDER.copy(alpha = 0.4f), MUTED, BORDER)
-                else -> Triple(BORDER.copy(alpha = 0.3f), MUTED, BORDER)
-            }
-
-            val statusLabel = when (capturePhase) {
-                CapturePhase.READY_1 -> if (isPhotoshoot) "Siap Foto" else "Toga"
-                CapturePhase.READY_2 -> "Ijazah"
-                CapturePhase.SENDING -> "Kirim..."
-                else -> "Standby"
-            }
-
-            val statusIcon = when (capturePhase) {
-                CapturePhase.READY_1, CapturePhase.READY_2 -> Icons.Default.Camera
-                CapturePhase.SENDING -> Icons.Default.Sync
-                else -> Icons.Default.Timer
-            }
-
-            Row(
-                modifier = Modifier
-                    .background(badgeBg, RoundedCornerShape(4.dp))
-                    .border(BorderStroke(1.dp, badgeBorder), RoundedCornerShape(4.dp))
-                    .padding(horizontal = 6.dp, vertical = 3.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(3.dp)
-            ) {
-                if (isSending) {
-                    CircularProgressIndicator(modifier = Modifier.size(10.dp), color = MUTED, strokeWidth = 1.5.dp)
-                } else {
-                    Icon(statusIcon, contentDescription = null, tint = badgeText, modifier = Modifier.size(10.dp))
+        // Center: Project + Target compact
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(projectName ?: "Saatiril", style = TextStyle(color = GOLD, fontSize = 11.sp, fontWeight = FontWeight.Bold))
+            if (hasActiveTarget && currentTarget != null) {
+                val statusLabel = when (capturePhase) {
+                    CapturePhase.READY_1 -> if (isPhotoshoot) "Siap Foto" else "Toga"
+                    CapturePhase.READY_2 -> "Ijazah"
+                    CapturePhase.SENDING -> "Kirim..."
+                    else -> ""
                 }
-                Text(statusLabel, style = TextStyle(color = badgeText, fontSize = 9.sp, fontWeight = FontWeight.Bold))
+                val statusColor = when (capturePhase) {
+                    CapturePhase.READY_1 -> GOLD
+                    CapturePhase.READY_2 -> GREEN
+                    CapturePhase.SENDING -> MUTED
+                    else -> MUTED
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(currentTarget!!.nama, style = TextStyle(color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (statusLabel.isNotEmpty()) {
+                        Text(statusLabel, style = TextStyle(color = statusColor, fontSize = 8.sp, fontWeight = FontWeight.Bold))
+                    }
+                }
+            } else {
+                val cameraLabel = when (cameraSource) { "uvc" -> "USB"; "builtin" -> "HP"; else -> "-" }
+                Text("Kamera $myChannel • $cameraLabel • ${config?.ratio ?: "4:3"}", style = TextStyle(color = MUTED, fontSize = 8.sp))
+            }
+        }
+
+        // Right: Action buttons
+        Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+            IconButton(onClick = onSwitchCamera, modifier = Modifier.size(24.dp)) {
+                Icon(Icons.Default.Cameraswitch, contentDescription = null, tint = MUTED, modifier = Modifier.size(14.dp))
+            }
+            IconButton(onClick = onTogglePanelSelector, modifier = Modifier.size(24.dp)) {
+                Icon(Icons.Default.Apps, contentDescription = null, tint = GOLD, modifier = Modifier.size(14.dp))
             }
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════
-// SHUTTER MODE PANEL
+// COLLAPSIBLE PANEL WRAPPER
 // ═══════════════════════════════════════════════════════════
 
 @Composable
-fun ShutterModePanel(
-    currentMode: String,
-    onModeChange: (String) -> Unit,
-    mode: CameraMode
+private fun CollapsiblePanel(
+    title: String,
+    onClose: () -> Unit,
+    content: @Composable () -> Unit
 ) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = CARD.copy(alpha = 0.95f)),
-        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = CARD),
+        shape = RoundedCornerShape(6.dp),
         border = BorderStroke(1.dp, BORDER)
     ) {
-        Column(
-            modifier = Modifier.padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Text(
-                "MODE SHUTTER",
-                style = TextStyle(color = MUTED, fontSize = 8.sp, fontWeight = FontWeight.Bold),
-                letterSpacing = 2.sp
-            )
-
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // Header row with title and close button
             Row(
-                horizontalArrangement = Arrangement.spacedBy(3.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(PANEL.copy(alpha = 0.5f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                SHUTTER_MODES.forEach { (id, label) ->
-                    // AI mode only allowed in single/dual
-                    if (id == "ai" && mode != CameraModes.SINGLE && mode != CameraModes.DUAL) return@forEach
-
-                    val isActive = currentMode == id
-                    val icon = when (id) {
-                        "ai" -> Icons.Default.AutoAwesome
-                        "manual" -> Icons.Default.Camera
-                        else -> Icons.Default.Timer
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .background(
-                                if (isActive) GOLD.copy(alpha = 0.2f) else PANEL,
-                                RoundedCornerShape(6.dp)
-                            )
-                            .border(
-                                BorderStroke(1.dp, if (isActive) GOLD else BORDER),
-                                RoundedCornerShape(6.dp)
-                            )
-                            .clickable { onModeChange(id) }
-                            .padding(horizontal = 6.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        Icon(icon, contentDescription = null, tint = if (isActive) GOLD else MUTED, modifier = Modifier.size(12.dp))
-                        Text(label, style = TextStyle(color = if (isActive) GOLD else MUTED, fontSize = 9.sp, fontWeight = FontWeight.Bold))
-                    }
+                Text(title, style = TextStyle(color = GOLD, fontSize = 9.sp, fontWeight = FontWeight.Bold))
+                IconButton(onClick = onClose, modifier = Modifier.size(16.dp)) {
+                    Icon(Icons.Default.Close, contentDescription = "Tutup", tint = MUTED, modifier = Modifier.size(10.dp))
                 }
+            }
+            // Content
+            Box(modifier = Modifier.padding(4.dp)) {
+                content()
             }
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════
-// CAPTURE BUTTON — matches Windows version state machine
+// CAPTURE BUTTON BAR (always visible)
 // ═══════════════════════════════════════════════════════════
 
 @Composable
-fun CaptureButton(
+private fun CaptureButtonBar(
+    capturePhase: CapturePhase,
+    isSending: Boolean,
+    isPhotoshoot: Boolean,
+    shutterMode: String,
+    timerCountdown: Int,
+    photosPerSession: Int,
+    capturedPhotoCount: Int,
+    onCapture: () -> Unit,
+    onCancelTimer: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(PANEL.copy(alpha = 0.8f))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        // Photo progress dots
+        if (!isPhotoshoot && capturePhase != CapturePhase.STANDBY) {
+            Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                repeat(photosPerSession) { i ->
+                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(if (i < capturedPhotoCount) GREEN else BORDER))
+                }
+            }
+        }
+
+        // Capture button (takes remaining space)
+        CaptureButton(
+            capturePhase = capturePhase,
+            isSending = isSending,
+            isPhotoshoot = isPhotoshoot,
+            shutterMode = shutterMode,
+            timerCountdown = timerCountdown,
+            onCapture = onCapture,
+            onCancelTimer = onCancelTimer,
+            modifier = Modifier.weight(1f).height(40.dp)
+        )
+    }
+}
+
+@Composable
+private fun CaptureButton(
     capturePhase: CapturePhase,
     isSending: Boolean,
     isPhotoshoot: Boolean,
     shutterMode: String,
     timerCountdown: Int,
     onCapture: () -> Unit,
-    onCancelTimer: () -> Unit
+    onCancelTimer: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    val modifier = Modifier
-        .fillMaxWidth()
-        .height(56.dp)
-
     when {
-        // STANDBY
         capturePhase == CapturePhase.STANDBY -> {
             OutlinedButton(
-                onClick = {},
-                enabled = false,
-                modifier = modifier,
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    disabledContainerColor = PANEL.copy(alpha = 0.6f),
-                    disabledContentColor = MUTED
-                ),
-                border = BorderStroke(2.dp, BORDER)
-            ) {
-                Icon(Icons.Default.Camera, contentDescription = null, modifier = Modifier.size(20.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("STANDBY", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            }
+                onClick = {}, enabled = false,
+                modifier = modifier, shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.outlinedButtonColors(disabledContainerColor = PANEL.copy(alpha = 0.5f), disabledContentColor = MUTED),
+                border = BorderStroke(1.dp, BORDER)
+            ) { Text("STANDBY", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
         }
-
-        // TIMER COUNTING DOWN — show cancel
         timerCountdown > 0 -> {
-            Button(
-                onClick = onCancelTimer,
-                modifier = modifier,
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = RED),
-                border = BorderStroke(2.dp, RED)
-            ) {
-                Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(20.dp), tint = Color.White)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("BATAL (${timerCountdown}s)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Button(onClick = onCancelTimer, modifier = modifier, shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = RED)) {
+                Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color.White)
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("BATAL ($timerCountdown)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
         }
-
-        // READY 1
         capturePhase == CapturePhase.READY_1 -> {
             val isTimer = shutterMode.startsWith("timer")
             val isAi = shutterMode == "ai"
-
-            if (isAi) {
-                OutlinedButton(
-                    onClick = {},
-                    enabled = false,
-                    modifier = modifier,
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        disabledContainerColor = DARK_GREEN.copy(alpha = 0.15f),
-                        disabledContentColor = GREEN
-                    ),
-                    border = BorderStroke(2.dp, DARK_GREEN)
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = GREEN, strokeWidth = 2.dp)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("AI Mendeteksi...", color = GREEN, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            when {
+                isAi -> {
+                    OutlinedButton(onClick = {}, enabled = false, modifier = modifier, shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(disabledContainerColor = DARK_GREEN.copy(alpha = 0.12f), disabledContentColor = GREEN),
+                        border = BorderStroke(1.dp, DARK_GREEN)) {
+                        CircularProgressIndicator(modifier = Modifier.size(12.dp), color = GREEN, strokeWidth = 1.5.dp)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("AI Deteksi...", color = GREEN, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
                 }
-            } else if (isTimer) {
-                val timerLabel = shutterMode.removePrefix("timer-") + "s"
-                Button(
-                    onClick = onCapture,
-                    modifier = modifier,
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = GOLD),
-                    border = BorderStroke(2.dp, GOLD)
-                ) {
-                    Icon(Icons.Default.Timer, contentDescription = null, modifier = Modifier.size(20.dp), tint = BG)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        if (isPhotoshoot) "FOTO ($timerLabel)" else "FOTO 1 — TOGA ($timerLabel)",
-                        color = BG, fontWeight = FontWeight.Bold, fontSize = 15.sp
-                    )
+                isTimer -> {
+                    val t = shutterMode.removePrefix("timer-") + "s"
+                    Button(onClick = onCapture, modifier = modifier, shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = GOLD)) {
+                        Icon(Icons.Default.Timer, contentDescription = null, modifier = Modifier.size(14.dp), tint = BG)
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(if (isPhotoshoot) "FOTO ($t)" else "FOTO 1 — TOGA ($t)", color = BG, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
                 }
-            } else {
-                // Manual
-                Button(
-                    onClick = onCapture,
-                    modifier = modifier,
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isPhotoshoot) GREEN else GOLD
-                    ),
-                    border = BorderStroke(2.dp, if (isPhotoshoot) GREEN else GOLD)
-                ) {
-                    Icon(Icons.Default.Camera, contentDescription = null, modifier = Modifier.size(20.dp), tint = if (isPhotoshoot) BG else BG)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        if (isPhotoshoot) "FOTO" else "FOTO 1 — TOGA",
-                        color = BG, fontWeight = FontWeight.Bold, fontSize = 16.sp
-                    )
+                else -> {
+                    Button(onClick = onCapture, modifier = modifier, shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = if (isPhotoshoot) GREEN else GOLD)) {
+                        Icon(Icons.Default.Camera, contentDescription = null, modifier = Modifier.size(14.dp), tint = BG)
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(if (isPhotoshoot) "FOTO" else "FOTO 1 — TOGA", color = BG, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
                 }
             }
         }
-
-        // READY 2
         capturePhase == CapturePhase.READY_2 -> {
             val isTimer = shutterMode.startsWith("timer")
             val isAi = shutterMode == "ai"
-
-            if (isAi) {
-                OutlinedButton(
-                    onClick = {},
-                    enabled = false,
-                    modifier = modifier,
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        disabledContainerColor = DARK_GREEN.copy(alpha = 0.15f),
-                        disabledContentColor = GREEN
-                    ),
-                    border = BorderStroke(2.dp, DARK_GREEN)
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = GREEN, strokeWidth = 2.dp)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("AI Ijazah...", color = GREEN, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            when {
+                isAi -> {
+                    OutlinedButton(onClick = {}, enabled = false, modifier = modifier, shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(disabledContainerColor = DARK_GREEN.copy(alpha = 0.12f), disabledContentColor = GREEN),
+                        border = BorderStroke(1.dp, DARK_GREEN)) {
+                        Text("AI Ijazah...", color = GREEN, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
                 }
-            } else if (isTimer) {
-                val timerLabel = shutterMode.removePrefix("timer-") + "s"
-                Button(
-                    onClick = onCapture,
-                    modifier = modifier,
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = GOLD),
-                    border = BorderStroke(2.dp, GOLD)
-                ) {
-                    Icon(Icons.Default.Timer, contentDescription = null, modifier = Modifier.size(20.dp), tint = BG)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("FOTO 2 — IJAZAH ($timerLabel)", color = BG, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                isTimer -> {
+                    val t = shutterMode.removePrefix("timer-") + "s"
+                    Button(onClick = onCapture, modifier = modifier, shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = GOLD)) {
+                        Icon(Icons.Default.Timer, contentDescription = null, modifier = Modifier.size(14.dp), tint = BG)
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("FOTO 2 — IJAZAH ($t)", color = BG, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
                 }
-            } else {
-                Button(
-                    onClick = onCapture,
-                    modifier = modifier,
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = DARK_GREEN),
-                    border = BorderStroke(2.dp, DARK_GREEN)
-                ) {
-                    Icon(Icons.Default.Camera, contentDescription = null, modifier = Modifier.size(20.dp), tint = Color.White)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("FOTO 2 — IJAZAH", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                else -> {
+                    Button(onClick = onCapture, modifier = modifier, shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = DARK_GREEN)) {
+                        Icon(Icons.Default.Camera, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color.White)
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("FOTO 2 — IJAZAH", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
                 }
             }
         }
-
-        // SENDING
         capturePhase == CapturePhase.SENDING -> {
-            OutlinedButton(
-                onClick = {},
-                enabled = false,
-                modifier = modifier,
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    disabledContainerColor = PANEL.copy(alpha = 0.6f),
-                    disabledContentColor = MUTED
-                ),
-                border = BorderStroke(2.dp, BORDER)
-            ) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp), color = MUTED, strokeWidth = 2.dp)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("MENGIRIM...", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            OutlinedButton(onClick = {}, enabled = false, modifier = modifier, shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.outlinedButtonColors(disabledContainerColor = PANEL.copy(alpha = 0.5f), disabledContentColor = MUTED),
+                border = BorderStroke(1.dp, BORDER)) {
+                CircularProgressIndicator(modifier = Modifier.size(12.dp), color = MUTED, strokeWidth = 1.5.dp)
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("MENGIRIM...", fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════
-// OP SEARCH PANEL (Photoshoot Mode)
+// PANEL CONTENT COMPONENTS
 // ═══════════════════════════════════════════════════════════
 
 @Composable
-fun OpSearchPanel(
+private fun TargetInfoContent(
+    target: Student,
+    capturePhase: CapturePhase,
+    isPhotoshoot: Boolean,
+    isSending: Boolean
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Box(modifier = Modifier.size(28.dp).clip(CircleShape).background(PANEL).border(1.dp, GOLD, CircleShape),
+            contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.PersonSearch, contentDescription = null, tint = GOLD, modifier = Modifier.size(14.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(target.nama, style = TextStyle(color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(target.nim, style = TextStyle(color = MUTED, fontSize = 9.sp, fontFamily = FontFamily.Monospace))
+        }
+        val (label, color) = when (capturePhase) {
+            CapturePhase.READY_1 -> (if (isPhotoshoot) "Siap Foto" else "Toga") to GOLD
+            CapturePhase.READY_2 -> "Ijazah" to GREEN
+            CapturePhase.SENDING -> "Kirim" to MUTED
+            else -> "Standby" to MUTED
+        }
+        Row(modifier = Modifier.background(color.copy(alpha = 0.15f), RoundedCornerShape(3.dp)).padding(horizontal = 4.dp, vertical = 1.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            if (isSending) CircularProgressIndicator(modifier = Modifier.size(8.dp), color = MUTED, strokeWidth = 1.dp)
+            Text(label, style = TextStyle(color = color, fontSize = 8.sp, fontWeight = FontWeight.Bold))
+        }
+    }
+}
+
+@Composable
+private fun ShutterModeContent(
+    currentMode: String,
+    onModeChange: (String) -> Unit,
+    cameraMode: CameraMode
+) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+        SHUTTER_MODES.forEach { (id, label) ->
+            if (id == "ai" && cameraMode != CameraModes.SINGLE && cameraMode != CameraModes.DUAL) return@forEach
+            val isActive = currentMode == id
+            Row(
+                modifier = Modifier
+                    .background(if (isActive) GOLD.copy(alpha = 0.2f) else PANEL, RoundedCornerShape(4.dp))
+                    .border(BorderStroke(1.dp, if (isActive) GOLD else BORDER), RoundedCornerShape(4.dp))
+                    .clickable { onModeChange(id) }
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
+                Icon(when (id) { "ai" -> Icons.Default.AutoAwesome; "manual" -> Icons.Default.Camera; else -> Icons.Default.Timer },
+                    contentDescription = null, tint = if (isActive) GOLD else MUTED, modifier = Modifier.size(10.dp))
+                Text(label, style = TextStyle(color = if (isActive) GOLD else MUTED, fontSize = 8.sp, fontWeight = FontWeight.Bold))
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GridlineSettingsContent(
+    settings: GridlineSettings,
+    onEnabledChange: (Boolean) -> Unit,
+    onTypeChange: (GridlineType) -> Unit,
+    onThicknessChange: (GridlineThickness) -> Unit,
+    onColorChange: (GridlineColor) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        // Toggle
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("Aktifkan", style = TextStyle(color = Color.White, fontSize = 10.sp))
+            Switch(checked = settings.enabled, onCheckedChange = onEnabledChange, colors = SwitchDefaults.colors(checkedTrackColor = GOLD), modifier = Modifier.height(20.dp))
+        }
+        if (settings.enabled) {
+            // Type
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                GridlineType.entries.forEach { type ->
+                    val isActive = settings.type == type
+                    Row(modifier = Modifier
+                        .background(if (isActive) GOLD.copy(alpha = 0.2f) else PANEL, RoundedCornerShape(3.dp))
+                        .border(BorderStroke(1.dp, if (isActive) GOLD else BORDER), RoundedCornerShape(3.dp))
+                        .clickable { onTypeChange(type) }
+                        .padding(horizontal = 3.dp, vertical = 1.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text(type.displayName, style = TextStyle(color = if (isActive) GOLD else MUTED, fontSize = 7.sp, fontWeight = FontWeight.Bold))
+                    }
+                }
+            }
+            // Thickness
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Ketebalan:", style = TextStyle(color = MUTED, fontSize = 8.sp))
+                GridlineThickness.entries.forEach { t ->
+                    val isActive = settings.thickness == t
+                    Box(modifier = Modifier.size(24.dp, 16.dp)
+                        .background(if (isActive) GOLD.copy(alpha = 0.2f) else PANEL, RoundedCornerShape(3.dp))
+                        .border(BorderStroke(1.dp, if (isActive) GOLD else BORDER), RoundedCornerShape(3.dp))
+                        .clickable { onThicknessChange(t) }, contentAlignment = Alignment.Center) {
+                        Box(modifier = Modifier.size((t.value * 2 + 1).dp).clip(CircleShape).background(if (isActive) GOLD else MUTED))
+                    }
+                }
+            }
+            // Color
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Warna:", style = TextStyle(color = MUTED, fontSize = 8.sp))
+                GridlineColor.entries.forEach { color ->
+                    Box(modifier = Modifier.size(18.dp).clip(CircleShape)
+                        .background(Color(android.graphics.Color.parseColor(color.hex)))
+                        .border(width = if (settings.color == color) 2.dp else 1.dp, color = if (settings.color == color) GOLD else BORDER, shape = CircleShape)
+                        .clickable { onColorChange(color) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OpSearchContent(
     opQueue: List<Student>,
     opSearchResults: List<Student>,
     opSearchQuery: String,
@@ -956,117 +1007,34 @@ fun OpSearchPanel(
     onSelectTarget: (Student) -> Unit,
     isSending: Boolean
 ) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = CARD.copy(alpha = 0.95f)),
-        shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(1.dp, GOLD)
-    ) {
-        Column(
-            modifier = Modifier
-                .padding(8.dp)
-                .widthIn(max = 280.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            // Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Icon(Icons.Default.List, contentDescription = null, tint = GOLD, modifier = Modifier.size(12.dp))
-                    Text(
-                        "Antre dari MC (${opQueue.size})",
-                        style = TextStyle(color = GOLD, fontSize = 9.sp, fontWeight = FontWeight.Bold),
-                        letterSpacing = 1.sp
-                    )
-                }
-            }
-
-            // Search input
-            OutlinedTextField(
-                value = opSearchQuery,
-                onValueChange = onSearchQueryChange,
-                placeholder = { Text("Cari NIM / Nama...", style = TextStyle(color = BORDER, fontSize = 11.sp)) },
-                textStyle = TextStyle(color = Color.White, fontSize = 11.sp),
-                modifier = Modifier.fillMaxWidth().height(32.dp),
-                shape = RoundedCornerShape(6.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = GOLD,
-                    unfocusedBorderColor = BORDER,
-                    cursorColor = GOLD,
-                    focusedContainerColor = PANEL,
-                    unfocusedContainerColor = PANEL
-                ),
-                leadingIcon = {
-                    Icon(Icons.Default.Search, contentDescription = null, tint = MUTED, modifier = Modifier.size(14.dp))
-                },
-                singleLine = true
-            )
-
-            // Results
-            if (opQueue.isEmpty()) {
-                Text(
-                    if (opSearchQuery.isNotBlank()) "Tidak ditemukan" else "Belum ada peserta dikirim MC",
-                    style = TextStyle(color = MUTED, fontSize = 9.sp),
-                    modifier = Modifier.padding(vertical = 4.dp).fillMaxWidth(),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                )
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 140.dp),
-                    verticalArrangement = Arrangement.spacedBy(0.dp)
-                ) {
-                    items(
-                        count = opSearchResults.size,
-                        key = { idx -> opSearchResults[idx].id }
-                    ) { idx ->
-                        val student = opSearchResults[idx]
-                        val isCurrentTarget = student.id == currentTargetId
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(
-                                    if (isCurrentTarget) GOLD.copy(alpha = 0.1f) else Color.Transparent
-                                )
-                                .border(
-                                    BorderStroke(
-                                        if (isCurrentTarget) 2.dp else 0.dp,
-                                        if (isCurrentTarget) GOLD else Color.Transparent
-                                    )
-                                )
-                                .clickable(enabled = !isSending) { onSelectTarget(student) }
-                                .padding(horizontal = 6.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                student.nim,
-                                style = TextStyle(color = MUTED, fontSize = 9.sp, fontFamily = FontFamily.Monospace),
-                                modifier = Modifier.width(50.dp),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                student.nama,
-                                style = TextStyle(
-                                    color = if (isCurrentTarget) GOLD else Color.White,
-                                    fontSize = 10.sp,
-                                    fontWeight = if (isCurrentTarget) FontWeight.Bold else FontWeight.Normal
-                                ),
-                                modifier = Modifier.weight(1f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            if (isCurrentTarget) {
-                                Icon(Icons.Default.Camera, contentDescription = null, tint = GOLD, modifier = Modifier.size(12.dp))
-                            }
-                        }
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        OutlinedTextField(
+            value = opSearchQuery, onValueChange = onSearchQueryChange,
+            placeholder = { Text("Cari NIM / Nama...", style = TextStyle(color = BORDER, fontSize = 9.sp)) },
+            textStyle = TextStyle(color = Color.White, fontSize = 9.sp),
+            modifier = Modifier.fillMaxWidth().height(28.dp),
+            shape = RoundedCornerShape(4.dp),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GOLD, unfocusedBorderColor = BORDER, cursorColor = GOLD,
+                focusedContainerColor = PANEL, unfocusedContainerColor = PANEL),
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = MUTED, modifier = Modifier.size(12.dp)) },
+            singleLine = true
+        )
+        if (opQueue.isEmpty()) {
+            Text(if (opSearchQuery.isNotBlank()) "Tidak ditemukan" else "Belum ada peserta dikirim MC",
+                style = TextStyle(color = MUTED, fontSize = 8.sp), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 80.dp)) {
+                items(count = opSearchResults.size, key = { opSearchResults[it].id }) { idx ->
+                    val student = opSearchResults[idx]
+                    val isCurrent = student.id == currentTargetId
+                    Row(modifier = Modifier.fillMaxWidth()
+                        .background(if (isCurrent) GOLD.copy(alpha = 0.1f) else Color.Transparent)
+                        .clickable(enabled = !isSending) { onSelectTarget(student) }
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text(student.nim, style = TextStyle(color = MUTED, fontSize = 8.sp, fontFamily = FontFamily.Monospace), modifier = Modifier.width(45.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(student.nama, style = TextStyle(color = if (isCurrent) GOLD else Color.White, fontSize = 9.sp, fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (isCurrent) Icon(Icons.Default.Camera, contentDescription = null, tint = GOLD, modifier = Modifier.size(10.dp))
                     }
                 }
             }
@@ -1074,136 +1042,29 @@ fun OpSearchPanel(
     }
 }
 
-// ═══════════════════════════════════════════════════════════
-// QUEUE LIST PANEL
-// ═══════════════════════════════════════════════════════════
-
 @Composable
-fun QueueListPanel(
+private fun QueueListContent(
     channelStudents: List<Student>,
-    myChannel: Int,
-    remainingCount: Int,
-    isPhotoshoot: Boolean
+    myChannel: Int
 ) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = CARD.copy(alpha = 0.95f)),
-        shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(1.dp, BORDER)
-    ) {
-        Column(
-            modifier = Modifier
-                .padding(6.dp)
-                .widthIn(max = 300.dp)
-                .heightIn(max = 250.dp)
-        ) {
-            // Header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(PANEL)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Antrean: $remainingCount",
-                    style = TextStyle(color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                )
-                Text("Ch.$myChannel", style = TextStyle(color = MUTED, fontSize = 9.sp))
-            }
-
-            // Column headers
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(PANEL.copy(alpha = 0.5f))
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                Text("No", style = TextStyle(color = MUTED, fontSize = 8.sp, fontWeight = FontWeight.Bold), modifier = Modifier.width(22.dp))
-                Text("NIM", style = TextStyle(color = MUTED, fontSize = 8.sp, fontWeight = FontWeight.Bold), modifier = Modifier.width(55.dp))
-                Text("Nama", style = TextStyle(color = MUTED, fontSize = 8.sp, fontWeight = FontWeight.Bold), modifier = Modifier.weight(1f))
-                Text("Status", style = TextStyle(color = MUTED, fontSize = 8.sp, fontWeight = FontWeight.Bold), modifier = Modifier.width(50.dp))
-            }
-
-            // Student rows
-            if (channelStudents.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("Tidak ada mahasiswa", style = TextStyle(color = MUTED, fontSize = 10.sp))
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
-                    verticalArrangement = Arrangement.spacedBy(0.dp)
-                ) {
-                    itemsIndexed(channelStudents) { idx, student ->
-                        val isActive = student.status == "active_$myChannel"
-                        val isDone = student.status == "done"
-                        val isSent = student.status == "sent"
-
-                        val rowBg = when {
-                            isActive -> GOLD.copy(alpha = 0.15f)
-                            isSent -> GOLD.copy(alpha = 0.05f)
-                            isDone -> MUTED.copy(alpha = 0.03f)
-                            else -> Color.Transparent
-                        }
-
-                        val nameColor = when {
-                            isActive -> GOLD
-                            isDone -> MUTED
-                            else -> Color.White
-                        }
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(rowBg)
-                                .padding(horizontal = 4.dp, vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                            Text(
-                                "${idx + 1}",
-                                style = TextStyle(color = MUTED, fontSize = 8.sp, fontFamily = FontFamily.Monospace),
-                                modifier = Modifier.width(22.dp)
-                            )
-                            Text(
-                                student.nim,
-                                style = TextStyle(color = MUTED, fontSize = 8.sp, fontFamily = FontFamily.Monospace),
-                                modifier = Modifier.width(55.dp),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                student.nama,
-                                style = TextStyle(
-                                    color = nameColor,
-                                    fontSize = 9.sp,
-                                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                                    textDecoration = if (isDone) TextDecoration.LineThrough else TextDecoration.None
-                                ),
-                                modifier = Modifier.weight(1f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-
-                            // Status badge
-                            val (statusLabel, statusColor) = when {
-                                isActive -> "Foto" to GOLD
-                                isSent -> "Kirim" to GOLD.copy(alpha = 0.7f)
-                                isDone -> "Selesai" to MUTED
-                                else -> "Tunggu" to BORDER
-                            }
-                            Text(
-                                statusLabel,
-                                style = TextStyle(color = statusColor, fontSize = 7.sp, fontWeight = FontWeight.Bold),
-                                modifier = Modifier.width(50.dp)
-                            )
-                        }
-                    }
+    if (channelStudents.isEmpty()) {
+        Text("Tidak ada mahasiswa", style = TextStyle(color = MUTED, fontSize = 9.sp), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), textAlign = TextAlign.Center)
+    } else {
+        LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 120.dp)) {
+            itemsIndexed(channelStudents) { idx, student ->
+                val isActive = student.status == "active_$myChannel"
+                val isDone = student.status == "done"
+                val isSent = student.status == "sent"
+                val rowBg = when { isActive -> GOLD.copy(alpha = 0.12f); isSent -> GOLD.copy(alpha = 0.04f); isDone -> MUTED.copy(alpha = 0.02f); else -> Color.Transparent }
+                Row(modifier = Modifier.fillMaxWidth().background(rowBg).padding(horizontal = 3.dp, vertical = 1.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("${idx + 1}", style = TextStyle(color = MUTED, fontSize = 7.sp, fontFamily = FontFamily.Monospace), modifier = Modifier.width(18.dp))
+                    Text(student.nim, style = TextStyle(color = MUTED, fontSize = 7.sp, fontFamily = FontFamily.Monospace), modifier = Modifier.width(45.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(student.nama, style = TextStyle(color = if (isActive) GOLD else if (isDone) MUTED else Color.White, fontSize = 8.sp,
+                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal, textDecoration = if (isDone) TextDecoration.LineThrough else TextDecoration.None),
+                        modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val (statusLabel, statusColor) = when { isActive -> "Foto" to GOLD; isSent -> "Kirim" to GOLD.copy(alpha = 0.6f); isDone -> "Selesai" to MUTED; else -> "Tunggu" to BORDER }
+                    Text(statusLabel, style = TextStyle(color = statusColor, fontSize = 6.sp, fontWeight = FontWeight.Bold), modifier = Modifier.width(35.dp))
                 }
             }
         }
@@ -1211,155 +1072,70 @@ fun QueueListPanel(
 }
 
 // ═══════════════════════════════════════════════════════════
-// GRIDLINE SETTINGS PANEL
+// PHOTO FILE SAVE UTILITY
+// Matches Windows/Electron behavior: save JPEG to targetFolder
 // ═══════════════════════════════════════════════════════════
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun GridlineSettingsPanel(
-    settings: GridlineSettings,
-    onEnabledChange: (Boolean) -> Unit,
-    onTypeChange: (GridlineType) -> Unit,
-    onThicknessChange: (GridlineThickness) -> Unit,
-    onColorChange: (GridlineColor) -> Unit,
-    onClose: () -> Unit
-) {
-    Card(
-        modifier = Modifier.width(240.dp),
-        colors = CardDefaults.cardColors(containerColor = CARD.copy(alpha = 0.95f)),
-        shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(1.dp, BORDER)
-    ) {
-        Column(
-            modifier = Modifier.padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Gridline", style = TextStyle(color = GOLD, fontWeight = FontWeight.Bold, fontSize = 14.sp))
-                IconButton(onClick = onClose, modifier = Modifier.size(22.dp)) {
-                    Icon(Icons.Default.Close, contentDescription = null, tint = MUTED, modifier = Modifier.size(14.dp))
-                }
-            }
+object PhotoFileSaver {
+    private const val TAG = "PhotoFileSaver"
 
-            // Toggle
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Aktifkan", style = TextStyle(color = Color.White, fontSize = 12.sp))
-                Switch(
-                    checked = settings.enabled,
-                    onCheckedChange = onEnabledChange,
-                    colors = SwitchDefaults.colors(checkedTrackColor = GOLD)
-                )
-            }
+    /**
+     * Save a base64-encoded photo to the target folder on the Android device.
+     * Matches the Windows Electron savePhoto behavior:
+     *   - Creates targetFolder if it doesn't exist
+     *   - Strips data URI prefix from base64
+     *   - Writes JPEG bytes to file
+     *   - Returns the saved file path on success, null on failure
+     *
+     * @param base64Data Full data URI: "data:image/jpeg;base64,..."
+     * @param filename Target filename: "NIM_Nama_1_Toga.jpg"
+     * @param targetFolder Absolute path to save directory (from project config)
+     */
+    fun savePhoto(base64Data: String, filename: String, targetFolder: String): String? {
+        if (targetFolder.isBlank()) {
+            // No target folder specified — use default Saatiril directory
+            return saveToDefaultFolder(base64Data, filename)
+        }
 
-            if (settings.enabled) {
-                // Type
-                Text("Tipe:", style = TextStyle(color = MUTED, fontSize = 10.sp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(3.dp)
-                ) {
-                    GridlineType.entries.forEach { type ->
-                        val isActive = settings.type == type
-                        Row(
-                            modifier = Modifier
-                                .background(
-                                    if (isActive) GOLD.copy(alpha = 0.2f) else PANEL,
-                                    RoundedCornerShape(4.dp)
-                                )
-                                .border(
-                                    BorderStroke(1.dp, if (isActive) GOLD else BORDER),
-                                    RoundedCornerShape(4.dp)
-                                )
-                                .clickable { onTypeChange(type) }
-                                .padding(horizontal = 5.dp, vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                            val typeIcon = when (type) {
-                                GridlineType.THIRDS -> Icons.Default.List
-                                GridlineType.QUARTERS -> Icons.Default.List
-                                GridlineType.CROSSHAIR -> Icons.Default.Add
-                                GridlineType.DIAGONAL -> Icons.Default.Close
-                            }
-                            Icon(typeIcon, contentDescription = null, tint = if (isActive) GOLD else MUTED, modifier = Modifier.size(10.dp))
-                            Text(type.displayName, style = TextStyle(color = if (isActive) GOLD else MUTED, fontSize = 8.sp, fontWeight = FontWeight.Bold))
-                        }
-                    }
-                }
+        return try {
+            val dir = File(targetFolder)
+            if (!dir.exists()) dir.mkdirs()
 
-                // Thickness
-                Text("Ketebalan:", style = TextStyle(color = MUTED, fontSize = 10.sp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    GridlineThickness.entries.forEach { thickness ->
-                        val isActive = settings.thickness == thickness
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp, 24.dp)
-                                .background(
-                                    if (isActive) GOLD.copy(alpha = 0.2f) else PANEL,
-                                    RoundedCornerShape(4.dp)
-                                )
-                                .border(
-                                    BorderStroke(1.dp, if (isActive) GOLD else BORDER),
-                                    RoundedCornerShape(4.dp)
-                                )
-                                .clickable { onThicknessChange(thickness) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            // Dot size represents thickness
-                            Box(
-                                modifier = Modifier
-                                    .size((thickness.value * 2 + 1).dp)
-                                    .clip(CircleShape)
-                                    .background(if (isActive) GOLD else MUTED)
-                            )
-                        }
-                    }
-                    // Labels
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(start = 0.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        GridlineThickness.entries.forEach { thickness ->
-                            Text(thickness.displayName, style = TextStyle(color = MUTED, fontSize = 7.sp))
-                        }
-                    }
-                }
+            val pureBase64 = if (base64Data.contains(",")) base64Data.substringAfter(",") else base64Data
+            val bytes = android.util.Base64.decode(pureBase64, android.util.Base64.DEFAULT)
 
-                // Color
-                Text("Warna:", style = TextStyle(color = MUTED, fontSize = 10.sp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    GridlineColor.entries.forEach { color ->
-                        Box(
-                            modifier = Modifier
-                                .size(24.dp)
-                                .clip(CircleShape)
-                                .background(Color(android.graphics.Color.parseColor(color.hex)))
-                                .border(
-                                    width = if (settings.color == color) 3.dp else 1.dp,
-                                    color = if (settings.color == color) GOLD else BORDER,
-                                    shape = CircleShape
-                                )
-                                .clickable { onColorChange(color) }
-                        )
-                    }
-                }
-            }
+            val file = File(dir, filename)
+            FileOutputStream(file).use { it.write(bytes) }
+
+            Log.i(TAG, "Photo saved: ${file.absolutePath} (${bytes.size} bytes)")
+            file.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save photo to $targetFolder/$filename: ${e.message}")
+            // Fallback to default directory
+            saveToDefaultFolder(base64Data, filename)
+        }
+    }
+
+    /**
+     * Save to the app's external Pictures/Saatiril directory as fallback.
+     * This works even if targetFolder is not set or not writable.
+     */
+    private fun saveToDefaultFolder(base64Data: String, filename: String): String? {
+        return try {
+            val dir = File(Environment.getExternalStorageDirectory(), "Pictures/Saatiril")
+            if (!dir.exists()) dir.mkdirs()
+
+            val pureBase64 = if (base64Data.contains(",")) base64Data.substringAfter(",") else base64Data
+            val bytes = android.util.Base64.decode(pureBase64, android.util.Base64.DEFAULT)
+
+            val file = File(dir, filename)
+            FileOutputStream(file).use { it.write(bytes) }
+
+            Log.i(TAG, "Photo saved to default: ${file.absolutePath}")
+            file.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save photo to default folder: ${e.message}")
+            null
         }
     }
 }
