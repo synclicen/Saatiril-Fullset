@@ -298,3 +298,67 @@ Stage Summary:
 - APK artifact uploaded (17.8 MB) ✅
 - All 7 files modified and committed
 - Push to origin/main completed successfully
+---
+Task ID: 8
+Agent: main
+Task: Fix Android Saatiril operator app "Kamera tidak terdeteksi" (Camera not detected) - camera permission and initialization
+
+Work Log:
+- Viewed uploaded screenshot: app shows "Kamera tidak terdeteksi, Pastikan izin kamera sudah diberikan" after successful connection
+- Read ALL source files: OperatorScreen.kt, BuiltInCameraManager.kt, OperatorViewModel.kt, MainActivity.kt, ConnectionScreen.kt, AndroidManifest.xml, build.gradle.kts, etc.
+- Traced the exact execution path when OperatorScreen is displayed
+
+Root Cause Analysis - Multiple issues identified:
+1. **Camera init race condition (PRIMARY)**: In OperatorScreen.kt, `hasCameraPermission` was set in a `LaunchedEffect(Unit)` which runs ASYNCHRONOUSLY after first composition. But `AndroidView.factory` runs SYNCHRONOUSLY during composition. So when the factory checked `hasCameraPermission`, it was always `false` → camera NEVER initialized. The `cameraInitialized` flag prevented retry.
+2. **No permission callback**: When user grants camera permission via the system dialog, `MainActivity.permissionLauncher` fires but never notifies the UI/OperatorScreen that permission was granted.
+3. **BuiltInCameraManager.init() not idempotent**: Re-calling init() creates duplicate ProcessCameraProvider instances without cleaning up the old one. No guard against concurrent first-time init.
+4. **Duplicate flow collectors**: `OperatorViewModel.initCamera()` launched 3 new `viewModelScope.launch` collectors each time, without cancelling old ones. These accumulate and leak.
+5. **Stale Activity permission state**: When user grants permission via Settings (not in-app dialog), `_cameraPermissionGranted` is never updated.
+
+Fixes Applied:
+1. **OperatorScreen.kt**: 
+   - Removed camera init from AndroidView.factory (only creates PreviewView, stores ref)
+   - Added `hasCameraPermission` parameter from parent composable
+   - `effectivePermission = hasCameraPermission || localPermissionState`
+   - `LaunchedEffect(effectivePermission, previewViewRef)` fires camera init when both are ready
+   - Periodic permission poll (1s) handles Settings grant
+   - Show "Izin kamera diperlukan" with "Buka Pengaturan" button when no permission
+   
+2. **MainActivity.kt**:
+   - Added `_cameraPermissionGranted` state + `onCameraPermissionGranted` callback
+   - `SaatirilOperatorApp` passes `hasCameraPermission` to `OperatorScreen`
+   - Added `onResume()` to re-check camera permission after returning from Settings
+   - `setOnCameraPermissionGrantedListener()` fires callback immediately if already granted
+   
+3. **BuiltInCameraManager.kt**:
+   - `hasCameraPermission()` check before CameraX init
+   - `init()` is now IDEMPOTENT: reuses existing ProcessCameraProvider
+   - `initInProgress` guard against concurrent first-time init
+   - `reinit()` method for explicit re-initialization
+   - Proper cleanup in `destroy()` with try-catch
+   
+4. **OperatorViewModel.kt**:
+   - Track collector Jobs: `cameraConnectedCollector`, `cameraTypeCollector`, `uvcConnectedCollector`
+   - Cancel old collectors BEFORE camera init (prevents transient "none" state flash)
+   - `uvcManagerInitialized` flag prevents duplicate UVC init
+   - `onCleared()` cancels all collectors
+
+Mock Test Results (5 scenarios traced):
+- Scenario 1 (fresh install, no permission): ✅ Flow correct end-to-end
+- Scenario 2 (returning user, permission already granted): ✅ Correct
+- Scenario 3 (permission denied, Settings grant): ✅ Correct (fixed with onResume)
+- Scenario 4 (multiple initCamera calls): ✅ Correct (idempotent, collectors properly managed)
+- Bug #1 (concurrent init guard): ✅ Fixed with initInProgress flag
+- Bug #2 (collector cancellation order): ✅ Fixed - cancel BEFORE init
+- Bug #3 (stale Activity permission): ✅ Fixed with onResume
+
+Commits:
+- 6e3cc23: "fix: camera not detected - fix permission race condition, idempotent camera init, proper permission callback flow"
+
+Stage Summary:
+- All 5 root causes identified and fixed
+- 4 files modified (302 insertions, 76 deletions)
+- Pushed to origin/main, GitHub Actions build triggered
+- Camera initialization now properly waits for permission before accessing CameraX
+- Permission state is communicated from Activity → Composable → ViewModel
+- Camera init is idempotent and safe to call multiple times
