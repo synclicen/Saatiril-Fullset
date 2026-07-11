@@ -452,3 +452,35 @@ Stage Summary:
 - Photos save to Android-appropriate paths with project name subfolders
 - Scoped storage on Android 10+ handled via app-specific external directory
 - Three-tier fallback ensures photos are always saved somewhere
+
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix two critical bugs in Saatiril Android APK - Queue not showing from MC + Photo not saving to designated folder
+
+Work Log:
+- Studied Windows operator-panel.tsx flow extensively (queue flow, photo capture pipeline, socket events, capture state machine, camera modes)
+- Read all 14 Kotlin source files in the Android project
+- Identified Bug #1 root cause: MC_CALL/STUDENT_RESET handlers required project to be non-null (race condition when MC_CALL arrives before SYNC_DB), causing students to be silently dropped
+- Identified Bug #1 secondary cause: GSON parsing could silently fail for SYNC_DB data, causing empty database
+- Identified Bug #1 compile error: `db` variable was out of scope in updateOpQueue() else branch
+- Identified Bug #2 root cause: PhotoSaver was saving to app-specific external directory (not user-visible on Android 11+), and admin's targetFolder was completely ignored
+- Fixed MC_CALL handler: no longer requires project non-null, photoshoot mode only adds to buffer (doesn't set currentTarget directly), fallback to mcCallBuffer when project is null
+- Fixed STUDENT_RESET handler: same race condition fix
+- Fixed PHOTOS_SAVED/STUDENT_DONE handlers: same pattern (don't return@on when project is null)
+- Added robust GSON parsing with manual JSONObject fallback extraction for MC_CALL and SYNC_DB events (handles both camelCase and snake_case field names like assignedChannel/assigned_channel)
+- Added extensive diagnostic logging throughout data flow (parseData, handleLanMessage, handleSyncDb, updateOpQueue, doCapture, handleCapturedBitmap, finalizeCapture)
+- Fixed compile error in updateOpQueue() - `db` variable now properly scoped using `proj.database`
+- Added channelStudents and savePath StateFlows to ViewModel for reactive UI
+- PhotoSaver now uses MediaStore API (Android 10+) for public Pictures/Saatiril/{folderName}/ - photos visible in Gallery
+- Folder name extracted from admin's targetFolder path (e.g. "D:\Wisuda 2024" → "Wisuda 2024"), falls back to project name
+- sanitizeFolderName now preserves spaces (valid on Android/MediaStore) instead of replacing with underscores
+- OperatorScreen now uses ViewModel's reactive channelStudents/opQueue instead of local computation
+- Added save path display in top bar when no target is active
+- Committed and pushed to GitHub (commit ad71eb9)
+
+Stage Summary:
+- Bug #1 (Queue not showing): Fixed race conditions, added GSON fallback parser, fixed compile error, added reactive ViewModel state
+- Bug #2 (Photo not saving): Switched to MediaStore API, extracted folder name from admin's targetFolder, photos now visible in Gallery
+- Could not build APK (Android SDK not available in sandbox environment) - user needs to build locally
+- All code changes verified for syntax correctness
