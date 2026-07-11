@@ -80,8 +80,7 @@ fun OperatorScreen(
     // Also periodically re-check in case user grants from Settings
     var localPermissionState by remember {
         mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA)
-                    == PermissionChecker.PERMISSION_GRANTED
+            (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PermissionChecker.PERMISSION_GRANTED)
         )
     }
 
@@ -95,8 +94,7 @@ fun OperatorScreen(
     LaunchedEffect(Unit) {
         while (true) {
             kotlinx.coroutines.delay(1000)
-            val currentPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) 
-                    == PermissionChecker.PERMISSION_GRANTED
+            val currentPermission = (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PermissionChecker.PERMISSION_GRANTED)
             if (currentPermission != localPermissionState) {
                 localPermissionState = currentPermission
                 Log.i("OperatorScreen", "Permission state changed to: $currentPermission")
@@ -191,12 +189,9 @@ fun OperatorScreen(
                             // Show button to request permission
                             Button(
                                 onClick = {
-                                    // Request permission via activity
+                                    // Direct user to app settings to grant camera permission
                                     val activity = context as? ComponentActivity
                                     activity?.let {
-                                        ContextCompat.checkSelfPermission(it, Manifest.permission.CAMERA)
-                                        // Use the activity's permission launcher if available
-                                        // Otherwise, direct the user to app settings
                                         try {
                                             val intent = android.content.Intent(
                                                 android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,

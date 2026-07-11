@@ -75,8 +75,7 @@ class MainActivity : ComponentActivity() {
         viewModel = ViewModelProvider(this)[OperatorViewModel::class.java]
         
         // Check if camera permission is already granted (returning user)
-        _cameraPermissionGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) 
-            == PackageManager.PERMISSION_GRANTED
+        _cameraPermissionGranted = (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
         
         // Request permissions
         requestPermissions()
@@ -100,8 +99,7 @@ class MainActivity : ComponentActivity() {
     // (not the in-app dialog) — the Activity's _cameraPermissionGranted was stale
     override fun onResume() {
         super.onResume()
-        val nowGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) 
-            == PackageManager.PERMISSION_GRANTED
+        val nowGranted = (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
         if (nowGranted != _cameraPermissionGranted) {
             Log.i(TAG, "Camera permission state changed on resume: $_cameraPermissionGranted → $nowGranted")
             _cameraPermissionGranted = nowGranted

@@ -65,8 +65,7 @@ class BuiltInCameraManager(private val context: Context) {
      * This MUST be checked before calling init() or any CameraX API.
      */
     fun hasCameraPermission(): Boolean {
-        return ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA)
-                == PackageManager.PERMISSION_GRANTED
+        return (ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
     }
 
     // ─── Setup ──────────────────────────────────────────────────
