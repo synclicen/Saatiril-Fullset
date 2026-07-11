@@ -28,15 +28,21 @@ import java.io.ByteArrayOutputStream
  * - Camera management (built-in + UVC)
  * - Current project data (students, config, frame)
  * - Capture state machine (standby → ready-1 → ready-2 → sending)
- * - Gridline settings
- * - Connection health
- * - REQUEST_STATE retry loop (matches web client behavior)
+ * - Operator queue (MC_CALL buffer + project database)
+ * - Photo saving pipeline (capture → process → save locally → send via socket)
+ *
+ * KEY FIXES in this version:
+ * - Queue computation now includes active_N status students (matching Windows version)
+ * - Photo saving pipeline is complete: capture → CameraCapture → base64 → PhotoSaver + socket send
+ * - MC_CALL channel filtering matches Windows behavior exactly
+ * - updateOpQueue is called after every state mutation that could affect the queue
+ * - Comprehensive logging at every stage for debugging
  */
 class OperatorViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val TAG = "OperatorViewModel"
-        private const val STATE_REQUEST_INTERVAL_MS = 3000L  // Match web client
+        private const val STATE_REQUEST_INTERVAL_MS = 3000L
     }
 
     private val socketManager = SocketManager()
@@ -95,7 +101,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     // ─── Shutter Mode ──────────────────────────────────────────
 
-    private val _shutterMode = MutableStateFlow("manual") // "manual", "timer-3", "timer-5", "timer-10", "ai"
+    private val _shutterMode = MutableStateFlow("manual")
     val shutterMode: StateFlow<String> = _shutterMode.asStateFlow()
 
     private val _timerCountdown = MutableStateFlow(0)
@@ -103,39 +109,42 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     private var timerJob: Job? = null
 
-    // ─── Op Search (Photoshoot Mode) ────────────────────────────
+    // ─── Op Search ──────────────────────────────────────────────
 
     private val _opSearchQuery = MutableStateFlow("")
     val opSearchQuery: StateFlow<String> = _opSearchQuery.asStateFlow()
 
     // ─── MC Call Buffer ────────────────────────────────────────
-    // In photoshoot mode, MC_CALL events can arrive before SYNC_DB updates
-    // the database with 'sent' status. The buffer holds students from MC_CALL
-    // that aren't yet in the database with 'sent' status.
-    // Matches the Windows version's mcCallBuffer behavior.
+    // Holds students from MC_CALL that aren't yet in the database with
+    // 'sent' or 'active_N' status. Critical for photoshoot mode where
+    // MC_CALL can arrive before SYNC_DB updates the database.
 
     private val _mcCallBuffer = MutableStateFlow<List<Student>>(emptyList())
     val mcCallBuffer: StateFlow<List<Student>> = _mcCallBuffer.asStateFlow()
 
-    // ─── Operator Queue (computed from project + mcCallBuffer) ──
-    // The queue shown in the UI sidebar — combines database students with
-    // mcCallBuffer entries for a seamless view.
+    // ─── Operator Queue ─────────────────────────────────────────
+    // The queue shown in the UI — combines database students with
+    // mcCallBuffer entries. Computed reactively via updateOpQueue().
 
     private val _opQueue = MutableStateFlow<List<Student>>(emptyList())
     val opQueue: StateFlow<List<Student>> = _opQueue.asStateFlow()
 
     // channelStudents: All students for this channel (all statuses)
-    // Used by Queue List panel
     private val _channelStudents = MutableStateFlow<List<Student>>(emptyList())
     val channelStudents: StateFlow<List<Student>> = _channelStudents.asStateFlow()
 
-    // savePath: The directory where photos are being saved (for display in UI)
+    // savePath: The directory where photos are being saved
     private val _savePath = MutableStateFlow("")
     val savePath: StateFlow<String> = _savePath.asStateFlow()
 
     /**
      * Recompute the operator queue whenever project, mcCallBuffer, or myChannel changes.
-     * Should be called after every mutation to these sources.
+     * Called after every mutation to these sources.
+     *
+     * IMPORTANT: This now matches the Windows version's queue computation exactly:
+     * - Photoshoot: queue = db students with status "sent" or "active_N" (not yet photographed)
+     *   + mcCallBuffer entries (not yet in db with sent/active status)
+     * - Non-photoshoot: queue = all students for this channel (all statuses)
      */
     private fun updateOpQueue() {
         val proj = _project.value
@@ -143,7 +152,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         val isPhotoshoot = CameraModes.isPhotoshootMode(mode)
         val myCh = _myChannel.value
 
-        // Update channelStudents
+        // Update channelStudents (all students for this channel)
         _channelStudents.value = if (proj == null) {
             emptyList()
         } else if (isPhotoshoot) {
@@ -152,18 +161,27 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             proj.database.filter { it.assignedChannel == myCh }
         }
 
-        // Update opQueue
+        // Update opQueue (the searchable/clickable queue)
         val newQueue = if (proj == null) {
-            // No project yet — show mcCallBuffer entries
+            // No project yet — show mcCallBuffer entries only
             _mcCallBuffer.value
         } else if (isPhotoshoot) {
             val db = proj.database
             val alreadyPhotographed = proj.photoHistory
                 .filter { it.channel == myCh }
                 .map { it.student.id }.toSet()
-            val sentFromDb = db.filter { it.status == "sent" && !alreadyPhotographed.contains(it.id) }
+
+            // FIX: Include BOTH "sent" and "active_N" status students in the queue
+            // Windows version checks: s.status === 'sent'
+            // But MC can also send students with "active_N" status
+            val sentFromDb = db.filter { student ->
+                (student.status == "sent" || isActiveStatus(student.status)) &&
+                !alreadyPhotographed.contains(student.id)
+            }
             val sentIds = sentFromDb.map { it.id }.toSet()
             val doneIds = db.filter { it.status == "done" }.map { it.id }.toSet()
+
+            // Add mcCallBuffer entries not already in the db queue and not done
             val bufferAdditions = _mcCallBuffer.value.filter {
                 !sentIds.contains(it.id) && !doneIds.contains(it.id) && !alreadyPhotographed.contains(it.id)
             }
@@ -181,13 +199,16 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             )
         }
 
-        Log.d(TAG, "updateOpQueue: queueSize=${newQueue.size}, channelSize=${_channelStudents.value.size}, mode=$mode, isPhotoshoot=$isPhotoshoot, myCh=$myCh")
+        Log.d(TAG, "updateOpQueue: queueSize=${newQueue.size}, channelSize=${_channelStudents.value.size}, mode=$mode, isPhotoshoot=$isPhotoshoot, myCh=$myCh, mcCallBuffer=${_mcCallBuffer.value.size}")
+        if (newQueue.isNotEmpty()) {
+            Log.d(TAG, "updateOpQueue: first 3 queue items: ${newQueue.take(3).map { "${it.nama}(st=${it.status},ch=${it.assignedChannel})" }}")
+        }
         _opQueue.value = newQueue
     }
 
     // ─── Camera Source ──────────────────────────────────────────
 
-    private val _cameraSource = MutableStateFlow("none") // "uvc", "builtin", "none"
+    private val _cameraSource = MutableStateFlow("none")
     val cameraSource: StateFlow<String> = _cameraSource.asStateFlow()
 
     private val _uvcDeviceAttached = MutableStateFlow(false)
@@ -202,7 +223,6 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     val frameBitmap: StateFlow<Bitmap?> = _frameBitmap.asStateFlow()
 
     // ─── State Request Retry ────────────────────────────────────
-    // Matches web client behavior: keep requesting state until project is received
 
     private var stateRequestJob: Job? = null
 
@@ -224,37 +244,23 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     // ─── Camera Lifecycle ───────────────────────────────────────
 
-    // CRITICAL FIX: Track camera collector Jobs to prevent duplicate collectors
-    // on re-init (e.g., when permission is granted after first attempt)
     private var cameraConnectedCollector: Job? = null
     private var cameraTypeCollector: Job? = null
     private var uvcConnectedCollector: Job? = null
     private var uvcManagerInitialized: Boolean = false
 
-    /**
-     * Initialize camera when entering OperatorScreen.
-     * Must be called with the Activity's LifecycleOwner and a PreviewView.
-     *
-     * IDEMPOTENT: Safe to call multiple times. Old flow collectors are cancelled
-     * before creating new ones. BuiltInCameraManager.init() is also idempotent.
-     */
     fun initCamera(lifecycleOwner: LifecycleOwner, previewView: androidx.camera.view.PreviewView) {
-        // UVC manager init is also idempotent, but we only need to init once
         if (!uvcManagerInitialized) {
             uvcCameraManager.init()
             uvcManagerInitialized = true
         }
 
-        // CRITICAL FIX: Cancel old collectors FIRST to prevent receiving transient state
-        // when BuiltInCameraManager.init() resets _isConnected during camera selection
         cameraConnectedCollector?.cancel()
         cameraTypeCollector?.cancel()
         uvcConnectedCollector?.cancel()
 
-        // BuiltInCameraManager.init() is now idempotent — handles re-init gracefully
         builtInCameraManager.init(lifecycleOwner, previewView)
 
-        // Create new collectors after init
         cameraConnectedCollector = viewModelScope.launch {
             builtInCameraManager.isConnected.collect { connected ->
                 _cameraConnected.value = connected
@@ -263,7 +269,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         }
 
         cameraTypeCollector = viewModelScope.launch {
-            builtInCameraManager.cameraType.collect { type ->
+            builtInCameraManager.cameraType.collect {
                 updateCameraSource()
             }
         }
@@ -276,12 +282,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             }
         }
 
-        Log.i(TAG, "Camera initialized — collectors active, cameraSource=${_cameraSource.value}")
+        Log.i(TAG, "Camera initialized — cameraSource=${_cameraSource.value}")
     }
 
-    /**
-     * Update camera source based on the actual camera type reported by BuiltInCameraManager.
-     */
     private fun updateCameraSource() {
         val connected = builtInCameraManager.isConnected.value
         val cameraType = builtInCameraManager.cameraType.value
@@ -292,31 +295,29 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         }
 
         _cameraSource.value = when (cameraType) {
-            "external" -> "uvc"      // USB HDMI capture card → display as "USB Capture Card"
-            "back" -> "builtin"       // Built-in back camera → display as "Kamera HP"
-            "front" -> "builtin"      // Built-in front camera → display as "Kamera HP"
+            "external" -> "uvc"
+            "back" -> "builtin"
+            "front" -> "builtin"
             else -> "none"
         }
     }
 
-    /**
-     * Switch between front and back camera
-     */
     fun switchCamera() {
         builtInCameraManager.switchCamera()
     }
 
+    // ─── Photo Capture ──────────────────────────────────────────
+
     /**
-     * Capture a photo from the current camera.
-     * Supports timer mode: starts countdown before capture.
-     * The flow: camera captures → CameraCapture processes (crop, filter, frame) → ViewModel receives Bitmap → base64 encode → send
+     * Trigger a photo capture. Supports timer mode.
+     * Flow: trigger → [timer countdown] → doCapture → CameraCapture.processFrame →
+     *   handleCapturedBitmap → finalizeCapture → [save locally + send via socket]
      */
     fun triggerCapture() {
         val phase = _capturePhase.value
         if (phase == CapturePhase.SENDING || _isSending.value) return
         if (phase != CapturePhase.READY_1 && phase != CapturePhase.READY_2) return
 
-        // If timer mode, start countdown instead of immediate capture
         if (isTimerMode() && _timerCountdown.value <= 0) {
             startTimer { doCapture() }
             return
@@ -325,33 +326,32 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         doCapture()
     }
 
-    /**
-     * Cancel timer countdown and revert to ready state.
-     */
     fun cancelTimerCapture() {
         cancelTimer()
     }
 
     private fun doCapture() {
+        Log.i(TAG, "doCapture: phase=${_capturePhase.value}, target=${_currentTarget.value?.nama}")
         builtInCameraManager.capturePhoto { bitmap ->
             if (bitmap == null) {
                 Log.e(TAG, "Capture returned null bitmap")
                 return@capturePhoto
             }
 
-            // Process with CameraCapture (crop, filter, frame overlay)
             val config = _project.value?.config
             if (config == null) {
                 Log.e(TAG, "doCapture: project config is null — cannot capture!")
                 return@capturePhoto
             }
+
+            // Process with CameraCapture (crop to aspect ratio, filter, frame overlay)
             val processedBitmap = CameraCapture.processFrame(
                 sourceBitmap = bitmap,
                 config = config,
                 frameBitmap = _frameBitmap.value
             )
 
-            // Now handle the processed bitmap through the capture flow
+            Log.d(TAG, "doCapture: bitmap processed (${processedBitmap.width}x${processedBitmap.height})")
             handleCapturedBitmap(processedBitmap)
         }
     }
@@ -359,7 +359,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     /**
      * Handle a processed bitmap from capture.
      * Converts to base64 and adds to capturedPhotos list,
-     * then either waits for next pose or finalizes.
+     * then either waits for next pose (standard mode) or finalizes.
      */
     private fun handleCapturedBitmap(bitmap: Bitmap) {
         val mode = _project.value?.config?.mode
@@ -375,17 +375,19 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         val photosPerSession = CameraModes.photosPerSession(mode)
 
         viewModelScope.launch {
-            // Convert bitmap to base64 JPEG
+            // Convert bitmap to base64 JPEG data URI
             val base64 = bitmapToBase64(bitmap)
             val currentPhotos = _capturedPhotos.value.toMutableList()
             currentPhotos.add(base64)
             _capturedPhotos.value = currentPhotos
 
+            Log.i(TAG, "handleCapturedBitmap: photo ${currentPhotos.size}/${photosPerSession} captured for ${target.nama}")
+
             if (photosPerSession == 1 || currentPhotos.size >= photosPerSession) {
-                // All photos captured — finalize
+                // All photos captured — finalize (save locally + send via socket)
                 finalizeCapture(target, currentPhotos)
             } else {
-                // More photos needed
+                // More photos needed (standard mode: Toga done, Ijazah next)
                 _capturePhase.value = CapturePhase.READY_2
                 socketManager.sendOpProgress("Pose 1 OK — Siap Foto 2")
             }
@@ -394,7 +396,6 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     // ─── Connection ─────────────────────────────────────────────
 
-    // Track whether socket listeners have been set up to prevent double registration
     private var socketListenersInitialized = false
 
     fun connect(serverUrl: String, channel: Int, password: String? = null) {
@@ -403,7 +404,6 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         _authError.value = null
         _connectionError.value = null
 
-        // Only set up listeners once — they persist across reconnects
         if (!socketListenersInitialized) {
             setupSocketListeners()
             socketListenersInitialized = true
@@ -419,6 +419,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         _currentTarget.value = null
         _capturePhase.value = CapturePhase.STANDBY
         _capturedPhotos.value = emptyList()
+        _mcCallBuffer.value = emptyList()
         updateOpQueue()
     }
 
@@ -442,8 +443,6 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         socketManager.on("auth_success") {
             _passwordRequired.value = false
             _authError.value = null
-
-            // Start requesting state from admin (retry loop)
             startStateRequestLoop()
         }
 
@@ -470,84 +469,112 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             disconnect()
         }
 
-        // ─── Application Events ────────────────────────────────
+        // ─── MC_CALL ──────────────────────────────────────────────
+        // MC sends a student to the operator. Flow depends on mode:
+        // - Photoshoot: add to mcCallBuffer (operator selects manually)
+        // - Standard: set target directly and enter READY_1 phase
+        //
+        // IMPORTANT: Channel filtering matches Windows version exactly.
+        // In photoshoot mode, ALL channels are processed (operator picks from queue).
+        // In standard mode, only MC_CALL for this channel is processed.
 
         socketManager.on(SocketEvents.MC_CALL) { data ->
-            val mcCall = data as? McCallData ?: return@on
+            val mcCall = data as? McCallData
+            if (mcCall == null) {
+                Log.e(TAG, "MC_CALL: data is not McCallData — type=${data?.javaClass?.simpleName}")
+                return@on
+            }
 
-            // Don't require project to be non-null — MC_CALL can arrive before SYNC_DB
+            Log.i(TAG, "MC_CALL received: student=${mcCall.student.nama}, nim=${mcCall.student.nim}, ch=${mcCall.channel}, status=${mcCall.student.status}, myCh=${_myChannel.value}")
+
             val mode = _project.value?.config?.mode
             val isPhotoshoot = mode != null && CameraModes.isPhotoshootMode(mode)
 
-            // Filter by channel (except photoshoot mode where all calls are relevant)
-            if (!isPhotoshoot && mode != null && mcCall.channel != _myChannel.value) {
+            // Channel filtering: matches Windows version
+            // Windows: if (data.channel !== myChannelRef.current) return
+            // BUT in photoshoot mode, both channels receive MC_CALL for the same student
+            // In standard mode, only process for our channel
+            if (!isPhotoshoot && mcCall.channel != _myChannel.value) {
                 Log.d(TAG, "MC_CALL for channel ${mcCall.channel}, ignoring (my channel: ${_myChannel.value})")
                 return@on
             }
 
             if (isPhotoshoot) {
-                // Photoshoot mode: add to buffer ONLY — operator selects manually
+                // Photoshoot mode: add to buffer — operator selects from queue
                 val buffer = _mcCallBuffer.value.toMutableList()
                 // Replace existing entry for same student (MC may re-send after reset)
                 val without = buffer.filter { it.id != mcCall.student.id }
                 _mcCallBuffer.value = without + mcCall.student
-                Log.d(TAG, "MC_CALL (photoshoot): Added ${mcCall.student.nama} to mcCallBuffer (size=${without.size + 1})")
+                Log.i(TAG, "MC_CALL (photoshoot): Added ${mcCall.student.nama} to mcCallBuffer (size=${without.size + 1})")
             } else {
                 // Standard mode: set target directly
                 _currentTarget.value = mcCall.student
                 _capturePhase.value = CapturePhase.READY_1
                 _capturedPhotos.value = emptyList()
-                Log.i(TAG, "MC_CALL (standard): Set target to ${mcCall.student.nama}")
+                Log.i(TAG, "MC_CALL (standard): Set target to ${mcCall.student.nama}, status=${mcCall.student.status}")
             }
 
-            // If project is null, store the MC call student temporarily so it appears in queue
+            // If project is null, store the MC call student in buffer so it appears in queue
             if (_project.value == null) {
                 Log.d(TAG, "MC_CALL: Project is null, storing student in mcCallBuffer temporarily")
                 val buffer = _mcCallBuffer.value.toMutableList()
-                if (buffer.none { it.id == mcCall.student.id }) {
-                    buffer.add(mcCall.student)
-                    _mcCallBuffer.value = buffer
-                }
+                val without = buffer.filter { it.id != mcCall.student.id }
+                _mcCallBuffer.value = without + mcCall.student
             }
 
             updateOpQueue()
         }
 
+        // ─── SYNC_DB ──────────────────────────────────────────────
+
         socketManager.on(SocketEvents.SYNC_DB) { data ->
-            val syncData = data as? SyncDbData ?: return@on
+            val syncData = data as? SyncDbData
+            if (syncData == null) {
+                Log.e(TAG, "SYNC_DB: data is not SyncDbData — type=${data?.javaClass?.simpleName}")
+                return@on
+            }
+
+            Log.i(TAG, "SYNC_DB received: project=${syncData.project.name}, dbSize=${syncData.project.database.size}, mode=${syncData.project.config.mode}, targetFolder='${syncData.project.config.targetFolder}'")
             handleSyncDb(syncData.project)
 
-            // Stop the state request loop once we have project data
             if (_project.value != null) {
                 stopStateRequestLoop()
             }
         }
 
-        socketManager.on(SocketEvents.STUDENT_RESET) { data ->
-            val resetData = data as? StudentResetData ?: return@on
+        // ─── STUDENT_RESET ────────────────────────────────────────
 
-            // Don't require project to be non-null — STUDENT_RESET can arrive before SYNC_DB
+        socketManager.on(SocketEvents.STUDENT_RESET) { data ->
+            val resetData = data as? StudentResetData
+            if (resetData == null) {
+                Log.e(TAG, "STUDENT_RESET: data is not StudentResetData — type=${data?.javaClass?.simpleName}")
+                return@on
+            }
+
+            Log.i(TAG, "STUDENT_RESET received: studentId=${resetData.studentId}, channel=${resetData.channel}")
+
             val mode = _project.value?.config?.mode
             val isPhotoshoot = mode != null && CameraModes.isPhotoshootMode(mode)
 
             // Filter by channel (except photoshoot mode)
-            if (!isPhotoshoot && mode != null && resetData.channel != _myChannel.value) return@on
+            if (!isPhotoshoot && resetData.channel != _myChannel.value) return@on
 
             // Clear current target if it matches
             if (_currentTarget.value?.id == resetData.studentId) {
                 _currentTarget.value = null
                 _capturePhase.value = CapturePhase.STANDBY
                 _capturedPhotos.value = emptyList()
+                Log.i(TAG, "STUDENT_RESET: Cleared current target ${resetData.studentId}")
             }
 
             // Clear matching entry from mcCallBuffer
             val buffer = _mcCallBuffer.value.toMutableList()
             if (buffer.removeAll { it.id == resetData.studentId }) {
                 _mcCallBuffer.value = buffer
-                Log.d(TAG, "STUDENT_RESET: Cleared ${resetData.studentId} from mcCallBuffer (size=${buffer.size})")
+                Log.d(TAG, "STUDENT_RESET: Cleared from mcCallBuffer (remaining=${buffer.size})")
             }
 
-            // Update project database — reset student status (if project exists)
+            // Update project database — reset student status
             _project.value?.let { proj ->
                 val updatedDb = proj.database.map { student ->
                     if (student.id == resetData.studentId) {
@@ -558,25 +585,22 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             }
 
             updateOpQueue()
-
-            Log.i(TAG, "STUDENT_RESET: ${resetData.studentId}")
         }
+
+        // ─── FRAME_DATA ──────────────────────────────────────────
 
         socketManager.on(SocketEvents.FRAME_DATA) { data ->
             val frameData = data as? FrameDataPayload ?: return@on
-            Log.i(TAG, "FRAME_DATA received: ${frameData.frame.take(50)}...")
+            Log.i(TAG, "FRAME_DATA received: length=${frameData.frame.length}")
             _project.value?.let { proj ->
                 _project.value = proj.copy(
                     config = proj.config.copy(frame = frameData.frame)
                 )
             }
-            // Decode base64 frame to Bitmap for overlay rendering
             decodeFrameBitmap(frameData.frame)
         }
 
-        // ── PHOTOS_SAVED from other operators (dual-photoshoot mode) ──
-        // When another operator finishes photographing the same student,
-        // we may need to clear our target (dual-photoshoot: either camera is enough)
+        // ─── PHOTOS_SAVED (from other operators in dual mode) ─────
 
         socketManager.on(SocketEvents.PHOTOS_SAVED) { data ->
             val photosSaved = data as? PhotosSavedData ?: return@on
@@ -587,7 +611,6 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
             _currentTarget.value?.let { target ->
                 if (target.id == photosSaved.student.id) {
-                    // Other operator finished our target — clear it
                     _currentTarget.value = null
                     _capturePhase.value = CapturePhase.STANDBY
                     _capturedPhotos.value = emptyList()
@@ -596,17 +619,14 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             }
         }
 
-        // ── STUDENT_DONE from other operators (dual mode) ──
-        // In standard dual mode, we want to know when the other operator marks done
+        // ─── STUDENT_DONE (from other operators in dual mode) ─────
 
         socketManager.on(SocketEvents.STUDENT_DONE) { data ->
             val doneData = data as? StudentDoneData ?: return@on
             val mode = _project.value?.config?.mode
 
-            // Only relevant in dual mode and from a different channel
             if (mode == null || !CameraModes.isDualMode(mode) || doneData.channel == _myChannel.value) return@on
 
-            // Update local project state for this student
             _project.value?.let { proj ->
                 val updatedDb = proj.database.map { student ->
                     if (student.id == doneData.studentId) {
@@ -617,7 +637,6 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             }
 
             updateOpQueue()
-
             Log.d(TAG, "STUDENT_DONE from other operator: ${doneData.studentId}")
         }
     }
@@ -630,15 +649,14 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         if (currentProject == null) {
             // First sync — use incoming data directly
             _project.value = incomingProject
-            Log.i(TAG, "SYNC_DB: First sync, project: ${incomingProject.name}, mode: ${incomingProject.config.mode}, dbSize: ${incomingProject.database.size}, targetFolder: ${incomingProject.config.targetFolder}")
+            Log.i(TAG, "SYNC_DB (first): project=${incomingProject.name}, mode=${incomingProject.config.mode}, dbSize=${incomingProject.database.size}, targetFolder='${incomingProject.config.targetFolder}'")
             if (incomingProject.database.isNotEmpty()) {
-                Log.d(TAG, "SYNC_DB: First 3 students: ${incomingProject.database.take(3).map { "${it.nama}(ch=${it.assignedChannel},st=${it.status})" }}")
+                Log.d(TAG, "SYNC_DB (first): First 3 students: ${incomingProject.database.take(3).map { "${it.nama}(ch=${it.assignedChannel},st=${it.status})" }}")
             }
 
             // Clear mcCallBuffer entries that now exist in the database with same or higher status
             val dbIdSet = incomingProject.database.map { it.id }.toSet()
             val buffer = _mcCallBuffer.value.toMutableList()
-            // Keep buffer entries NOT in the database yet (edge case: MC_CALL before SYNC_DB)
             val newBuffer = buffer.filter { !dbIdSet.contains(it.id) }
             if (newBuffer.size != buffer.size) {
                 _mcCallBuffer.value = newBuffer
@@ -647,14 +665,14 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
             // Decode frame bitmap if present
             decodeFrameBitmap(incomingProject.config.frame)
-            // If we have __FRAME_SAVED__ marker, request actual frame
             if (incomingProject.config.frame == "__FRAME_SAVED__") {
                 socketManager.requestFrame(incomingProject.id)
             }
+
             // Re-find active student for non-photoshoot mode after first sync
             if (!CameraModes.isPhotoshootMode(incomingProject.config.mode)) {
                 val activeStudent = incomingProject.database.find {
-                    it.assignedChannel == _myChannel.value && it.status == "active_${_myChannel.value}"
+                    it.assignedChannel == _myChannel.value && isActiveStatus(it.status)
                 }
                 if (activeStudent != null && _currentTarget.value?.id != activeStudent.id) {
                     _currentTarget.value = activeStudent
@@ -671,13 +689,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
         // Merge databases — keep the "most advanced" status per student
         val mergedDb = mergeDatabases(currentProject.database, incomingProject.database)
-
-        // Merge captureVersions — take max per key
-        val mergedVersions = mergeCaptureVersions(
-            currentProject.captureVersions, incomingProject.captureVersions
-        )
-
-        // Merge photoHistory — if incoming has photos use incoming; if stripped keep local
+        val mergedVersions = mergeCaptureVersions(currentProject.captureVersions, incomingProject.captureVersions)
         val mergedHistory = mergePhotoHistory(currentProject.photoHistory, incomingProject.photoHistory)
 
         // Preserve frame if incoming has marker
@@ -696,8 +708,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
         _project.value = mergedProject
 
-        // Clear mcCallBuffer entries that are now 'done' or 'sent' in the merged database
-        // This prevents showing students in the queue that are already being processed
+        Log.i(TAG, "SYNC_DB (merge): dbSize=${mergedDb.size}, mode=${mergedProject.config.mode}, targetFolder='${mergedProject.config.targetFolder}'")
+
+        // Clear mcCallBuffer entries that are now 'done' in the merged database
         val buffer = _mcCallBuffer.value.toMutableList()
         val doneIds = mergedDb.filter { it.status == "done" }.map { it.id }.toSet()
         if (buffer.removeAll { doneIds.contains(it.id) }) {
@@ -705,7 +718,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             Log.d(TAG, "SYNC_DB: Cleared done students from mcCallBuffer (remaining=${buffer.size})")
         }
 
-        // If current target became 'done' in merged data (dual-photoshoot race condition)
+        // If current target became 'done' in merged data
         _currentTarget.value?.let { target ->
             val updatedStudent = mergedDb.find { it.id == target.id }
             if (updatedStudent?.status == "done") {
@@ -716,10 +729,10 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             }
         }
 
-        // Re-find active student for non-photoshoot mode (matches Windows behavior)
+        // Re-find active student for non-photoshoot mode
         if (!CameraModes.isPhotoshootMode(mergedProject.config.mode)) {
             val activeStudent = mergedDb.find {
-                it.assignedChannel == _myChannel.value && it.status == "active_${_myChannel.value}"
+                it.assignedChannel == _myChannel.value && isActiveStatus(it.status)
             }
             if (activeStudent != null && _currentTarget.value?.id != activeStudent.id) {
                 _currentTarget.value = activeStudent
@@ -733,12 +746,10 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
         updateOpQueue()
 
-        // Handle frame bitmap decoding
+        // Handle frame bitmap
         if (preservedFrame == "__FRAME_SAVED__") {
-            // Request actual frame data from admin
             socketManager.requestFrame(incomingProject.id)
         } else if (preservedFrame != currentProject.config.frame) {
-            // Frame changed — decode the new frame
             decodeFrameBitmap(preservedFrame)
         }
     }
@@ -754,8 +765,8 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             val loc = localMap[inc.id]
             if (loc == null) return@map inc
 
-            val locPriority = statusPriority[loc.status] ?: (if (loc.status.startsWith("active_")) 2 else 3)
-            val incPriority = statusPriority[inc.status] ?: (if (inc.status.startsWith("active_")) 2 else 3)
+            val locPriority = statusPriority[loc.status] ?: (if (isActiveStatus(loc.status)) 2 else 3)
+            val incPriority = statusPriority[inc.status] ?: (if (isActiveStatus(inc.status)) 2 else 3)
 
             if (locPriority >= incPriority) loc else inc
         }
@@ -780,15 +791,27 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             val loc = localMap[key]
 
             if (loc != null && inc.photos.isEmpty() && loc.photos.isNotEmpty()) {
-                loc // Keep local if incoming is stripped
+                loc
             } else {
                 inc
             }
         }
     }
 
-    // ─── Photo Capture ──────────────────────────────────────────
+    // ─── Finalize Capture ───────────────────────────────────────
 
+    /**
+     * Complete the capture pipeline:
+     * 1. Send STUDENT_DONE (standard mode only — lightweight, unblocks MC immediately)
+     * 2. Send PHOTOS_SAVED (photos + filename for Admin gallery)
+     * 3. Send OP_PROGRESS
+     * 4. Save photos to local Android storage (PhotoSaver)
+     * 5. Update local project state (student status → "done")
+     * 6. Send SYNC_DB to sync with other clients
+     * 7. Reset capture state
+     *
+     * This matches the Windows version's finalizeCapture flow exactly.
+     */
     private suspend fun finalizeCapture(student: Student, photos: List<String>) {
         val mode = _project.value?.config?.mode
         val proj = _project.value
@@ -797,7 +820,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             return
         }
 
-        Log.i(TAG, "finalizeCapture: student=${student.nama}, photos=${photos.size}, mode=$mode, targetFolder=${proj.config.targetFolder}")
+        Log.i(TAG, "finalizeCapture: student=${student.nama}, photos=${photos.size}, mode=$mode, targetFolder='${proj.config.targetFolder}'")
         _capturePhase.value = CapturePhase.SENDING
         _isSending.value = true
 
@@ -808,8 +831,6 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             val newVersion = currentVersion + 1
 
             // Build filenames — one per photo, matching Windows version naming convention
-            // Standard mode: Photo 1 = Toga (suffix 1), Photo 2 = Ijazah (suffix 2)
-            // Photoshoot mode: Single photo, channel suffix only if > 1
             val filenames: List<String> = if (CameraModes.isPhotoshootMode(mode)) {
                 listOf(FilenameUtils.buildPhotoshootFilename(student.nim, student.nama, _myChannel.value, newVersion))
             } else {
@@ -820,10 +841,11 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
                 }
             }
 
-            // Primary filename for the PHOTOS_SAVED event (backward compatibility)
             val primaryFilename = filenames.firstOrNull() ?: ""
 
-            // 1. Send STUDENT_DONE first (lightweight, lets MC call next student immediately)
+            Log.d(TAG, "finalizeCapture: filenames=$filenames, version=$newVersion")
+
+            // 1. Send STUDENT_DONE first (lightweight — lets MC call next student immediately)
             if (!CameraModes.isPhotoshootMode(mode)) {
                 socketManager.sendStudentDone(student.id)
             }
@@ -839,9 +861,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             // 3. Send OP_PROGRESS
             socketManager.sendOpProgress("Selesai — Menunggu target...")
 
-            // 4. Save photos to local Android storage using PhotoSaver utility
-            //    Each photo gets its own filename. Uses admin's targetFolder for
-            //    the subfolder name (extracted from Windows path), falls back to project name.
+            // 4. Save photos to local Android storage using PhotoSaver
             val projectName = proj.name.ifBlank { "Saatiril" }
             val targetFolder = proj.config.targetFolder
             val appContext = getApplication<Application>()
@@ -902,8 +922,8 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
             Log.i(TAG, "Capture finalized for ${student.nama} — ${photos.size} photo(s) saved")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to finalize capture: ${e.message}")
-            _capturePhase.value = CapturePhase.READY_1 // Revert on error
+            Log.e(TAG, "Failed to finalize capture: ${e.message}", e)
+            _capturePhase.value = CapturePhase.READY_1
         } finally {
             _isSending.value = false
         }
@@ -928,14 +948,12 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         _opSearchQuery.value = query
     }
 
-    /**
-     * Manually set the current target (used in photoshoot mode when operator selects from search).
-     */
     fun setOpCurrentTarget(student: Student) {
         _currentTarget.value = student
         _capturePhase.value = CapturePhase.READY_1
         _capturedPhotos.value = emptyList()
         socketManager.sendOpProgress("Target dipilih: ${student.nama}")
+        Log.i(TAG, "setOpCurrentTarget: ${student.nama}, status=${student.status}")
     }
 
     fun getTimerDuration(): Int = when (_shutterMode.value) {
@@ -990,11 +1008,6 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     // ─── Frame Bitmap Decoding ──────────────────────────────────
 
-    /**
-     * Decode base64 frame string to Bitmap for overlay rendering.
-     * Called when FRAME_DATA is received or when project config has a frame.
-     * Runs on a background coroutine to avoid blocking the main thread.
-     */
     private fun decodeFrameBitmap(frameBase64: String?) {
         if (frameBase64 == null || frameBase64 == "__FRAME_SAVED__" || frameBase64.isEmpty()) {
             _frameBitmap.value = null
@@ -1026,14 +1039,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         if (attached) {
             uvcCameraManager.scanForUVCDevices()
         }
-        // Tell BuiltInCameraManager to rescan — it will auto-detect external cameras
-        // and update cameraType flow, which triggers updateCameraSource()
         builtInCameraManager.rescanForExternalCamera()
-    }
-
-    private fun hasBuiltinCamera(): Boolean {
-        return getApplication<Application>().packageManager
-            .hasSystemFeature(android.content.pm.PackageManager.FEATURE_CAMERA_ANY)
     }
 
     // ─── Cleanup ────────────────────────────────────────────────
@@ -1042,7 +1048,6 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         super.onCleared()
         stopStateRequestLoop()
         cancelTimer()
-        // Cancel camera collectors
         cameraConnectedCollector?.cancel()
         cameraTypeCollector?.cancel()
         uvcConnectedCollector?.cancel()

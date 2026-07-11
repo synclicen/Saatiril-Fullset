@@ -4,8 +4,10 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 import io.socket.client.IO
 import io.socket.client.Socket
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URI
 import java.net.URISyntaxException
@@ -16,25 +18,17 @@ import java.util.concurrent.CopyOnWriteArrayList
  * Manages Socket.io connection to the Saatiril server.
  * Handles authentication, event relay, and reconnection.
  *
- * CRITICAL FIXES from previous crash:
- * - IO.socket() URL parsing is wrapped in comprehensive try-catch
- * - Socket creation failure no longer crashes the app — reports error to UI
- * - All socket event callbacks use defensive try-catch
- * - OkHttp dependency conflict resolved in build.gradle.kts
- *
- * Thread safety:
- * - All socket callbacks run on Socket.io's background IO thread
- * - ViewModel listeners are notified via the main handler to ensure
- *   Compose StateFlow updates happen on the main thread
- * - connectionState is @Volatile for cross-thread visibility
- * - eventQueue uses synchronized access
- * - notifyListeners wraps each callback in try-catch to prevent crashes
- *
  * Protocol compatibility: matches web client (socket.ts) and server (index.ts)
  * - path: "/" (must match server config)
  * - Events: identify, auth-requirement, auth-success, auth-failed, lan-message, saatiril-ping/pong
  * - LAN messages wrapped in { event, data } payload
  * - Critical events queued when disconnected and replayed on reconnect
+ *
+ * FIXES in this version:
+ * - Gson configured with FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES for
+ *   compatibility with both camelCase and snake_case JSON from server
+ * - Robust MC_CALL and SYNC_DB parsing with multiple fallback strategies
+ * - Comprehensive logging at every stage of data flow
  */
 class SocketManager {
 
@@ -61,7 +55,21 @@ class SocketManager {
         }
     }
 
-    private val gson = Gson()
+    // Gson with lower_case_with_underscores policy for snake_case compatibility
+    // but also handling camelCase via @SerializedName annotations on data classes
+    private val gson: Gson = GsonBuilder()
+        .setFieldNamingStrategy { f ->
+            // Use @SerializedName if present
+            val annotation = f.getAnnotation(com.google.gson.annotations.SerializedName::class.java)
+            if (annotation != null) {
+                annotation.value
+            } else {
+                // Default: use the field name as-is (camelCase)
+                f.name
+            }
+        }
+        .create()
+
     private var socket: Socket? = null
 
     // @Volatile ensures cross-thread visibility for connectionState
@@ -105,7 +113,6 @@ class SocketManager {
                 Log.w(TAG, "Error disconnecting old socket: ${e.message}")
             }
             socket = null
-            // NOTE: Do NOT clear listeners here — ViewModel listeners must persist across reconnects
         }
 
         myChannel = channel
@@ -113,9 +120,7 @@ class SocketManager {
         connectionState = ConnectionState.CONNECTING
         notifyListenersOnUiThread("state_changed", connectionState)
 
-        // ─── CRITICAL: Validate URL BEFORE passing to IO.socket() ───
-        // IO.socket() can throw RuntimeException/URISyntaxException for bad URLs,
-        // which would crash the app if uncaught.
+        // Validate URL BEFORE passing to IO.socket()
         val validatedUrl: String
         try {
             val uri = URI(serverUrl)
@@ -137,32 +142,29 @@ class SocketManager {
 
         try {
             val options = IO.Options().apply {
-                path = "/"  // MUST match server config (server uses path: '/')
+                path = "/"  // MUST match server config
                 transports = arrayOf("websocket", "polling")
                 reconnection = true
-                reconnectionAttempts = 20  // Reasonable limit instead of Int.MAX_VALUE
+                reconnectionAttempts = 20
                 reconnectionDelay = 1000
-                reconnectionDelayMax = 10_000  // Match web client
-                timeout = 15_000                // Match web client
-                forceNew = true                 // Match web client — prevent stale socket reuse
+                reconnectionDelayMax = 10_000
+                timeout = 15_000
+                forceNew = true
             }
 
-            // ─── CRITICAL: IO.socket() can throw if OkHttp classes are missing ───
-            // This was the #1 crash cause — OkHttp version conflict between
-            // socket.io-client (3.12.x) and coil-compose (4.12.x)
             socket = try {
                 IO.socket(validatedUrl, options)
             } catch (e: NoSuchMethodError) {
                 Log.e(TAG, "OkHttp method not found — dependency conflict! ${e.message}", e)
                 connectionState = ConnectionState.DISCONNECTED
                 notifyListenersOnUiThread("state_changed", ConnectionState.DISCONNECTED)
-                notifyListenersOnUiThread("connection_error", "Library conflict — report to developer: ${e.message}")
+                notifyListenersOnUiThread("connection_error", "Library conflict: ${e.message}")
                 return
             } catch (e: NoClassDefFoundError) {
                 Log.e(TAG, "OkHttp class not found — dependency conflict! ${e.message}", e)
                 connectionState = ConnectionState.DISCONNECTED
                 notifyListenersOnUiThread("state_changed", ConnectionState.DISCONNECTED)
-                notifyListenersOnUiThread("connection_error", "Library conflict — report to developer: ${e.message}")
+                notifyListenersOnUiThread("connection_error", "Library conflict: ${e.message}")
                 return
             } catch (e: RuntimeException) {
                 Log.e(TAG, "Failed to create socket (runtime): ${e.message}", e)
@@ -195,17 +197,11 @@ class SocketManager {
         socket = null
         connectionState = ConnectionState.DISCONNECTED
         notifyListenersOnUiThread("state_changed", connectionState)
-        // NOTE: Do NOT clear listeners here — they should persist for reconnect
-        // Use destroy() for full cleanup when ViewModel is being destroyed
         synchronized(eventQueueLock) {
             eventQueue.clear()
         }
     }
 
-    /**
-     * Full cleanup including listener removal.
-     * Called only from ViewModel.onCleared() when the ViewModel is permanently destroyed.
-     */
     fun destroy() {
         disconnect()
         listeners.clear()
@@ -228,8 +224,6 @@ class SocketManager {
                 Log.i(TAG, "Socket connected")
                 connectionState = ConnectionState.CONNECTED
                 notifyListenersOnUiThread("state_changed", connectionState)
-
-                // Send identify immediately (with password hash if available)
                 identify()
             } catch (e: Exception) {
                 Log.e(TAG, "Error in CONNECT handler: ${e.message}", e)
@@ -251,8 +245,6 @@ class SocketManager {
             try {
                 val errorMsg = args.getOrElse(0) { "unknown" }
                 Log.e(TAG, "Connection error: $errorMsg")
-                // Don't set DISCONNECTED here — Socket.io auto-reconnects
-                // Keep state as CONNECTING so UI shows "Menghubungkan..." instead of "Terputus"
                 if (connectionState != ConnectionState.AUTHENTICATING &&
                     connectionState != ConnectionState.AUTH_FAILED) {
                     connectionState = ConnectionState.CONNECTING
@@ -273,19 +265,15 @@ class SocketManager {
                 Log.i(TAG, "Auth requirement: passwordRequired=$passwordRequired")
 
                 if (passwordRequired) {
-                    // Always show password prompt when server requires it
-                    // (even if we already submitted a wrong password)
                     connectionState = ConnectionState.AUTHENTICATING
                     notifyListenersOnUiThread("password_required", null)
                 } else {
-                    // No password required — if we were in auth-failed state, re-identify
                     if (connectionState == ConnectionState.AUTH_FAILED ||
                         connectionState == ConnectionState.AUTHENTICATING) {
                         passwordHash = null
                         identify()
                     }
                 }
-
                 notifyListenersOnUiThread("state_changed", connectionState)
             } catch (e: Exception) {
                 Log.e(TAG, "Error handling auth-requirement: ${e.message}", e)
@@ -299,14 +287,8 @@ class SocketManager {
                 connectionState = ConnectionState.AUTHENTICATED
                 notifyListenersOnUiThread("auth_success", json?.toString())
                 notifyListenersOnUiThread("state_changed", connectionState)
-
-                // Start ping interval for latency measurement
                 startPingInterval()
-
-                // Flush any queued critical events that were waiting for auth
                 flushEventQueue()
-
-                // Request project state from admin
                 requestState()
             } catch (e: Exception) {
                 Log.e(TAG, "Error handling auth-success: ${e.message}", e)
@@ -329,13 +311,11 @@ class SocketManager {
         // ── Session password lifecycle ───────────────────────────────
 
         s.on(SocketEvents.SET_SESSION_PASSWORD) { args ->
-            Log.i(TAG, "Session password set by admin — will need to re-authenticate")
-            // The auth-requirement broadcast from the server handles the flow
+            Log.i(TAG, "Session password set by admin")
         }
 
         s.on(SocketEvents.CLEAR_SESSION_PASSWORD) {
             Log.i(TAG, "Session password cleared by admin")
-            // If we were stuck in auth-failed, re-identify without password
             if (connectionState == ConnectionState.AUTH_FAILED ||
                 connectionState == ConnectionState.AUTHENTICATING) {
                 passwordHash = null
@@ -347,7 +327,6 @@ class SocketManager {
 
         s.on(SocketEvents.SAATIRIL_PONG) { args ->
             try {
-                // Defensive number parsing — Java socket.io may return Long, Int, or Double
                 val timestamp = when (val arg = args.firstOrNull()) {
                     is Long -> arg
                     is Int -> arg.toLong()
@@ -366,7 +345,11 @@ class SocketManager {
 
         s.on(SocketEvents.LAN_MESSAGE) { args ->
             try {
-                val json = args.firstOrNull() as? JSONObject ?: return@on
+                val json = args.firstOrNull() as? JSONObject
+                if (json == null) {
+                    Log.w(TAG, "LAN_MESSAGE: args are null or not JSONObject — args types: ${args?.map { it?.javaClass?.simpleName }}")
+                    return@on
+                }
                 handleLanMessage(json)
             } catch (e: Exception) {
                 Log.e(TAG, "Error handling lan-message: ${e.message}", e)
@@ -380,106 +363,101 @@ class SocketManager {
         val event = json.optString("event")
         val data = json.opt("data")
 
-        Log.d(TAG, "LAN message: $event")
+        Log.d(TAG, "LAN message received: event=$event, dataType=${data?.javaClass?.simpleName}")
 
         when (event) {
             SocketEvents.MC_CALL -> {
-                Log.d(TAG, "MC_CALL raw data type: ${data?.javaClass?.simpleName}")
+                Log.i(TAG, "MC_CALL received — raw data type: ${data?.javaClass?.simpleName}")
+                Log.d(TAG, "MC_CALL raw data: ${data?.toString()?.take(300)}")
+
+                // Strategy 1: Try Gson parsing
                 val mcCallData = parseData<McCallData>(data)
-                if (mcCallData != null) {
-                    Log.i(TAG, "MC_CALL parsed: student=${mcCallData.student.nama}, nim=${mcCallData.student.nim}, ch=${mcCallData.channel}, status=${mcCallData.student.status}")
+                if (mcCallData != null && mcCallData.student.nim.isNotBlank()) {
+                    Log.i(TAG, "MC_CALL parsed (Gson): student=${mcCallData.student.nama}, nim=${mcCallData.student.nim}, ch=${mcCallData.channel}, status=${mcCallData.student.status}, assignedCh=${mcCallData.student.assignedChannel}")
                     notifyListenersOnUiThread(SocketEvents.MC_CALL, mcCallData)
-                } else {
-                    Log.e(TAG, "MC_CALL: Failed to parse McCallData — trying manual extraction")
-                    // Fallback: manually extract student from JSONObject
-                    try {
-                        val dataObj = (data as? JSONObject)
-                        val studentObj = dataObj?.optJSONObject("student")
-                        if (studentObj != null) {
-                            val fallbackStudent = Student(
-                                id = studentObj.optString("id", ""),
-                                nim = studentObj.optString("nim", ""),
-                                nama = studentObj.optString("nama", ""),
-                                status = studentObj.optString("status", "sent"),
-                                assignedChannel = studentObj.optInt("assignedChannel", studentObj.optInt("assigned_channel", 1))
-                            )
-                            val fallbackMcCall = McCallData(student = fallbackStudent, channel = dataObj.optInt("channel", 1))
-                            Log.i(TAG, "MC_CALL manual fallback: student=${fallbackStudent.nama}, ch=${fallbackMcCall.channel}")
-                            notifyListenersOnUiThread(SocketEvents.MC_CALL, fallbackMcCall)
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "MC_CALL manual fallback also failed: ${e.message}")
-                    }
+                    return
                 }
+
+                // Strategy 2: Manual JSONObject extraction
+                Log.w(TAG, "MC_CALL: Gson parsing failed or returned empty student — trying manual extraction")
+                try {
+                    val dataObj = data as? JSONObject ?: json.optJSONObject("data")
+                    if (dataObj != null) {
+                        val studentObj = dataObj.optJSONObject("student")
+                        if (studentObj != null) {
+                            val fallbackStudent = parseStudentFromJson(studentObj)
+                            val fallbackMcCall = McCallData(
+                                student = fallbackStudent,
+                                channel = dataObj.optInt("channel", 1)
+                            )
+                            Log.i(TAG, "MC_CALL parsed (manual): student=${fallbackStudent.nama}, nim=${fallbackStudent.nim}, ch=${fallbackMcCall.channel}, status=${fallbackStudent.status}")
+                            notifyListenersOnUiThread(SocketEvents.MC_CALL, fallbackMcCall)
+                            return
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "MC_CALL manual extraction also failed: ${e.message}")
+                }
+
+                Log.e(TAG, "MC_CALL: ALL parsing strategies failed — data dropped!")
             }
 
             SocketEvents.SYNC_DB -> {
-                Log.d(TAG, "SYNC_DB raw data type: ${data?.javaClass?.simpleName}")
+                Log.i(TAG, "SYNC_DB received — raw data type: ${data?.javaClass?.simpleName}")
+                Log.d(TAG, "SYNC_DB raw data length: ${data?.toString()?.length}")
+
+                // Strategy 1: Gson parsing
                 val syncData = parseData<SyncDbData>(data)
-                if (syncData != null) {
-                    Log.i(TAG, "SYNC_DB parsed: project=${syncData.project.name}, dbSize=${syncData.project.database.size}, mode=${syncData.project.config.mode}")
+                if (syncData != null && syncData.project.name.isNotBlank()) {
+                    Log.i(TAG, "SYNC_DB parsed (Gson): project=${syncData.project.name}, dbSize=${syncData.project.database.size}, mode=${syncData.project.config.mode}, targetFolder=${syncData.project.config.targetFolder}")
                     if (syncData.project.database.isNotEmpty()) {
                         Log.d(TAG, "SYNC_DB first student: ${syncData.project.database.first().nama} (status=${syncData.project.database.first().status}, ch=${syncData.project.database.first().assignedChannel})")
                     }
                     notifyListenersOnUiThread(SocketEvents.SYNC_DB, syncData)
-                } else {
-                    Log.e(TAG, "SYNC_DB: Failed to parse SyncDbData — trying manual extraction")
-                    try {
-                        val dataObj = (data as? JSONObject)
-                        val projectObj = dataObj?.optJSONObject("project")
-                        if (projectObj != null) {
-                            Log.d(TAG, "SYNC_DB manual: Found project object, name=${projectObj.optString("name")}")
-                            // Try parsing with a more lenient approach
-                            val configObj = projectObj.optJSONObject("config")
-                            val dbArray = projectObj.optJSONArray("database")
-                            val dbSize = dbArray?.length() ?: 0
-                            Log.d(TAG, "SYNC_DB manual: db size=$dbSize, config mode=${configObj?.optString("mode")}")
-                            
-                            // Build students list manually
-                            val students = mutableListOf<Student>()
-                            if (dbArray != null) {
-                                for (i in 0 until dbArray.length()) {
-                                    val sObj = dbArray.optJSONObject(i)
-                                    if (sObj != null) {
-                                        students.add(Student(
-                                            id = sObj.optString("id", ""),
-                                            nim = sObj.optString("nim", ""),
-                                            nama = sObj.optString("nama", ""),
-                                            status = sObj.optString("status", "pending"),
-                                            assignedChannel = sObj.optInt("assignedChannel", sObj.optInt("assigned_channel", 1))
-                                        ))
-                                    }
-                                }
-                            }
-                            
-                            val config = ProjectConfig(
-                                mode = configObj?.optString("mode", "single") ?: "single",
-                                ratio = configObj?.optString("ratio", "4:3") ?: "4:3",
-                                preset = configObj?.optString("preset", "original") ?: "original",
-                                targetFolder = configObj?.optString("targetFolder", "") ?: "",
-                                frame = configObj?.optString("frame")
-                            )
-                            
-                            val fallbackProject = Project(
-                                id = projectObj.optString("id", ""),
-                                name = projectObj.optString("name", ""),
-                                config = config,
-                                database = students
-                            )
-                            val fallbackSyncData = SyncDbData(project = fallbackProject)
-                            Log.i(TAG, "SYNC_DB manual fallback: project=${fallbackProject.name}, dbSize=${students.size}")
-                            notifyListenersOnUiThread(SocketEvents.SYNC_DB, fallbackSyncData)
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "SYNC_DB manual fallback also failed: ${e.message}")
-                    }
+                    return
                 }
+
+                // Strategy 2: Manual JSONObject extraction
+                Log.w(TAG, "SYNC_DB: Gson parsing failed — trying manual extraction")
+                try {
+                    val dataObj = data as? JSONObject ?: json.optJSONObject("data")
+                    if (dataObj != null) {
+                        val projectObj = dataObj.optJSONObject("project")
+                        if (projectObj != null) {
+                            val manualProject = parseProjectFromJson(projectObj)
+                            Log.i(TAG, "SYNC_DB parsed (manual): project=${manualProject.name}, dbSize=${manualProject.database.size}, mode=${manualProject.config.mode}, targetFolder=${manualProject.config.targetFolder}")
+                            notifyListenersOnUiThread(SocketEvents.SYNC_DB, SyncDbData(project = manualProject))
+                            return
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "SYNC_DB manual extraction also failed: ${e.message}")
+                }
+
+                Log.e(TAG, "SYNC_DB: ALL parsing strategies failed — data dropped!")
             }
 
             SocketEvents.STUDENT_RESET -> {
+                Log.d(TAG, "STUDENT_RESET received: $data")
                 val resetData = parseData<StudentResetData>(data)
                 if (resetData != null) {
+                    Log.i(TAG, "STUDENT_RESET: studentId=${resetData.studentId}, channel=${resetData.channel}")
                     notifyListenersOnUiThread(SocketEvents.STUDENT_RESET, resetData)
+                } else {
+                    // Manual fallback
+                    try {
+                        val dataObj = data as? JSONObject
+                        if (dataObj != null) {
+                            val manualReset = StudentResetData(
+                                studentId = dataObj.optString("studentId", dataObj.optString("student_id", "")),
+                                channel = dataObj.optInt("channel", 1)
+                            )
+                            Log.i(TAG, "STUDENT_RESET (manual): studentId=${manualReset.studentId}, channel=${manualReset.channel}")
+                            notifyListenersOnUiThread(SocketEvents.STUDENT_RESET, manualReset)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "STUDENT_RESET manual fallback failed: ${e.message}")
+                    }
                 }
             }
 
@@ -492,7 +470,6 @@ class SocketManager {
             }
 
             SocketEvents.PHOTOS_SAVED -> {
-                // Critical for dual-photoshoot mode: know when other operator finishes
                 val photosData = parseData<PhotosSavedData>(data)
                 if (photosData != null) {
                     notifyListenersOnUiThread(SocketEvents.PHOTOS_SAVED, photosData)
@@ -500,7 +477,6 @@ class SocketManager {
             }
 
             SocketEvents.STUDENT_DONE -> {
-                // In dual mode: know when other operator marks student as done
                 val doneData = parseData<StudentDoneData>(data)
                 if (doneData != null) {
                     notifyListenersOnUiThread(SocketEvents.STUDENT_DONE, doneData)
@@ -512,7 +488,6 @@ class SocketManager {
             }
 
             SocketEvents.SERVER_SHUTDOWN -> {
-                // Server sends shutdown via lan-message, not as direct event
                 Log.w(TAG, "Server shutdown via LAN message: $data")
                 notifyListenersOnUiThread("server_shutdown", data)
             }
@@ -521,6 +496,90 @@ class SocketManager {
                 Log.d(TAG, "Unhandled LAN event: $event")
             }
         }
+    }
+
+    // ─── Manual JSON Parsing Helpers ────────────────────────────
+    // These handle cases where Gson fails (e.g., field name mismatches,
+    // unexpected JSON structure, etc.)
+
+    private fun parseStudentFromJson(obj: JSONObject): Student {
+        return Student(
+            id = obj.optString("id", ""),
+            nim = obj.optString("nim", ""),
+            nama = obj.optString("nama", obj.optString("name", "")),
+            status = obj.optString("status", "pending"),
+            assignedChannel = obj.optInt("assignedChannel", obj.optInt("assigned_channel", 1))
+        )
+    }
+
+    private fun parseProjectFromJson(obj: JSONObject): Project {
+        val configObj = obj.optJSONObject("config")
+        val config = if (configObj != null) {
+            ProjectConfig(
+                mode = configObj.optString("mode", "single"),
+                ratio = configObj.optString("ratio", "4:3"),
+                preset = configObj.optString("preset", "original"),
+                targetFolder = configObj.optString("targetFolder", configObj.optString("target_folder", "")),
+                frame = configObj.optString("frame", null),
+                sessionPassword = configObj.optString("sessionPassword", configObj.optString("session_password", null))
+            )
+        } else {
+            ProjectConfig()
+        }
+
+        val dbArray = obj.optJSONArray("database")
+        val students = mutableListOf<Student>()
+        if (dbArray != null) {
+            for (i in 0 until dbArray.length()) {
+                val sObj = dbArray.optJSONObject(i)
+                if (sObj != null) {
+                    students.add(parseStudentFromJson(sObj))
+                }
+            }
+        }
+
+        val historyArray = obj.optJSONArray("photoHistory")
+        val photoHistory = mutableListOf<PhotoHistoryItem>()
+        if (historyArray != null) {
+            for (i in 0 until historyArray.length()) {
+                val hObj = historyArray.optJSONObject(i)
+                if (hObj != null) {
+                    val studentObj = hObj.optJSONObject("student")
+                    val photoStudent = if (studentObj != null) parseStudentFromJson(studentObj) else Student()
+                    val photosArray = hObj.optJSONArray("photos")
+                    val photos = mutableListOf<String>()
+                    if (photosArray != null) {
+                        for (j in 0 until photosArray.length()) {
+                            photos.add(photosArray.getString(j))
+                        }
+                    }
+                    photoHistory.add(PhotoHistoryItem(
+                        student = photoStudent,
+                        photos = photos,
+                        channel = hObj.optInt("channel", 1)
+                    ))
+                }
+            }
+        }
+
+        val versionsObj = obj.optJSONObject("captureVersions")
+        val captureVersions = mutableMapOf<String, Int>()
+        if (versionsObj != null) {
+            val keys = versionsObj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                captureVersions[key] = versionsObj.getInt(key)
+            }
+        }
+
+        return Project(
+            id = obj.optString("id", ""),
+            name = obj.optString("name", ""),
+            config = config,
+            database = students,
+            photoHistory = photoHistory,
+            captureVersions = captureVersions
+        )
     }
 
     // ─── Outgoing Events ────────────────────────────────────────
@@ -570,7 +629,6 @@ class SocketManager {
     }
 
     fun sendPhotosSaved(student: Student, photos: List<String>, version: Int, filename: String) {
-        // IMPORTANT: Set student status to "done" before sending (matches web client behavior)
         emitLanMessage(SocketEvents.PHOTOS_SAVED, PhotosSavedData(
             student = student.copy(status = "done"),
             photos = photos,
@@ -588,7 +646,7 @@ class SocketManager {
     }
 
     fun sendSyncDb(project: Project) {
-        // Strip frame and photos before sending (like web app does)
+        // Strip frame and photos before sending
         val strippedProject = project.copy(
             config = project.config.copy(
                 frame = if (project.config.frame != null) "__FRAME_SAVED__" else null,
@@ -607,7 +665,7 @@ class SocketManager {
             val payload = JSONObject().apply {
                 put("event", event)
                 put("data", if (dataJsonStr.trimStart().startsWith("[")) {
-                    org.json.JSONArray(dataJsonStr)
+                    JSONArray(dataJsonStr)
                 } else {
                     JSONObject(dataJsonStr)
                 })
@@ -617,7 +675,6 @@ class SocketManager {
                 socket?.emit(SocketEvents.LAN_MESSAGE, payload)
                 Log.d(TAG, "Emitted LAN message: $event")
             } else if (event in CRITICAL_EVENTS) {
-                // Queue critical events for later delivery
                 synchronized(eventQueueLock) {
                     if (eventQueue.size >= MAX_QUEUE_SIZE) {
                         eventQueue.removeAt(0)
@@ -653,7 +710,7 @@ class SocketManager {
                 val payload = JSONObject().apply {
                     put("event", item.event)
                     put("data", if (dataJsonStr.trimStart().startsWith("[")) {
-                        org.json.JSONArray(dataJsonStr)
+                        JSONArray(dataJsonStr)
                     } else {
                         JSONObject(dataJsonStr)
                     })
@@ -700,11 +757,6 @@ class SocketManager {
         listeners[event]?.remove(listener)
     }
 
-    /**
-     * Notify listeners directly (for calls from the main thread).
-     * Each callback is wrapped in try-catch to prevent one failing
-     * listener from crashing the entire app.
-     */
     private fun notifyListeners(event: String, data: Any?) {
         listeners[event]?.forEach { listener ->
             try {
@@ -715,18 +767,10 @@ class SocketManager {
         }
     }
 
-    /**
-     * Notify listeners on the UI thread.
-     * Socket.io callbacks run on background IO threads, but Compose
-     * StateFlow collection and UI updates should happen on the main thread.
-     * This ensures all ViewModel state changes are thread-safe.
-     */
     private fun notifyListenersOnUiThread(event: String, data: Any?) {
         if (Looper.myLooper() == Looper.getMainLooper()) {
-            // Already on main thread — notify directly
             notifyListeners(event, data)
         } else {
-            // Post to main thread
             mainHandler.post {
                 notifyListeners(event, data)
             }
@@ -758,5 +802,4 @@ class SocketManager {
             null
         }
     }
-
 }

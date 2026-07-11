@@ -10,6 +10,7 @@ data class Student(
     val nim: String = "",
     val nama: String = "",
     val status: StudentStatus = "pending",
+    @SerializedName("assignedChannel")
     val assignedChannel: Int = 1
 )
 
@@ -40,8 +41,10 @@ data class ProjectConfig(
     val mode: CameraMode = CameraModes.SINGLE,
     val ratio: String = "4:3",
     val preset: String = "original",
+    @SerializedName("targetFolder")
     val targetFolder: String = "",
     val frame: String? = null,
+    @SerializedName("sessionPassword")
     val sessionPassword: String? = null
 ) {
     fun parseAspectRatio(): Float {
@@ -69,6 +72,7 @@ data class Project(
     val config: ProjectConfig = ProjectConfig(),
     val database: List<Student> = emptyList(),
     val photoHistory: List<PhotoHistoryItem> = emptyList(),
+    @SerializedName("captureVersions")
     val captureVersions: Map<String, Int> = emptyMap()
 )
 
@@ -110,6 +114,7 @@ object SocketEvents {
 
 // ─── Auth Requirement ───────────────────────────────────────
 data class AuthRequirement(
+    @SerializedName("passwordRequired")
     val passwordRequired: Boolean = false
 )
 
@@ -127,6 +132,7 @@ data class AuthFailed(
 data class IdentifyPayload(
     val role: String,
     val channel: Int,
+    @SerializedName("sessionPasswordHash")
     val sessionPasswordHash: String? = null
 )
 
@@ -182,11 +188,14 @@ data class RequestStateData(
 
 // ─── Request Frame / Frame Data ─────────────────────────────
 data class RequestFrameData(
+    @SerializedName("projectId")
     val projectId: String,
+    @SerializedName("requesterRole")
     val requesterRole: String
 )
 
 data class FrameDataPayload(
+    @SerializedName("projectId")
     val projectId: String,
     val frame: String
 )
@@ -254,4 +263,35 @@ data class ConnectionHealth(
         latencyMs < 30 -> "fair"
         else -> "poor"
     }
+}
+
+// ─── Utility: Active Status Detection ──────────────────────
+
+/**
+ * Check if a student status indicates they are currently being photographed.
+ * Status format: "active_1", "active_2", etc.
+ */
+fun isActiveStatus(status: StudentStatus): Boolean {
+    return status.startsWith("active")
+}
+
+/**
+ * Extract the channel number from an active status string.
+ * "active_1" → 1, "active_2" → 2, else → null
+ */
+fun getActiveChannel(status: StudentStatus): Int? {
+    if (!isActiveStatus(status)) return null
+    val parts = status.split("_")
+    return parts.getOrNull(1)?.toIntOrNull()
+}
+
+/**
+ * Get human-readable status label for display.
+ */
+fun statusLabel(status: StudentStatus): String = when {
+    status == "pending" -> "Menunggu"
+    status == "sent" -> "Dikirim"
+    status == "done" -> "Selesai"
+    isActiveStatus(status) -> "Foto Ch.${getActiveChannel(status) ?: "?"}"
+    else -> "Aktif"
 }
