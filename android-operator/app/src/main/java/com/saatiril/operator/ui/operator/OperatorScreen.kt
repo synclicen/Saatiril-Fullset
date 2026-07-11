@@ -1022,7 +1022,11 @@ fun OpSearchPanel(
                         .heightIn(max = 140.dp),
                     verticalArrangement = Arrangement.spacedBy(0.dp)
                 ) {
-                    items(opSearchResults) { student ->
+                    items(
+                        count = opSearchResults.size,
+                        key = { idx -> opSearchResults[idx].id }
+                    ) { idx ->
+                        val student = opSearchResults[idx]
                         val isCurrentTarget = student.id == currentTargetId
                         Row(
                             modifier = Modifier
@@ -1158,7 +1162,7 @@ fun QueueListPanel(
                                 .fillMaxWidth()
                                 .background(rowBg)
                                 .padding(horizontal = 4.dp, vertical = 3.dp),
-                            verticalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text(
