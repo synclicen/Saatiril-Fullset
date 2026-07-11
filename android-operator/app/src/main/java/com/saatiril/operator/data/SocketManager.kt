@@ -7,12 +7,20 @@ import com.google.gson.Gson
 import io.socket.client.IO
 import io.socket.client.Socket
 import org.json.JSONObject
+import java.net.URI
+import java.net.URISyntaxException
 import java.security.MessageDigest
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Manages Socket.io connection to the Saatiril server.
  * Handles authentication, event relay, and reconnection.
+ *
+ * CRITICAL FIXES from previous crash:
+ * - IO.socket() URL parsing is wrapped in comprehensive try-catch
+ * - Socket creation failure no longer crashes the app — reports error to UI
+ * - All socket event callbacks use defensive try-catch
+ * - OkHttp dependency conflict resolved in build.gradle.kts
  *
  * Thread safety:
  * - All socket callbacks run on Socket.io's background IO thread
@@ -90,8 +98,12 @@ class SocketManager {
         if (socket != null) {
             Log.w(TAG, "Existing socket found, cleaning up before reconnect")
             stopPingInterval()
-            socket?.disconnect()
-            socket?.off()
+            try {
+                socket?.disconnect()
+                socket?.off()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error disconnecting old socket: ${e.message}")
+            }
             socket = null
             // NOTE: Do NOT clear listeners here — ViewModel listeners must persist across reconnects
         }
@@ -100,6 +112,28 @@ class SocketManager {
         passwordHash = password?.let { sha256(it) }
         connectionState = ConnectionState.CONNECTING
         notifyListenersOnUiThread("state_changed", connectionState)
+
+        // ─── CRITICAL: Validate URL BEFORE passing to IO.socket() ───
+        // IO.socket() can throw RuntimeException/URISyntaxException for bad URLs,
+        // which would crash the app if uncaught.
+        val validatedUrl: String
+        try {
+            val uri = URI(serverUrl)
+            val scheme = uri.scheme?.lowercase()
+            if (scheme != "http" && scheme != "https") {
+                throw URISyntaxException(serverUrl, "Invalid scheme: must be http or https")
+            }
+            if (uri.host.isNullOrBlank()) {
+                throw URISyntaxException(serverUrl, "Host is empty")
+            }
+            validatedUrl = serverUrl
+        } catch (e: URISyntaxException) {
+            Log.e(TAG, "Invalid server URL: $serverUrl — ${e.message}")
+            connectionState = ConnectionState.DISCONNECTED
+            notifyListenersOnUiThread("state_changed", ConnectionState.DISCONNECTED)
+            notifyListenersOnUiThread("connection_error", "URL tidak valid: ${e.message}")
+            return
+        }
 
         try {
             val options = IO.Options().apply {
@@ -113,11 +147,35 @@ class SocketManager {
                 forceNew = true                 // Match web client — prevent stale socket reuse
             }
 
-            socket = IO.socket(serverUrl, options)
+            // ─── CRITICAL: IO.socket() can throw if OkHttp classes are missing ───
+            // This was the #1 crash cause — OkHttp version conflict between
+            // socket.io-client (3.12.x) and coil-compose (4.12.x)
+            socket = try {
+                IO.socket(validatedUrl, options)
+            } catch (e: NoSuchMethodError) {
+                Log.e(TAG, "OkHttp method not found — dependency conflict! ${e.message}", e)
+                connectionState = ConnectionState.DISCONNECTED
+                notifyListenersOnUiThread("state_changed", ConnectionState.DISCONNECTED)
+                notifyListenersOnUiThread("connection_error", "Library conflict — report to developer: ${e.message}")
+                return
+            } catch (e: NoClassDefFoundError) {
+                Log.e(TAG, "OkHttp class not found — dependency conflict! ${e.message}", e)
+                connectionState = ConnectionState.DISCONNECTED
+                notifyListenersOnUiThread("state_changed", ConnectionState.DISCONNECTED)
+                notifyListenersOnUiThread("connection_error", "Library conflict — report to developer: ${e.message}")
+                return
+            } catch (e: RuntimeException) {
+                Log.e(TAG, "Failed to create socket (runtime): ${e.message}", e)
+                connectionState = ConnectionState.DISCONNECTED
+                notifyListenersOnUiThread("state_changed", ConnectionState.DISCONNECTED)
+                notifyListenersOnUiThread("connection_error", "Gagal membuat koneksi: ${e.message}")
+                return
+            }
+
             setupSocketListeners()
             socket?.connect()
 
-            Log.i(TAG, "Connecting to $serverUrl as operator channel $channel")
+            Log.i(TAG, "Connecting to $validatedUrl as operator channel $channel")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create socket connection: ${e.message}", e)
             connectionState = ConnectionState.DISCONNECTED
@@ -128,8 +186,12 @@ class SocketManager {
 
     fun disconnect() {
         stopPingInterval()
-        socket?.disconnect()
-        socket?.off()
+        try {
+            socket?.disconnect()
+            socket?.off()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error during disconnect: ${e.message}")
+        }
         socket = null
         connectionState = ConnectionState.DISCONNECTED
         notifyListenersOnUiThread("state_changed", connectionState)
@@ -162,32 +224,44 @@ class SocketManager {
         val s = socket ?: return
 
         s.on(Socket.EVENT_CONNECT) {
-            Log.i(TAG, "Socket connected")
-            connectionState = ConnectionState.CONNECTED
-            notifyListenersOnUiThread("state_changed", connectionState)
+            try {
+                Log.i(TAG, "Socket connected")
+                connectionState = ConnectionState.CONNECTED
+                notifyListenersOnUiThread("state_changed", connectionState)
 
-            // Send identify immediately (with password hash if available)
-            identify()
+                // Send identify immediately (with password hash if available)
+                identify()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in CONNECT handler: ${e.message}", e)
+            }
         }
 
         s.on(Socket.EVENT_DISCONNECT) { args ->
-            Log.w(TAG, "Socket disconnected: ${args.getOrElse(0) { "unknown" }}")
-            connectionState = ConnectionState.DISCONNECTED
-            stopPingInterval()
-            notifyListenersOnUiThread("state_changed", connectionState)
+            try {
+                Log.w(TAG, "Socket disconnected: ${args.getOrElse(0) { "unknown" }}")
+                connectionState = ConnectionState.DISCONNECTED
+                stopPingInterval()
+                notifyListenersOnUiThread("state_changed", connectionState)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in DISCONNECT handler: ${e.message}", e)
+            }
         }
 
         s.on(Socket.EVENT_CONNECT_ERROR) { args ->
-            val errorMsg = args.getOrElse(0) { "unknown" }
-            Log.e(TAG, "Connection error: $errorMsg")
-            // Don't set DISCONNECTED here — Socket.io auto-reconnects
-            // Keep state as CONNECTING so UI shows "Menghubungkan..." instead of "Terputus"
-            if (connectionState != ConnectionState.AUTHENTICATING &&
-                connectionState != ConnectionState.AUTH_FAILED) {
-                connectionState = ConnectionState.CONNECTING
+            try {
+                val errorMsg = args.getOrElse(0) { "unknown" }
+                Log.e(TAG, "Connection error: $errorMsg")
+                // Don't set DISCONNECTED here — Socket.io auto-reconnects
+                // Keep state as CONNECTING so UI shows "Menghubungkan..." instead of "Terputus"
+                if (connectionState != ConnectionState.AUTHENTICATING &&
+                    connectionState != ConnectionState.AUTH_FAILED) {
+                    connectionState = ConnectionState.CONNECTING
+                }
+                notifyListenersOnUiThread("connection_error", errorMsg?.toString() ?: "Connection failed")
+                notifyListenersOnUiThread("state_changed", connectionState)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in CONNECT_ERROR handler: ${e.message}", e)
             }
-            notifyListenersOnUiThread("connection_error", errorMsg?.toString() ?: "Connection failed")
-            notifyListenersOnUiThread("state_changed", connectionState)
         }
 
         // ── Auth events ──────────────────────────────────────────────

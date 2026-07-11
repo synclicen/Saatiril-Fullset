@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.saatiril.operator.data.ConnectionState
 import com.saatiril.operator.data.OperatorViewModel
+import java.net.URI
 
 // ─── Saatiril Theme Colors ──────────────────────────────────
 private val BG = Color(0xFF1a0b2e)
@@ -48,6 +49,7 @@ fun ConnectionScreen(
     val connectionState by viewModel.connectionState.collectAsState()
     val passwordRequired by viewModel.passwordRequired.collectAsState()
     val authError by viewModel.authError.collectAsState()
+    val connectionError by viewModel.connectionError.collectAsState()
     val uvcDeviceAttached by viewModel.uvcDeviceAttached.collectAsState()
 
     var serverIp by remember { mutableStateOf("") }
@@ -106,8 +108,18 @@ fun ConnectionScreen(
             }
         } else if (serverIp.trim().isNotEmpty()) {
             val url = "http://${serverIp.trim()}:${serverPort.trim().ifEmpty { "3003" }}"
-            val pwd = if (showPasswordPrompt || passwordRequired) password.trim().ifEmpty { null } else null
-            viewModel.connect(url, selectedChannel, pwd)
+            // Validate URL format before attempting connection
+            try {
+                val uri = URI(url)
+                if (uri.host.isNullOrBlank()) {
+                    errorMessage = "IP server tidak valid"
+                } else {
+                    val pwd = if (showPasswordPrompt || passwordRequired) password.trim().ifEmpty { null } else null
+                    viewModel.connect(url, selectedChannel, pwd)
+                }
+            } catch (e: Exception) {
+                errorMessage = "URL tidak valid: ${e.message}"
+            }
         } else {
             errorMessage = "Masukkan IP server"
         }
@@ -180,6 +192,7 @@ fun ConnectionScreen(
                         onPasswordChange = { password = it },
                         authError = authError,
                         errorMessage = errorMessage,
+                        connectionError = connectionError,
                         connectionState = connectionState,
                         onConnect = { doConnect() },
                         compact = false
@@ -260,6 +273,7 @@ fun ConnectionScreen(
                     onPasswordChange = { password = it },
                     authError = authError,
                     errorMessage = errorMessage,
+                    connectionError = connectionError,
                     connectionState = connectionState,
                     onConnect = { doConnect() },
                     compact = isLandscape
@@ -333,7 +347,7 @@ private fun CameraStatusCard(
             }
 
             // Divider
-            Divider(
+            HorizontalDivider(
                 modifier = Modifier.padding(vertical = if (compact) 2.dp else 4.dp),
                 color = BORDER.copy(alpha = 0.5f),
                 thickness = 0.5.dp
@@ -376,6 +390,7 @@ private fun ConnectionFormCard(
     onPasswordChange: (String) -> Unit,
     authError: String?,
     errorMessage: String?,
+    connectionError: String?,
     connectionState: ConnectionState,
     onConnect: () -> Unit,
     compact: Boolean
@@ -538,6 +553,14 @@ private fun ConnectionFormCard(
                 Text(
                     errorMessage ?: "",
                     style = TextStyle(color = RED, fontSize = if (compact) 10.sp else 13.sp)
+                )
+            }
+
+            // Connection error from SocketManager (e.g. OkHttp conflict, URL error)
+            if (connectionError != null && connectionState == ConnectionState.DISCONNECTED) {
+                Text(
+                    connectionError ?: "",
+                    style = TextStyle(color = RED.copy(alpha = 0.8f), fontSize = if (compact) 9.sp else 11.sp)
                 )
             }
 

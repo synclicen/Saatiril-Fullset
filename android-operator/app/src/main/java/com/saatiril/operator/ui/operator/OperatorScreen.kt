@@ -1,6 +1,7 @@
 package com.saatiril.operator.ui.operator
 
 import androidx.compose.animation.*
+import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,6 +25,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.camera.view.PreviewView
 import androidx.activity.ComponentActivity
+import androidx.core.content.ContextCompat
+import androidx.core.content.PermissionChecker
 import androidx.lifecycle.LifecycleOwner
 import com.saatiril.operator.data.*
 import com.saatiril.operator.ui.gridline.GridlineOverlay
@@ -72,6 +75,14 @@ fun OperatorScreen(
 
     // Track if camera has been initialized to prevent double init
     var cameraInitialized by remember { mutableStateOf(false) }
+    var hasCameraPermission by remember { mutableStateOf(false) }
+
+    // Check camera permission state
+    LaunchedEffect(Unit) {
+        hasCameraPermission = ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.CAMERA
+        ) == PermissionChecker.PERMISSION_GRANTED
+    }
 
     // Initialize camera when this screen enters composition
     DisposableEffect(lifecycleOwner) {
@@ -100,9 +111,16 @@ fun OperatorScreen(
                         scaleType = PreviewView.ScaleType.FILL_CENTER
 
                         // Initialize camera with this PreviewView (only once)
-                        if (!cameraInitialized) {
+                        // CRITICAL: Only init camera if permission is granted
+                        if (!cameraInitialized && hasCameraPermission) {
                             cameraInitialized = true
-                            viewModel.initCamera(lifecycleOwner, this)
+                            try {
+                                viewModel.initCamera(lifecycleOwner, this)
+                            } catch (e: SecurityException) {
+                                Log.e("OperatorScreen", "Camera permission not granted: ${e.message}")
+                            } catch (e: Exception) {
+                                Log.e("OperatorScreen", "Failed to init camera: ${e.message}")
+                            }
                         }
                     }
                 },

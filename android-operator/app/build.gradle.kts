@@ -63,7 +63,7 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")
 
     // Jetpack Compose
-    implementation(platform("androidx.compose:compose-bom:2024.01.00"))
+    implementation(platform("androidx.compose:compose-bom:2024.02.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
@@ -73,6 +73,9 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     // Socket.io — Saatiril protocol communication
+    // socket.io-client 2.1.0 depends on engine.io-client 2.1.0 → OkHttp 3.12.12
+    // Coil has been removed to avoid OkHttp 3.x/4.x version conflict.
+    // If adding Coil later, use coil-compose-base (no OkHttp) or handle version conflict.
     implementation("io.socket:socket.io-client:2.1.0")
 
     // CameraX — camera preview and capture (supports built-in + external cameras)
@@ -82,8 +85,11 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.3.1")
     implementation("androidx.camera:camera-view:1.3.1")
 
-    // Image loading
-    implementation("io.coil-kt:coil-compose:2.5.0")
+    // Image loading — using coil-base without OkHttp dependency to avoid
+    // OkHttp 3.x/4.x version conflict with socket.io-client's engine.io-client
+    // If image loading is needed later, use AsyncImage with a custom fetcher
+    // or switch to a library that doesn't depend on OkHttp (e.g., Glance)
+    // For now, Coil is NOT used in the codebase — removed to prevent runtime conflicts
 
     // JSON parsing
     implementation("com.google.code.gson:gson:2.10.1")

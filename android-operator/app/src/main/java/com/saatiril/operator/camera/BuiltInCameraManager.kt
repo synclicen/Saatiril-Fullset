@@ -59,18 +59,24 @@ class BuiltInCameraManager(private val context: Context) {
         this.lifecycleOwner = lifecycleOwner
         this.previewView = previewView
 
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+        try {
+            val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
 
-        cameraProviderFuture.addListener({
-            try {
-                cameraProvider = cameraProviderFuture.get()
-                selectBestCamera(lifecycleOwner, previewView)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to initialize camera: ${e.message}")
-                _cameraType.value = "none"
-                _isConnected.value = false
-            }
-        }, ContextCompat.getMainExecutor(context))
+            cameraProviderFuture.addListener({
+                try {
+                    cameraProvider = cameraProviderFuture.get()
+                    selectBestCamera(lifecycleOwner, previewView)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to initialize camera: ${e.message}")
+                    _cameraType.value = "none"
+                    _isConnected.value = false
+                }
+            }, ContextCompat.getMainExecutor(context))
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get camera provider: ${e.message}")
+            _cameraType.value = "none"
+            _isConnected.value = false
+        }
     }
 
     /**
@@ -209,10 +215,19 @@ class BuiltInCameraManager(private val context: Context) {
     /**
      * Get the camera ID string from a CameraInfo object.
      * Uses Camera2CameraInfo interop to get the Camera2 camera ID.
+     * CRITICAL: This can throw on some devices where Camera2 interop is not
+     * available — must be wrapped in try-catch by callers.
      */
     private fun getCameraId(cameraInfo: CameraInfo): String? {
         return try {
             Camera2CameraInfo.from(cameraInfo).cameraId
+        } catch (e: NoSuchMethodError) {
+            // Camera2 interop not available on this device
+            Log.d(TAG, "Camera2 interop not available: ${e.message}")
+            null
+        } catch (e: NoClassDefFoundError) {
+            Log.d(TAG, "Camera2CameraInfo class not found: ${e.message}")
+            null
         } catch (e: Exception) {
             Log.d(TAG, "Cannot get Camera2 camera ID: ${e.message}")
             null
@@ -235,7 +250,11 @@ class BuiltInCameraManager(private val context: Context) {
         val selector = currentCameraSelector ?: return
 
         // Unbind all use cases first
-        provider.unbindAll()
+        try {
+            provider.unbindAll()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to unbind camera use cases: ${e.message}")
+        }
 
         // Preview
         preview = Preview.Builder()
@@ -269,6 +288,10 @@ class BuiltInCameraManager(private val context: Context) {
             }
 
             Log.i(TAG, "Camera started (type: ${_cameraType.value}, external: $isUsingExternalCamera)")
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Camera permission not granted: ${e.message}")
+            _isConnected.value = false
+            _cameraType.value = "none"
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start camera (type: ${_cameraType.value}): ${e.message}")
             _isConnected.value = false

@@ -65,6 +65,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private val _authError = MutableStateFlow<String?>(null)
     val authError: StateFlow<String?> = _authError.asStateFlow()
 
+    private val _connectionError = MutableStateFlow<String?>(null)
+    val connectionError: StateFlow<String?> = _connectionError.asStateFlow()
+
     // ─── Project State ──────────────────────────────────────────
 
     private val _project = MutableStateFlow<Project?>(null)
@@ -155,10 +158,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             uvcCameraManager.isConnected.collect { uvcConnected ->
                 _uvcDeviceAttached.value = uvcConnected
-                // If UVC device status changed, tell BuiltInCameraManager to rescan
-                if (uvcConnected || !uvcConnected) {
-                    builtInCameraManager.rescanForExternalCamera()
-                }
+                // Always rescan when UVC state changes — the manager will
+                // determine if it needs to switch to/from external camera
+                builtInCameraManager.rescanForExternalCamera()
                 updateCameraSource()
             }
         }
@@ -256,6 +258,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         _serverUrl.value = serverUrl
         _myChannel.value = channel
         _authError.value = null
+        _connectionError.value = null
 
         // Only set up listeners once — they persist across reconnects
         if (!socketListenersInitialized) {
@@ -308,7 +311,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         }
 
         socketManager.on("connection_error") { error ->
-            Log.e(TAG, "Connection error: $error")
+            val errorStr = error?.toString() ?: "Connection failed"
+            Log.e(TAG, "Connection error: $errorStr")
+            _connectionError.value = errorStr
         }
 
         socketManager.on("latency") { latency ->
