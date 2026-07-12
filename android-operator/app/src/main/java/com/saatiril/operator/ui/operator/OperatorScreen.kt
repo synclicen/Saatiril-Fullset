@@ -129,6 +129,7 @@ fun OperatorScreen(
     val savePath by viewModel.savePath.collectAsState()
     val availableCameras by viewModel.availableCameras.collectAsState()
     val currentCameraId by viewModel.currentCameraId.collectAsState()
+    val useCamera2Engine by viewModel.useCamera2Engine.collectAsState()
 
     val config = project?.config
     val mode = config?.mode ?: CameraModes.SINGLE
@@ -158,6 +159,7 @@ fun OperatorScreen(
     }
     val effectivePermission = hasCameraPermission || localPermissionState
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
+    var textureViewRef by remember { mutableStateOf<android.view.TextureView?>(null) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -169,12 +171,20 @@ fun OperatorScreen(
         }
     }
 
-    LaunchedEffect(effectivePermission, previewViewRef) {
+    // Init camera when permission is granted and view is ready
+    // For CameraX engine (built-in): needs PreviewView
+    // For Camera2 engine (USB): needs TextureView
+    LaunchedEffect(effectivePermission, previewViewRef, textureViewRef) {
         val pv = previewViewRef
+        val tv = textureViewRef
         if (effectivePermission && pv != null) {
             try { viewModel.initCamera(lifecycleOwner, pv) }
             catch (e: SecurityException) { localPermissionState = false }
             catch (_: Exception) {}
+        }
+        // Set TextureView for Camera2 engine (USB camera)
+        if (effectivePermission && tv != null) {
+            viewModel.setTextureView(tv)
         }
     }
 
@@ -283,20 +293,41 @@ fun OperatorScreen(
                     modifier = previewModifier,
                     contentAlignment = Alignment.Center
                 ) {
-                    // Camera PreviewView
-                    AndroidView(
-                        factory = { ctx ->
-                            PreviewView(ctx).apply {
-                                layoutParams = android.widget.FrameLayout.LayoutParams(
-                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-                                )
-                                scaleType = PreviewView.ScaleType.FILL_CENTER
-                                previewViewRef = this
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    // ═══════════════════════════════════════════════════
+                    // DUAL ENGINE CAMERA PREVIEW
+                    // CameraX engine (built-in) → PreviewView
+                    // Camera2 engine (USB) → TextureView
+                    // ═══════════════════════════════════════════════════
+                    if (useCamera2Engine) {
+                        // Camera2 engine: TextureView for USB camera
+                        AndroidView(
+                            factory = { ctx ->
+                                android.view.TextureView(ctx).apply {
+                                    layoutParams = android.widget.FrameLayout.LayoutParams(
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                                    )
+                                    textureViewRef = this
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        // CameraX engine: PreviewView for built-in cameras
+                        AndroidView(
+                            factory = { ctx ->
+                                PreviewView(ctx).apply {
+                                    layoutParams = android.widget.FrameLayout.LayoutParams(
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                                    )
+                                    scaleType = PreviewView.ScaleType.FILL_CENTER
+                                    previewViewRef = this
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
 
                     // Gridline Overlay
                     if (gridlineSettings.enabled) {

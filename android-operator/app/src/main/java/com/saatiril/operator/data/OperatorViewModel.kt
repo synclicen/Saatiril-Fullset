@@ -221,6 +221,17 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     val availableCameras: StateFlow<List<Pair<String, String>>> = builtInCameraManager.availableCameras
     val currentCameraId: StateFlow<String> = builtInCameraManager.currentCameraId
 
+    // Expose whether Camera2 engine (USB) is active — UI needs this to know
+    // whether to show PreviewView (CameraX) or TextureView (Camera2)
+    val useCamera2Engine: StateFlow<Boolean> = builtInCameraManager.useCamera2Engine
+
+    // ─── TextureView for Camera2 engine ─────────────────────────
+    // Set by OperatorScreen when the TextureView is created
+
+    fun setTextureView(textureView: android.view.TextureView) {
+        builtInCameraManager.setTextureView(textureView)
+    }
+
     // ─── Frame Overlay ──────────────────────────────────────────
 
     private val _frameBitmap = MutableStateFlow<Bitmap?>(null)
