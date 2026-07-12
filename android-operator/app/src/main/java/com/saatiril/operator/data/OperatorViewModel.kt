@@ -217,6 +217,10 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private val _cameraConnected = MutableStateFlow(false)
     val cameraConnected: StateFlow<Boolean> = _cameraConnected.asStateFlow()
 
+    // Expose reactive camera list and current camera ID from BuiltInCameraManager
+    val availableCameras: StateFlow<List<Pair<String, String>>> = builtInCameraManager.availableCameras
+    val currentCameraId: StateFlow<String> = builtInCameraManager.currentCameraId
+
     // ─── Frame Overlay ──────────────────────────────────────────
 
     private val _frameBitmap = MutableStateFlow<Bitmap?>(null)

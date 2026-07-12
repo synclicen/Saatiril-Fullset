@@ -51,12 +51,24 @@ class BuiltInCameraManager(private val context: Context) {
     private var providerInitialized: Boolean = false
     private var initInProgress: Boolean = false
 
+    // Pending rescan flag — set when rescanForExternalCamera() is called
+    // before cameraProvider is ready. The rescan is executed once provider initializes.
+    private var pendingRescan: Boolean = false
+
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
     // Camera source: "external", "back", "front", "none"
     private val _cameraType = MutableStateFlow("none")
     val cameraType: StateFlow<String> = _cameraType.asStateFlow()
+
+    // Current camera ID — tracks which camera is actively in use
+    private val _currentCameraId = MutableStateFlow("")
+    val currentCameraId: StateFlow<String> = _currentCameraId.asStateFlow()
+
+    // Available cameras — reactive list that updates when cameras are discovered/lost
+    private val _availableCameras = MutableStateFlow<List<Pair<String, String>>>(emptyList())
+    val availableCameras: StateFlow<List<Pair<String, String>>> = _availableCameras.asStateFlow()
 
     // ─── Permission Check ──────────────────────────────────────
 
@@ -128,6 +140,12 @@ class BuiltInCameraManager(private val context: Context) {
                     providerInitialized = true
                     initInProgress = false
                     selectBestCamera(lifecycleOwner, previewView)
+                    // Execute pending rescan if one was requested before provider was ready
+                    if (pendingRescan) {
+                        Log.i(TAG, "Executing pending rescan after provider initialization")
+                        pendingRescan = false
+                        rescanForExternalCamera()
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to get camera provider from future: ${e.message}")
                     initInProgress = false
@@ -373,7 +391,18 @@ class BuiltInCameraManager(private val context: Context) {
                 else -> "unknown"
             }
 
-            Log.i(TAG, "Camera started successfully (type: ${_cameraType.value}, external: $isUsingExternalCamera)")
+            // Track current camera ID for picker highlighting
+            _currentCameraId.value = try {
+                camera?.cameraInfo?.let { getCameraId(it) } ?: ""
+            } catch (e: Exception) {
+                Log.d(TAG, "Cannot get current camera ID: ${e.message}")
+                ""
+            }
+
+            // Refresh the available cameras list for the picker dropdown
+            refreshAvailableCameras()
+
+            Log.i(TAG, "Camera started successfully (type: ${_cameraType.value}, id: ${_currentCameraId.value}, external: $isUsingExternalCamera)")
         } catch (e: SecurityException) {
             Log.e(TAG, "Camera permission not granted (SecurityException): ${e.message}")
             _isConnected.value = false
@@ -465,6 +494,9 @@ class BuiltInCameraManager(private val context: Context) {
      * Get list of available camera descriptions for UI camera picker.
      * Returns list of pairs: (cameraId, displayName)
      * e.g., [("0", "Kamera Belakang"), ("2", "USB Capture Card"), ("1", "Kamera Depan")]
+     *
+     * Also updates the reactive _availableCameras StateFlow so the UI can
+     * observe camera list changes (e.g., USB device attach/detach).
      */
     fun getAvailableCameras(): List<Pair<String, String>> {
         val provider = cameraProvider ?: return emptyList()
@@ -481,7 +513,17 @@ class BuiltInCameraManager(private val context: Context) {
             }
             cameras.add(cameraId to displayName)
         }
+        // Update reactive state
+        _availableCameras.value = cameras
         return cameras
+    }
+
+    /**
+     * Refresh the available cameras list and update the reactive StateFlow.
+     * Called when USB devices are attached/detached or on camera provider init.
+     */
+    fun refreshAvailableCameras() {
+        getAvailableCameras()
     }
 
     /**
@@ -512,6 +554,7 @@ class BuiltInCameraManager(private val context: Context) {
             else -> CameraSelector.LENS_FACING_BACK
         }
         currentCameraSelector = selector
+        _currentCameraId.value = cameraId
 
         Log.i(TAG, "switchToCameraById: Switching to camera $cameraId (external=$isUsingExternalCamera)")
         startCamera(owner, pv)
@@ -520,8 +563,23 @@ class BuiltInCameraManager(private val context: Context) {
     /**
      * Re-scan for external cameras (called when USB device is attached/detached).
      * If an external camera becomes available and we're on built-in, switch to it.
+     * Always refreshes the available cameras list for the picker UI.
+     *
+     * If cameraProvider isn't ready yet, sets pendingRescan flag so the rescan
+     * is executed once the provider initializes (fixes USB camera not persisting
+     * when transitioning from connection screen to operator session).
      */
     fun rescanForExternalCamera() {
+        // If provider not ready, defer the rescan
+        if (cameraProvider == null) {
+            Log.i(TAG, "rescanForExternalCamera: provider not ready, setting pendingRescan flag")
+            pendingRescan = true
+            return
+        }
+
+        // Always refresh camera list first
+        refreshAvailableCameras()
+
         val owner = lifecycleOwner ?: return
         val pv = previewView ?: return
         val provider = cameraProvider ?: return
@@ -664,7 +722,10 @@ class BuiltInCameraManager(private val context: Context) {
         isUsingExternalCamera = false
         providerInitialized = false
         initInProgress = false
+        pendingRescan = false
         _isConnected.value = false
         _cameraType.value = "none"
+        _currentCameraId.value = ""
+        _availableCameras.value = emptyList()
     }
 }

@@ -127,6 +127,8 @@ fun OperatorScreen(
     val opQueue by viewModel.opQueue.collectAsState()
     val channelStudents by viewModel.channelStudents.collectAsState()
     val savePath by viewModel.savePath.collectAsState()
+    val availableCameras by viewModel.availableCameras.collectAsState()
+    val currentCameraId by viewModel.currentCameraId.collectAsState()
 
     val config = project?.config
     val mode = config?.mode ?: CameraModes.SINGLE
@@ -206,8 +208,8 @@ fun OperatorScreen(
             .fillMaxSize()
             .background(BG)
     ) {
-        // ─── TOP BAR ────────────────────────────────────────
-        TopBar(
+        // ─── TOP BAR with Camera Picker ───────────────────────
+        TopBarWithCameraPicker(
             projectName = project?.name,
             connectionState = connectionState,
             latencyMs = latencyMs,
@@ -220,49 +222,17 @@ fun OperatorScreen(
             capturePhase = capturePhase,
             isPhotoshoot = isPhotoshoot,
             savePath = savePath,
-            onSwitchCamera = { showCameraPicker = !showCameraPicker },
+            showCameraPicker = showCameraPicker,
+            onToggleCameraPicker = { showCameraPicker = !showCameraPicker },
+            onDismissCameraPicker = { showCameraPicker = false },
+            availableCameras = availableCameras,
+            currentCameraId = currentCameraId,
+            onCameraSelected = { cameraId ->
+                viewModel.switchToCameraById(cameraId)
+                showCameraPicker = false
+            },
             onTogglePanelSelector = { showPanelSelector = !showPanelSelector }
         )
-
-        // Camera picker dropdown
-        DropdownMenu(
-            expanded = showCameraPicker,
-            onDismissRequest = { showCameraPicker = false },
-            modifier = Modifier.background(PANEL)
-        ) {
-            val cameras = remember { viewModel.getAvailableCameras() }
-            if (cameras.isNotEmpty()) {
-                cameras.forEach { (cameraId, displayName) ->
-                    DropdownMenuItem(
-                        text = {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Icon(
-                                    when {
-                                        displayName.contains("USB", ignoreCase = true) -> Icons.Default.Usb
-                                        displayName.contains("Depan", ignoreCase = true) -> Icons.Default.CameraFront
-                                        else -> Icons.Default.CameraAlt
-                                    },
-                                    contentDescription = null,
-                                    tint = if (cameraSource == "uvc" && displayName.contains("USB", ignoreCase = true) ||
-                                               cameraSource == "builtin" && !displayName.contains("USB", ignoreCase = true)) GOLD else MUTED,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Text(displayName, style = TextStyle(color = Color.White, fontSize = 12.sp))
-                            }
-                        },
-                        onClick = {
-                            viewModel.switchToCameraById(cameraId)
-                            showCameraPicker = false
-                        }
-                    )
-                }
-            } else {
-                DropdownMenuItem(
-                    text = { Text("Tidak ada kamera", style = TextStyle(color = MUTED, fontSize = 12.sp)) },
-                    onClick = { showCameraPicker = false }
-                )
-            }
-        }
 
         // ─── CAMERA PREVIEW AREA ────────────────────────────
         // Fills remaining space above the panel divider.
@@ -691,11 +661,15 @@ fun OperatorScreen(
 }
 
 // ═══════════════════════════════════════════════════════════
-// TOP BAR
+// TOP BAR WITH CAMERA PICKER
+// The DropdownMenu is anchored inside a Box with the camera
+// switch button so it appears correctly positioned.
+// Camera list is reactive (from StateFlow) so USB attach/detach
+// updates the picker in real-time.
 // ═══════════════════════════════════════════════════════════
 
 @Composable
-private fun TopBar(
+private fun TopBarWithCameraPicker(
     projectName: String?,
     connectionState: ConnectionState,
     latencyMs: Long,
@@ -708,7 +682,12 @@ private fun TopBar(
     capturePhase: CapturePhase,
     isPhotoshoot: Boolean,
     savePath: String,
-    onSwitchCamera: () -> Unit,
+    showCameraPicker: Boolean,
+    onToggleCameraPicker: () -> Unit,
+    onDismissCameraPicker: () -> Unit,
+    availableCameras: List<Pair<String, String>>,
+    currentCameraId: String,
+    onCameraSelected: (String) -> Unit,
     onTogglePanelSelector: () -> Unit
 ) {
     Row(
@@ -770,10 +749,93 @@ private fun TopBar(
             }
         }
 
-        // Right: Action buttons
+        // Right: Action buttons — camera picker is anchored in a Box
         Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
-            IconButton(onClick = onSwitchCamera, modifier = Modifier.size(24.dp)) {
-                Icon(Icons.Default.Cameraswitch, contentDescription = null, tint = MUTED, modifier = Modifier.size(14.dp))
+            // Camera switch button with dropdown menu anchored to it
+            Box {
+                IconButton(onClick = onToggleCameraPicker, modifier = Modifier.size(24.dp)) {
+                    Icon(
+                        Icons.Default.Cameraswitch,
+                        contentDescription = "Pilih Kamera",
+                        tint = if (cameraSource == "uvc") GREEN else MUTED,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+                DropdownMenu(
+                    expanded = showCameraPicker,
+                    onDismissRequest = onDismissCameraPicker,
+                    modifier = Modifier.background(PANEL)
+                ) {
+                    // Header
+                    DropdownMenuItem(
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Icon(Icons.Default.PhotoCamera, contentDescription = null, tint = GOLD, modifier = Modifier.size(14.dp))
+                                Text("Pilih Kamera", style = TextStyle(color = GOLD, fontSize = 12.sp, fontWeight = FontWeight.Bold))
+                            }
+                        },
+                        onClick = {},
+                        enabled = false
+                    )
+                    HorizontalDivider(color = BORDER, thickness = 0.5.dp)
+
+                    if (availableCameras.isNotEmpty()) {
+                        availableCameras.forEach { (cameraId, displayName) ->
+                            val isCurrentlySelected = cameraId == currentCameraId
+                            val isUsb = displayName.contains("USB", ignoreCase = true)
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Icon(
+                                            when {
+                                                isUsb -> Icons.Default.Usb
+                                                displayName.contains("Depan", ignoreCase = true) -> Icons.Default.CameraFront
+                                                else -> Icons.Default.CameraAlt
+                                            },
+                                            contentDescription = null,
+                                            tint = if (isCurrentlySelected) GREEN else MUTED,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            displayName,
+                                            style = TextStyle(
+                                                color = if (isCurrentlySelected) GREEN else Color.White,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (isCurrentlySelected) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        )
+                                        if (isCurrentlySelected) {
+                                            Text("✓", style = TextStyle(color = GREEN, fontSize = 10.sp, fontWeight = FontWeight.Bold))
+                                        }
+                                    }
+                                },
+                                onClick = { onCameraSelected(cameraId) }
+                            )
+                        }
+                    } else {
+                        DropdownMenuItem(
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Icon(Icons.Default.VideocamOff, contentDescription = null, tint = MUTED, modifier = Modifier.size(14.dp))
+                                    Text("Memuat kamera...", style = TextStyle(color = MUTED, fontSize = 12.sp))
+                                }
+                            },
+                            onClick = onDismissCameraPicker,
+                            enabled = false
+                        )
+                    }
+
+                    HorizontalDivider(color = BORDER, thickness = 0.5.dp)
+                    // Camera source indicator
+                    DropdownMenuItem(
+                        text = {
+                            val srcLabel = when (cameraSource) { "uvc" -> "USB Capture"; "builtin" -> "Kamera HP"; else -> "Tidak ada" }
+                            Text("Aktif: $srcLabel", style = TextStyle(color = MUTED.copy(alpha = 0.6f), fontSize = 9.sp))
+                        },
+                        onClick = {},
+                        enabled = false
+                    )
+                }
             }
             IconButton(onClick = onTogglePanelSelector, modifier = Modifier.size(24.dp)) {
                 Icon(Icons.Default.Apps, contentDescription = null, tint = GOLD, modifier = Modifier.size(14.dp))
