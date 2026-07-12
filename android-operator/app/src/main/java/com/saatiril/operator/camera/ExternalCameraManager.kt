@@ -64,6 +64,10 @@ class ExternalCameraManager(private val context: Context) {
         private const val CAPTURE_HEIGHT = 1080
     }
 
+    // Callback for connection state changes — allows BuiltInCameraManager to
+    // propagate the USB camera's connection state to its own StateFlows.
+    var onConnectionStateChanged: ((connected: Boolean, cameraType: String) -> Unit)? = null
+
     private val cameraManager: CameraManager by lazy {
         context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
     }
@@ -249,6 +253,7 @@ class ExternalCameraManager(private val context: Context) {
                     cameraDevice = null
                     _isConnected.value = false
                     _cameraType.value = "none"
+                    onConnectionStateChanged?.invoke(false, "none")
                 }
 
                 override fun onError(camera: CameraDevice, error: Int) {
@@ -259,6 +264,7 @@ class ExternalCameraManager(private val context: Context) {
                     cameraDevice = null
                     _isConnected.value = false
                     _cameraType.value = "none"
+                    onConnectionStateChanged?.invoke(false, "none")
                 }
             }, backgroundHandler)
         } catch (e: SecurityException) {
@@ -266,11 +272,13 @@ class ExternalCameraManager(private val context: Context) {
             Log.e(TAG, "Camera permission denied: ${e.message}")
             _isConnected.value = false
             _cameraType.value = "none"
+            onConnectionStateChanged?.invoke(false, "none")
         } catch (e: Exception) {
             cameraOpenCloseLock.release()
             Log.e(TAG, "Failed to open camera: ${e.message}")
             _isConnected.value = false
             _cameraType.value = "none"
+            onConnectionStateChanged?.invoke(false, "none")
         }
     }
 
@@ -307,6 +315,7 @@ class ExternalCameraManager(private val context: Context) {
                             session.setRepeatingRequest(captureRequestBuilder.build(), null, backgroundHandler)
                             _isConnected.value = true
                             _cameraType.value = "external"
+                            onConnectionStateChanged?.invoke(true, "external")
 
                             Log.i(TAG, "═══════════════════════════════════════════════════")
                             Log.i(TAG, "✓ USB CAMERA PREVIEW STARTED SUCCESSFULLY")
@@ -315,6 +324,7 @@ class ExternalCameraManager(private val context: Context) {
                             Log.e(TAG, "Failed to start repeating request: ${e.message}")
                             _isConnected.value = false
                             _cameraType.value = "none"
+                            onConnectionStateChanged?.invoke(false, "none")
                         }
                     }
 
@@ -324,6 +334,7 @@ class ExternalCameraManager(private val context: Context) {
                         Log.e(TAG, "═══════════════════════════════════════════════════")
                         _isConnected.value = false
                         _cameraType.value = "none"
+                        onConnectionStateChanged?.invoke(false, "none")
                     }
                 },
                 backgroundHandler
@@ -332,6 +343,7 @@ class ExternalCameraManager(private val context: Context) {
             Log.e(TAG, "Failed to create capture session: ${e.message}")
             _isConnected.value = false
             _cameraType.value = "none"
+            onConnectionStateChanged?.invoke(false, "none")
         }
     }
 
@@ -491,6 +503,7 @@ class ExternalCameraManager(private val context: Context) {
 
             _isConnected.value = false
             _cameraType.value = "none"
+            onConnectionStateChanged?.invoke(false, "none")
 
             Log.i(TAG, "USB camera closed and resources released")
         } catch (e: Exception) {

@@ -1,6 +1,7 @@
 package com.saatiril.operator.ui.operator
 
 import android.Manifest
+import android.util.Log
 import android.widget.ImageView
 import androidx.activity.ComponentActivity
 import androidx.camera.view.PreviewView
@@ -158,8 +159,14 @@ fun OperatorScreen(
         )
     }
     val effectivePermission = hasCameraPermission || localPermissionState
+
+    // v5 FIX: Create BOTH views simultaneously — no more chicken-and-egg!
+    // PreviewView for CameraX (built-in cameras)
+    // TextureView for Camera2 (USB cameras)
+    // Both exist from the start, only one is visible at a time.
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
     var textureViewRef by remember { mutableStateOf<android.view.TextureView?>(null) }
+    var cameraInitDone by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -171,19 +178,43 @@ fun OperatorScreen(
         }
     }
 
-    // Init camera when permission is granted and view is ready
-    // For CameraX engine (built-in): needs PreviewView
-    // For Camera2 engine (USB): needs TextureView
+    // v5 FIX: Initialize camera ONCE when BOTH views are ready.
+    // Don't re-init on recomposition — only init when we have both views
+    // and permission. The LaunchedEffect key is a combination of permission
+    // and view readiness, but we only call initCamera ONCE.
     LaunchedEffect(effectivePermission, previewViewRef, textureViewRef) {
         val pv = previewViewRef
         val tv = textureViewRef
-        if (effectivePermission && pv != null) {
-            try { viewModel.initCamera(lifecycleOwner, pv) }
-            catch (e: SecurityException) { localPermissionState = false }
-            catch (_: Exception) {}
+        if (effectivePermission && pv != null && tv != null && !cameraInitDone) {
+            cameraInitDone = true
+            try {
+                viewModel.initCamera(lifecycleOwner, pv, tv)
+            } catch (e: SecurityException) {
+                localPermissionState = false
+                cameraInitDone = false
+            } catch (e: Exception) {
+                Log.e("OperatorScreen", "initCamera failed: ${e.message}")
+                cameraInitDone = false
+            }
+        } else if (effectivePermission && pv != null && tv == null && !cameraInitDone) {
+            // TextureView not ready yet — set TextureView when it arrives
+            // But still init with PreviewView first so built-in camera can start
+            // setTextureView will be called separately when TextureView is created
+            if (!cameraInitDone) {
+                cameraInitDone = true
+                try {
+                    viewModel.initCamera(lifecycleOwner, pv)
+                } catch (e: SecurityException) {
+                    localPermissionState = false
+                    cameraInitDone = false
+                } catch (e: Exception) {
+                    cameraInitDone = false
+                }
+            }
         }
-        // Set TextureView for Camera2 engine (USB camera)
-        if (effectivePermission && tv != null) {
+        // Set TextureView for Camera2 engine when it becomes available
+        // This handles the case where TextureView is created after initCamera
+        if (effectivePermission && tv != null && cameraInitDone) {
             viewModel.setTextureView(tv)
         }
     }
@@ -294,40 +325,62 @@ fun OperatorScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     // ═══════════════════════════════════════════════════
-                    // DUAL ENGINE CAMERA PREVIEW
-                    // CameraX engine (built-in) → PreviewView
-                    // Camera2 engine (USB) → TextureView
+                    // v5 FIX: DUAL ENGINE — BOTH views created simultaneously!
+                    //
+                    // OLD (broken): Only ONE view created at a time based on
+                    // useCamera2Engine. When switching engines, the old view
+                    // was destroyed and new one created → chicken-and-egg race.
+                    //
+                    // NEW (v5): BOTH views always exist. Only one is VISIBLE
+                    // at a time (controlled by useCamera2Engine state).
+                    // This means initCamera() ALWAYS has both views available
+                    // and can switch engines instantly without view recreation.
                     // ═══════════════════════════════════════════════════
-                    if (useCamera2Engine) {
-                        // Camera2 engine: TextureView for USB camera
-                        AndroidView(
-                            factory = { ctx ->
-                                android.view.TextureView(ctx).apply {
-                                    layoutParams = android.widget.FrameLayout.LayoutParams(
-                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-                                    )
-                                    textureViewRef = this
-                                }
-                            },
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        // CameraX engine: PreviewView for built-in cameras
-                        AndroidView(
-                            factory = { ctx ->
-                                PreviewView(ctx).apply {
-                                    layoutParams = android.widget.FrameLayout.LayoutParams(
-                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-                                    )
-                                    scaleType = PreviewView.ScaleType.FILL_CENTER
-                                    previewViewRef = this
-                                }
-                            },
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
+
+                    // PreviewView for CameraX engine (built-in cameras)
+                    // Always created — visible only when NOT using USB camera
+                    AndroidView(
+                        factory = { ctx ->
+                            PreviewView(ctx).apply {
+                                layoutParams = android.widget.FrameLayout.LayoutParams(
+                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                                )
+                                scaleType = PreviewView.ScaleType.FILL_CENTER
+                                previewViewRef = this
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                        update = { view ->
+                            // Show PreviewView only when NOT using USB camera
+                            view.visibility = if (useCamera2Engine)
+                                android.view.View.GONE
+                            else
+                                android.view.View.VISIBLE
+                        }
+                    )
+
+                    // TextureView for Camera2 engine (USB cameras)
+                    // Always created — visible only when using USB camera
+                    AndroidView(
+                        factory = { ctx ->
+                            android.view.TextureView(ctx).apply {
+                                layoutParams = android.widget.FrameLayout.LayoutParams(
+                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                                )
+                                textureViewRef = this
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                        update = { view ->
+                            // Show TextureView only when using USB camera
+                            view.visibility = if (useCamera2Engine)
+                                android.view.View.VISIBLE
+                            else
+                                android.view.View.GONE
+                        }
+                    )
 
                     // Gridline Overlay
                     if (gridlineSettings.enabled) {

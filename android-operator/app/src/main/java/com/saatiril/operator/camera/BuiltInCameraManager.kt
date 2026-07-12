@@ -22,19 +22,22 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * ═════════════════════════════════════════════════════════════════════════
- * Unified Camera Manager — DUAL ENGINE architecture (v4)
+ * Unified Camera Manager — DUAL ENGINE architecture (v5)
  * ═════════════════════════════════════════════════════════════════════════
  *
- * ROOT CAUSE OF ALL PREVIOUS FAILURES:
- * CameraX 1.3.x CANNOT reliably use USB HDMI capture cards because:
- * 1. ProcessCameraProvider.availableCameraInfos is a FROZEN SNAPSHOT
- * 2. ProcessCameraProvider is a SINGLETON — can't get a fresh instance
- * 3. addCameraFilter + bindToLifecycle fails with IllegalArgumentException
- *    when the camera ID isn't in CameraX's internal registry
- * 4. LENS_FACING_EXTERNAL + hasCamera() returns false on most devices
- * 5. Even force-reinitializing the provider returns the SAME stale instance
+ * ROOT CAUSE OF v4 FAILURE (chicken-and-egg problem):
+ * The UI could only create ONE view at a time (PreviewView OR TextureView).
+ * When init() first ran, useCamera2Engine=false → only PreviewView existed.
+ * init() detected USB → activateUSBCamera() → TextureView was NULL → camera
+ * NOT actually opened → useCamera2Engine set to true → recomposition created
+ * TextureView → setTextureView() guard checked isConnected.value (false!) →
+ * re-init NEVER happened. USB camera was lost every time!
  *
- * THE PROVEN SOLUTION (v4 — DUAL ENGINE):
+ * v5 FIX: The UI now creates BOTH views simultaneously and we manage which
+ * is visible. init() receives BOTH views upfront, so when USB camera is
+ * detected, the TextureView is immediately available for Camera2 engine.
+ *
+ * ENGINE ARCHITECTURE:
  * ┌─────────────────────────────────────────────────────────┐
  * │ Built-in cameras (BACK/FRONT) → CameraX engine          │
  * │   - CameraX handles lifecycle, preview, capture          │
@@ -47,14 +50,6 @@ import kotlinx.coroutines.flow.asStateFlow
  * │   - ImageReader for JPEG still capture                   │
  * │   - TextureView for preview rendering                    │
  * └─────────────────────────────────────────────────────────┘
- *
- * This manager auto-detects USB cameras on init and switches
- * between engines seamlessly. The rest of the app (ViewModel,
- * OperatorScreen) only interacts with this class.
- *
- * KEY DECISION: When a USB camera is detected at init time,
- * it is AUTOMATICALLY selected (highest priority). The user
- * can switch back to built-in via the camera picker dropdown.
  */
 @androidx.camera.camera2.interop.ExperimentalCamera2Interop
 class BuiltInCameraManager(private val context: Context) {
@@ -155,6 +150,9 @@ class BuiltInCameraManager(private val context: Context) {
     private var initInProgress: Boolean = false
     private var pendingUsbRescan: Boolean = false
 
+    // v5: Track whether init has been called with valid views
+    private var fullyInitialized: Boolean = false
+
     // ═══════════════════════════════════════════════════════════
     // STATE FLOWS (unified — same regardless of engine)
     // ═══════════════════════════════════════════════════════════
@@ -171,7 +169,7 @@ class BuiltInCameraManager(private val context: Context) {
     private val _availableCameras = MutableStateFlow<List<Pair<String, String>>>(emptyList())
     val availableCameras: StateFlow<List<Pair<String, String>>> = _availableCameras.asStateFlow()
 
-    // Expose whether we're using the Camera2 engine (for UI to know which view to use)
+    // Expose whether we're using the Camera2 engine (for UI to know which view to show)
     private val _useCamera2Engine = MutableStateFlow(false)
     val useCamera2Engine: StateFlow<Boolean> = _useCamera2Engine.asStateFlow()
 
@@ -182,23 +180,43 @@ class BuiltInCameraManager(private val context: Context) {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // INITIALIZATION
+    // INITIALIZATION (v5: receives BOTH views upfront)
     // ═══════════════════════════════════════════════════════════
 
     /**
-     * Initialize camera system. This is the MAIN entry point.
+     * Initialize camera system. v5: receives BOTH PreviewView AND TextureView.
      *
-     * IMPORTANT: The UI must provide EITHER previewView (for CameraX built-in)
-     * OR textureView (for Camera2 USB). Both can be provided.
+     * CRITICAL v5 CHANGE: Both views are provided at init time so there's
+     * NO chicken-and-egg problem. When USB camera is detected, TextureView
+     * is already available.
      *
      * Camera selection priority:
      * 1. USB external camera (Camera2 engine) — if detected
      * 2. Built-in back camera (CameraX engine) — fallback
      * 3. Built-in front camera (CameraX engine) — last resort
      */
-    fun init(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
+    fun init(lifecycleOwner: LifecycleOwner, previewView: PreviewView, textureView: TextureView? = null) {
+        Log.i(TAG, "═══════════════════════════════════════════════════")
+        Log.i(TAG, "init() called — v5 dual-engine initialization")
+        Log.i(TAG, "  lifecycleOwner: ${lifecycleOwner.javaClass.simpleName}")
+        Log.i(TAG, "  previewView: ${previewView != null}, textureView: ${textureView != null}")
+        Log.i(TAG, "═══════════════════════════════════════════════════")
+
         this.lifecycleOwner = lifecycleOwner
         this.previewView = previewView
+        if (textureView != null) {
+            this.textureView = textureView
+        }
+
+        // Register callback from ExternalCameraManager to propagate connection state
+        externalCameraManager.onConnectionStateChanged = { connected, cameraType ->
+            Log.i(TAG, "ExternalCameraManager state changed: connected=$connected, type=$cameraType")
+            _isConnected.value = connected
+            _cameraType.value = cameraType
+            if (connected && cameraType == "external") {
+                _useCamera2Engine.value = true
+            }
+        }
 
         if (!hasCameraPermission()) {
             Log.e(TAG, "CAMERA permission not granted — cannot initialize")
@@ -218,26 +236,70 @@ class BuiltInCameraManager(private val context: Context) {
             Log.i(TAG, "Activating Camera2 engine for USB camera")
             Log.i(TAG, "═══════════════════════════════════════════════════")
             activateUSBCamera(externalCameras.first().first)
+            fullyInitialized = true
             return
         }
 
         // Step 2: No USB camera — initialize CameraX for built-in cameras
         Log.i(TAG, "No USB camera detected — initializing CameraX for built-in cameras")
         initCameraXProvider(lifecycleOwner, previewView)
+        fullyInitialized = true
     }
 
     /**
      * Set the TextureView for Camera2 engine (USB camera preview).
-     * Must be called BEFORE init() or when the TextureView becomes available.
+     * v5 FIX: This is now called immediately when TextureView is created.
+     * The guard condition now checks isUsingExternalCamera + currentExternalCameraId
+     * instead of the broken isConnected.value check.
      */
     fun setTextureView(tv: TextureView) {
+        Log.i(TAG, "setTextureView called — tv.isAvailable=${tv.isAvailable}")
+        Log.i(TAG, "  Current state: isUsingExternalCamera=$isUsingExternalCamera, currentExternalCameraId=$currentExternalCameraId")
+        Log.i(TAG, "  externalCameraManager.isConnected=${externalCameraManager.isConnected.value}")
+
         this.textureView = tv
-        // If we're already using USB camera but didn't have a TextureView, re-init
-        if (isUsingExternalCamera && externalCameraManager.isConnected.value && tv.isAvailable) {
-            Log.i(TAG, "TextureView set while USB camera is active — re-initializing")
-            val cameraId = currentExternalCameraId ?: return
-            externalCameraManager.closeCamera()
-            externalCameraManager.init(tv)
+
+        // v5 FIX: If we're supposed to be using external camera but it's not actually
+        // connected yet (because TextureView was missing during activateUSBCamera),
+        // NOW is the time to actually open the camera!
+        if (isUsingExternalCamera && currentExternalCameraId != null) {
+            if (externalCameraManager.isConnected.value) {
+                // Already connected — might need to re-associate the TextureView
+                Log.i(TAG, "setTextureView: USB camera already connected, re-associating TextureView")
+                externalCameraManager.closeCamera()
+                if (tv.isAvailable) {
+                    externalCameraManager.init(tv)
+                }
+            } else {
+                // NOT connected yet — this is the missing activation!
+                Log.i(TAG, "═══════════════════════════════════════════════════")
+                Log.i(TAG, "setTextureView: USB camera PENDING ACTIVATION")
+                Log.i(TAG, "  Camera2 engine was selected but TextureView was missing before")
+                Log.i(TAG, "  NOW activating USB camera with available TextureView")
+                Log.i(TAG, "═══════════════════════════════════════════════════")
+
+                if (tv.isAvailable) {
+                    val cameraId = currentExternalCameraId!!
+                    externalCameraManager.init(tv)
+                    // Wait for the camera to actually open
+                    // The ExternalCameraManager will set isConnected = true when ready
+                    _cameraType.value = "external"
+                    Log.i(TAG, "USB camera activation initiated via Camera2 engine (from setTextureView)")
+                } else {
+                    Log.w(TAG, "setTextureView: TextureView not available yet, setting listener")
+                    tv.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                        override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
+                            Log.i(TAG, "TextureView now available, activating USB camera")
+                            val cameraId = currentExternalCameraId ?: return
+                            externalCameraManager.init(tv)
+                            _cameraType.value = "external"
+                        }
+                        override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {}
+                        override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean = true
+                        override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) {}
+                    }
+                }
+            }
         }
     }
 
@@ -247,7 +309,7 @@ class BuiltInCameraManager(private val context: Context) {
     fun reinit(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
         Log.i(TAG, "Re-initializing camera")
         closeAllCameras()
-        init(lifecycleOwner, previewView)
+        init(lifecycleOwner, previewView, textureView)
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -264,36 +326,69 @@ class BuiltInCameraManager(private val context: Context) {
         // Close CameraX engine if running
         closeCameraXEngine()
 
-        val tv = textureView
-        if (tv == null) {
-            Log.w(TAG, "TextureView not set yet — USB camera will be activated when TextureView is provided")
-            isUsingExternalCamera = true
-            currentExternalCameraId = cameraId
-            _useCamera2Engine.value = true
-            _currentCameraId.value = cameraId
-            _cameraType.value = "external"
-            // Will be properly connected when setTextureView() is called
-            return
-        }
-
-        // Open USB camera via Camera2
+        // Set state FIRST (even before camera is opened)
         isUsingExternalCamera = true
         currentExternalCameraId = cameraId
         _useCamera2Engine.value = true
         _currentCameraId.value = cameraId
 
+        val tv = textureView
+        if (tv == null) {
+            // v5 FIX: Don't just give up — set the state so that when TextureView
+            // arrives (via setTextureView), it will activate the camera.
+            // Also, DON'T set cameraType to "external" yet — it's not actually connected.
+            Log.w(TAG, "═══════════════════════════════════════════════════")
+            Log.w(TAG, "TextureView not set yet — USB camera will be activated")
+            Log.w(TAG, "when setTextureView() is called with a valid TextureView")
+            Log.w(TAG, "═══════════════════════════════════════════════════")
+            // Mark as pending — setTextureView will detect this and activate
+            _cameraType.value = "external_pending"
+            return
+        }
+
+        if (!tv.isAvailable) {
+            Log.w(TAG, "TextureView exists but not available yet — setting listener")
+            _cameraType.value = "external_pending"
+            tv.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
+                    Log.i(TAG, "TextureView now available, opening USB camera")
+                    openUSBCameraWithTextureView(cameraId, tv)
+                }
+                override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {}
+                override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean {
+                    closeCamera2Engine()
+                    return true
+                }
+                override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) {}
+            }
+            return
+        }
+
+        // TextureView is available — open the camera now
+        openUSBCameraWithTextureView(cameraId, tv)
+    }
+
+    /**
+     * Actually open the USB camera with the TextureView.
+     * Separated from activateUSBCamera so it can be called from setTextureView too.
+     */
+    private fun openUSBCameraWithTextureView(cameraId: String, tv: TextureView) {
+        Log.i(TAG, "openUSBCameraWithTextureView: Opening USB camera id=$cameraId")
+
         val success = externalCameraManager.init(tv)
         if (success) {
-            // Wait for the camera to actually open (it's async)
-            // The ExternalCameraManager sets isConnected = true when it's ready
-            // For now, set the type optimistically
             _cameraType.value = "external"
-            Log.i(TAG, "USB camera activation initiated via Camera2 engine")
+            Log.i(TAG, "═══════════════════════════════════════════════════")
+            Log.i(TAG, "✓ USB camera activation initiated via Camera2 engine")
+            Log.i(TAG, "═══════════════════════════════════════════════════")
         } else {
-            Log.e(TAG, "USB camera activation FAILED — falling back to CameraX built-in")
+            Log.e(TAG, "═══════════════════════════════════════════════════")
+            Log.e(TAG, "✗ USB camera activation FAILED — falling back to CameraX")
+            Log.e(TAG, "═══════════════════════════════════════════════════")
             isUsingExternalCamera = false
             currentExternalCameraId = null
             _useCamera2Engine.value = false
+            _cameraType.value = "none"
             // Fall back to CameraX
             val owner = lifecycleOwner ?: return
             val pv = previewView ?: return
@@ -534,6 +629,10 @@ class BuiltInCameraManager(private val context: Context) {
     fun forceReinitForUSB() {
         Log.i(TAG, "═══════════════════════════════════════════════════")
         Log.i(TAG, "forceReinitForUSB: USB camera activation requested")
+        Log.i(TAG, "  Current state: isUsingExternalCamera=$isUsingExternalCamera")
+        Log.i(TAG, "  currentExternalCameraId=$currentExternalCameraId")
+        Log.i(TAG, "  cameraType=${_cameraType.value}")
+        Log.i(TAG, "  textureView=$textureView")
         Log.i(TAG, "═══════════════════════════════════════════════════")
 
         val extCams = findExternalCameraIds(context)
@@ -551,7 +650,7 @@ class BuiltInCameraManager(private val context: Context) {
 
         val cameraId = extCams.first().first
         if (isUsingExternalCamera && currentExternalCameraId == cameraId && externalCameraManager.isConnected.value) {
-            Log.d(TAG, "USB camera $cameraId is already active")
+            Log.d(TAG, "USB camera $cameraId is already active and connected")
             return
         }
 
@@ -768,6 +867,7 @@ class BuiltInCameraManager(private val context: Context) {
         providerInitialized = false
         initInProgress = false
         pendingUsbRescan = false
+        fullyInitialized = false
         _currentCameraId.value = ""
         _availableCameras.value = emptyList()
     }

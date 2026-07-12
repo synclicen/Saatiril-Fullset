@@ -323,7 +323,12 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private var uvcManagerInitialized: Boolean = false
     private var periodicCameraRescanJob: Job? = null
 
-    fun initCamera(lifecycleOwner: LifecycleOwner, previewView: androidx.camera.view.PreviewView) {
+    fun initCamera(lifecycleOwner: LifecycleOwner, previewView: androidx.camera.view.PreviewView, textureView: android.view.TextureView? = null) {
+        Log.i(TAG, "═══════════════════════════════════════════════════")
+        Log.i(TAG, "initCamera called — v5 dual-engine initialization")
+        Log.i(TAG, "  previewView: ${previewView != null}, textureView: ${textureView != null}")
+        Log.i(TAG, "═══════════════════════════════════════════════════")
+
         // CRITICAL FIX (v3): Initialize UVC manager FIRST so USB detection is ready
         // BEFORE BuiltInCameraManager starts its camera selection
         if (!uvcManagerInitialized) {
@@ -341,8 +346,8 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         cameraTypeCollector?.cancel()
         uvcConnectedCollector?.cancel()
 
-        // Initialize BuiltInCameraManager (which now uses Camera2 for discovery)
-        builtInCameraManager.init(lifecycleOwner, previewView)
+        // Initialize BuiltInCameraManager (v5: pass BOTH views upfront)
+        builtInCameraManager.init(lifecycleOwner, previewView, textureView)
 
         cameraConnectedCollector = viewModelScope.launch {
             builtInCameraManager.isConnected.collect { connected ->
@@ -392,7 +397,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             viewModelScope.launch {
                 delay(3000) // Generous delay to ensure Camera2 has registered the USB camera
                 val cameraType = builtInCameraManager.cameraType.value
-                if (cameraType != "external") {
+                if (cameraType != "external" && cameraType != "external_pending") {
                     Log.i(TAG, "initCamera: Still on $cameraType camera after 3s — forcing USB camera activation")
                     builtInCameraManager.forceReinitForUSB()
                 }
@@ -423,7 +428,8 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             delay(3000)
             val uvcConnected = uvcCameraManager.isConnected.value
             val cameraType = builtInCameraManager.cameraType.value
-            if (uvcConnected && cameraType != "external") {
+            // Skip rescan if external camera is already connected or being activated
+            if (uvcConnected && cameraType != "external" && cameraType != "external_pending") {
                 Log.i(TAG, "Early rescan: UVC attached but using $cameraType camera, forcing USB activation")
                 builtInCameraManager.forceReinitForUSB()
             }
@@ -433,7 +439,8 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
                 delay(5000)
                 val uvcConn = uvcCameraManager.isConnected.value
                 val camType = builtInCameraManager.cameraType.value
-                if (uvcConn && camType != "external") {
+                // Skip rescan if external camera is already connected or being activated
+                if (uvcConn && camType != "external" && camType != "external_pending") {
                     Log.i(TAG, "Periodic rescan: UVC attached but using $camType camera, forcing USB activation")
                     builtInCameraManager.forceReinitForUSB()
                 }
@@ -446,12 +453,18 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         val cameraType = builtInCameraManager.cameraType.value
 
         if (!connected) {
-            _cameraSource.value = "none"
+            // "external_pending" means USB camera is being activated
+            // (waiting for TextureView) — treat as "uvc" for UI display
+            if (cameraType == "external_pending") {
+                _cameraSource.value = "uvc"
+            } else {
+                _cameraSource.value = "none"
+            }
             return
         }
 
         _cameraSource.value = when (cameraType) {
-            "external" -> "uvc"
+            "external", "external_pending" -> "uvc"
             "back" -> "builtin"
             "front" -> "builtin"
             else -> "none"
