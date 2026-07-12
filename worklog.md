@@ -41,3 +41,32 @@ Stage Summary:
 - This is the ONLY architecture that can work because CameraX cannot use USB cameras
 - Debug APK: /home/z/my-project/android-operator/apk-output/app-debug.apk
 - GitHub: commit 86034f7 pushed to synclicen/Saatiril-Fullset
+---
+Task ID: 1
+Agent: main
+Task: Fix USB HDMI capture card camera not working after login
+
+Work Log:
+- Deep investigation of the complete camera flow across all files
+- Read MainActivity.kt, OperatorViewModel.kt, BuiltInCameraManager.kt, ExternalCameraManager.kt, OperatorScreen.kt, UVCCameraManager.kt
+- Identified 4 root causes working together to prevent USB camera from working after login
+- Implemented v5 fix addressing all root causes simultaneously
+
+Root Causes Found:
+1. Chicken-and-egg: UI created only ONE view (PreviewView OR TextureView). When init() detected USB, TextureView didn't exist yet → activateUSBCamera() couldn't open camera → useCamera2Engine=true triggered recomposition → TextureView created → but setTextureView() guard condition was broken → re-init never happened
+2. setTextureView() broken guard: checked externalCameraManager.isConnected.value (which was false because camera was never opened) instead of checking isUsingExternalCamera flag
+3. Multiple initCamera() calls: LaunchedEffect re-fired on view reference changes, causing repeated failed initializations
+4. ExternalCameraManager state not propagated: _isConnected and _cameraType StateFlows in ExternalCameraManager were not connected to BuiltInCameraManager's StateFlows
+
+v5 Fixes Applied:
+1. BOTH views (PreviewView + TextureView) created simultaneously - only visibility toggles
+2. Fixed setTextureView() guard condition - now checks isUsingExternalCamera && currentExternalCameraId
+3. Added onConnectionStateChanged callback from ExternalCameraManager → BuiltInCameraManager
+4. Added "external_pending" camera type for pending USB activation
+5. Single initCamera() call with cameraInitDone flag
+6. initCamera() accepts optional TextureView parameter
+
+Stage Summary:
+- Built debug APK successfully (v5 fix compiled and verified)
+- Pushed to GitHub: synclicen/Saatiril-Fullset
+- APK at: /home/z/my-project/android-operator/app/build/outputs/apk/debug/app-debug.apk
