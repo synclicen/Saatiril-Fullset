@@ -201,3 +201,67 @@ Stage Summary:
 - USB camera: Camera picker dropdown lets operator select any available camera
 - Startup: MINIMIZE_LATENCY capture mode for faster photo capture
 - Shutter delay: 2-phase finalizeCapture() — operator ready instantly after capture
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Fix Camera Picker Dropdown - USB camera must be selectable and persist
+
+Work Log:
+- Read all Android source files: OperatorScreen.kt, OperatorViewModel.kt, BuiltInCameraManager.kt, UVCCameraManager.kt, SocketManager.kt, Models.kt, ConnectionScreen.kt, MainActivity.kt
+- Identified root causes of camera picker not working:
+  1. DropdownMenu was floating outside TopBar (not anchored to camera button) — incorrect positioning
+  2. Camera list was computed with `remember { viewModel.getAvailableCameras() }` — static, never updates
+  3. No currentCameraId tracking — picker couldn't highlight which camera is active
+  4. No reactive StateFlow for camera list — USB attach/detach didn't update the dropdown
+  5. Timing issue: rescanForExternalCamera() called before cameraProvider was ready, causing silent failure
+  6. USB camera detection on connection screen didn't carry over to project session
+
+FIXES APPLIED:
+
+1. BuiltInCameraManager.kt:
+   - Added `_currentCameraId` MutableStateFlow + `currentCameraId` StateFlow — tracks active camera
+   - Added `_availableCameras` MutableStateFlow + `availableCameras` StateFlow — reactive camera list
+   - `getAvailableCameras()` now also updates `_availableCameras` StateFlow
+   - Added `refreshAvailableCameras()` method — explicit refresh for USB events
+   - `startCamera()` now sets `_currentCameraId` and calls `refreshAvailableCameras()`
+   - `switchToCameraById()` now sets `_currentCameraId` immediately
+   - `rescanForExternalCamera()` now calls `refreshAvailableCameras()` first and handles
+     `cameraProvider == null` case with `pendingRescan` flag
+   - Added `pendingRescan` boolean — set when rescan is requested before provider is ready
+   - Camera provider init callback now checks `pendingRescan` flag and executes deferred rescan
+   - `destroy()` resets `_currentCameraId`, `_availableCameras`, and `pendingRescan`
+
+2. OperatorViewModel.kt:
+   - Added `availableCameras` StateFlow delegating to `builtInCameraManager.availableCameras`
+   - Added `currentCameraId` StateFlow delegating to `builtInCameraManager.currentCameraId`
+
+3. OperatorScreen.kt:
+   - Added state collection: `val availableCameras by viewModel.availableCameras.collectAsState()`
+   - Added state collection: `val currentCameraId by viewModel.currentCameraId.collectAsState()`
+   - Replaced old `TopBar` composable with `TopBarWithCameraPicker`:
+     - DropdownMenu is now INSIDE a Box with the camera switch button (proper anchoring)
+     - Camera list uses reactive `availableCameras` parameter (updates on USB events)
+     - Currently selected camera highlighted with ✓ indicator and green color
+     - Camera icon turns green when USB camera is active
+     - Header shows "Pilih Kamera" with PhotoCamera icon
+     - Footer shows current active camera source
+     - "Memuat kamera..." shown when list is empty (loading state)
+     - Disabled header/footer items use `enabled = false`
+   - Old floating DropdownMenu removed from Column (was causing positioning issues)
+
+Build & Deployment:
+- Committed: 9666672 "fix: Camera Picker Dropdown in top bar - USB camera selectable and persistent"
+- Committed: 08e21d4 "ci: Add GitHub Actions workflow for building APK"
+- Pushed to GitHub: synclicen/Saatiril-Fullset main branch
+- GitHub Actions builds: All completed successfully
+- APK size: ~18.7 MB (app-debug.apk)
+- Downloaded and verified APK artifact
+
+Stage Summary:
+- Camera Picker Dropdown is now properly anchored and functional in the top bar
+- Camera list is reactive — updates when USB devices attach/detach
+- Currently active camera is highlighted with ✓ and green color
+- USB camera icon on switch button turns green when active
+- USB camera persists through screen transitions via pendingRescan mechanism
+- APK built and available for download
