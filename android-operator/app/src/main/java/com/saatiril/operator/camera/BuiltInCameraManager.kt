@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager as AndroidCameraManager
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -411,16 +412,34 @@ class BuiltInCameraManager(private val context: Context) {
      * Check if a camera is external using Camera2 characteristics.
      * This is the most reliable method — checks LENS_FACING value.
      * LENS_FACING_EXTERNAL = 2 in Camera2 API.
+     *
+     * Uses CameraManager to get characteristics since Camera2CameraInfo
+     * doesn't expose cameraCharacteristics directly in CameraX 1.3.x.
      */
     private fun isExternalByCamera2(cameraInfo: CameraInfo, cameraId: String): Boolean {
         return try {
-            val camera2Info = Camera2CameraInfo.from(cameraInfo)
-            val characteristics = camera2Info.cameraCharacteristics
-            val lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING)
-            lensFacing == CameraCharacteristics.LENS_FACING_EXTERNAL
+            // First: check CameraInfo's lensFacing property (CameraX API)
+            // LENS_FACING_EXTERNAL has value 2 in CameraSelector
+            if (cameraInfo.lensFacing == CameraSelector.LENS_FACING_EXTERNAL) {
+                return true
+            }
+
+            // Second: Use CameraManager to get Camera2 characteristics for this camera ID
+            val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? AndroidCameraManager
+            if (cameraManager != null && cameraId.isNotEmpty()) {
+                val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+                val lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING)
+                if (lensFacing == CameraCharacteristics.LENS_FACING_EXTERNAL) {
+                    return true
+                }
+            }
+
+            // Third: String-based check as fallback
+            isExternalCameraId(cameraId)
         } catch (e: Exception) {
             Log.d(TAG, "Cannot check Camera2 characteristics for camera $cameraId: ${e.message}")
-            false
+            // Fallback to string-based check
+            isExternalCameraId(cameraId)
         }
     }
 
