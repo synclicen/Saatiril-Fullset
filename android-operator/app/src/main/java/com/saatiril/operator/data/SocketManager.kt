@@ -210,7 +210,8 @@ class SocketManager {
 
     fun isConnected(): Boolean = socket?.connected() == true
 
-    fun isAuthenticated(): Boolean = connectionState == ConnectionState.AUTHENTICATED
+    fun isAuthenticated(): Boolean = connectionState == ConnectionState.AUTHENTICATED ||
+            connectionState == ConnectionState.WAITING_FOR_DATA
 
     fun getState(): ConnectionState = connectionState
 

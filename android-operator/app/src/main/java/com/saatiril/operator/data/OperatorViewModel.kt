@@ -225,6 +225,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     // ─── State Request Retry ────────────────────────────────────
 
     private var stateRequestJob: Job? = null
+    private var frameRequestJob: Job? = null
 
     private fun startStateRequestLoop() {
         stateRequestJob?.cancel()
@@ -243,15 +244,59 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
+     * BUG FIX: Periodic frame request loop.
+     * Keeps requesting the frame every 5 seconds until it's received.
+     * This handles cases where:
+     * - The first REQUEST_FRAME is lost
+     * - Admin wasn't ready to respond yet
+     * - Admin needed time to recover frame from localStorage
+     */
+    private fun startFrameRequestLoop() {
+        frameRequestJob?.cancel()
+        frameRequestJob = viewModelScope.launch {
+            // Initial delay to let admin stabilize
+            delay(1000L)
+            while (isActive && _frameBitmap.value == null && _project.value != null) {
+                requestFrameIfNeeded()
+                delay(5000L)
+            }
+            Log.d(TAG, "Frame request loop stopped — frame received or project null")
+        }
+        Log.d(TAG, "Frame request loop started")
+    }
+
+    private fun stopFrameRequestLoop() {
+        frameRequestJob?.cancel()
+        frameRequestJob = null
+    }
+
+    /**
      * BUG FIX: Proactively request frame from admin if we need it.
-     * Called after auth_success and in other situations where the frame
-     * might not have been received yet.
+     * Called after auth_success, after SYNC_DB, and periodically in
+     * startFrameRequestLoop().
+     *
+     * FIXES: Frame appears late because:
+     * 1. SYNC_DB sends __FRAME_SAVED__ marker instead of actual frame data
+     * 2. REQUEST_FRAME requires admin to be listening and respond with FRAME_DATA
+     * 3. Admin may not have the frame in memory yet (needs localStorage recovery)
+     * 4. A single request can be lost or arrive before admin is ready
+     *
+     * Solution: Persistent periodic retry every 5s until frame is received.
      */
     private fun requestFrameIfNeeded() {
         val proj = _project.value
-        if (proj != null && (proj.config.frame == "__FRAME_SAVED__" || proj.config.frame == null) && _frameBitmap.value == null) {
-            Log.i(TAG, "requestFrameIfNeeded: Requesting frame for project ${proj.id}")
-            socketManager.requestFrame(proj.id)
+        if (proj != null && _frameBitmap.value == null) {
+            // Request frame if:
+            // 1. Frame field is __FRAME_SAVED__ marker
+            // 2. Frame field is null/empty (admin may not have sent it yet)
+            // 3. Frame field exists but bitmap hasn't been decoded yet
+            val needsFrame = proj.config.frame == "__FRAME_SAVED__" ||
+                    proj.config.frame.isNullOrEmpty() ||
+                    (_frameBitmap.value == null && proj.config.frame != null && proj.config.frame != "__FRAME_SAVED__")
+            if (needsFrame) {
+                Log.i(TAG, "requestFrameIfNeeded: Requesting frame for project ${proj.id} (frame field: ${if (proj.config.frame == null) "null" else if (proj.config.frame == "__FRAME_SAVED__") "__FRAME_SAVED__" else "${proj.config.frame.length} chars"})")
+                socketManager.requestFrame(proj.id)
+            }
         }
     }
 
@@ -427,12 +472,14 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     fun disconnect() {
         stopStateRequestLoop()
+        stopFrameRequestLoop()
         socketManager.disconnect()
         _project.value = null
         _currentTarget.value = null
         _capturePhase.value = CapturePhase.STANDBY
         _capturedPhotos.value = emptyList()
         _mcCallBuffer.value = emptyList()
+        _frameBitmap.value = null
         updateOpQueue()
     }
 
@@ -457,10 +504,11 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             _passwordRequired.value = false
             _authError.value = null
             startStateRequestLoop()
-            // BUG FIX: Proactively request frame after auth success.
+            // BUG FIX: Start frame request loop after auth success.
             // If the project was synced before auth completed (unlikely but possible)
             // or if a previous sync had __FRAME_SAVED__, we need the frame data.
             requestFrameIfNeeded()
+            startFrameRequestLoop()
         }
 
         socketManager.on("auth_failed") { reason ->
@@ -615,11 +663,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
                 )
             }
             decodeFrameBitmap(frameData.frame)
-            // BUG FIX: After FRAME_DATA updates the project, the opQueue
-            // becomes stale because _opQueue is a MutableStateFlow (not
-            // derived). Without this call, the queue list disappears when
-            // the frame appears because the next SYNC_DB merge recalculates
-            // the queue differently from the stale state.
+            // BUG FIX: Stop frame request loop since we now have the frame.
+            // Also update opQueue which may have been stale while waiting for frame.
+            stopFrameRequestLoop()
             updateOpQueue()
         }
 
@@ -688,20 +734,15 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
             // Decode frame bitmap if present (synchronous for immediate display)
             decodeFrameBitmap(incomingProject.config.frame)
-            if (incomingProject.config.frame == "__FRAME_SAVED__") {
-                // BUG FIX: Request frame immediately AND schedule a retry.
-                // On first sync, the frame may arrive late because
-                // requestFrame is async. We add a delayed retry to handle
-                // cases where the first request is lost or delayed.
+            if (incomingProject.config.frame == "__FRAME_SAVED__" || incomingProject.config.frame.isNullOrEmpty()) {
+                // BUG FIX: Request frame and start persistent retry loop.
+                // On first sync, the frame may arrive late because:
+                // - __FRAME_SAVED__ marker means frame was stripped for performance
+                // - Admin needs to recover frame from localStorage and respond
+                // - A single request can be lost or arrive before admin is ready
+                // The frame request loop will keep trying every 5s until frame arrives.
                 socketManager.requestFrame(incomingProject.id)
-                viewModelScope.launch {
-                    delay(3000L)
-                    // Only retry if frame is still not loaded
-                    if (_frameBitmap.value == null && _project.value?.config?.frame == "__FRAME_SAVED__") {
-                        Log.i(TAG, "Frame retry: requesting frame again (3s after first sync)")
-                        socketManager.requestFrame(incomingProject.id)
-                    }
-                }
+                startFrameRequestLoop()
             }
 
             // Re-find active student for non-photoshoot mode after first sync
@@ -782,10 +823,12 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         updateOpQueue()
 
         // Handle frame bitmap
-        if (preservedFrame == "__FRAME_SAVED__") {
+        if (preservedFrame == "__FRAME_SAVED__" || (preservedFrame.isNullOrEmpty() && _frameBitmap.value == null)) {
             socketManager.requestFrame(incomingProject.id)
+            startFrameRequestLoop()
         } else if (preservedFrame != currentProject.config.frame) {
             decodeFrameBitmap(preservedFrame)
+            stopFrameRequestLoop()
         }
     }
 
@@ -1094,6 +1137,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     override fun onCleared() {
         super.onCleared()
         stopStateRequestLoop()
+        stopFrameRequestLoop()
         cancelTimer()
         cameraConnectedCollector?.cancel()
         cameraTypeCollector?.cancel()

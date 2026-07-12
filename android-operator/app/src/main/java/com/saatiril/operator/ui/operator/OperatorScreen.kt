@@ -382,7 +382,7 @@ fun OperatorScreen(
             }
 
             // Standby message (no target)
-            if (currentTarget == null && connectionState == ConnectionState.AUTHENTICATED && cameraConnected) {
+            if (currentTarget == null && (connectionState == ConnectionState.AUTHENTICATED || connectionState == ConnectionState.WAITING_FOR_DATA) && cameraConnected) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -625,7 +625,8 @@ fun OperatorScreen(
     }
 
     // ─── DISCONNECTION OVERLAY ──────────────────────────────
-    if (connectionState == ConnectionState.DISCONNECTED) {
+    // Only show when truly disconnected (not during CONNECTING, AUTHENTICATING, WAITING_FOR_DATA)
+    if (connectionState == ConnectionState.DISCONNECTED || connectionState == ConnectionState.AUTH_FAILED) {
         androidx.compose.ui.window.Dialog(onDismissRequest = {}) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = PANEL),
@@ -677,9 +678,17 @@ private fun TopBar(
     ) {
         // Left: Connection
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            val isConnected = connectionState == ConnectionState.AUTHENTICATED ||
+                    connectionState == ConnectionState.WAITING_FOR_DATA
             Icon(Icons.Default.Wifi, contentDescription = null,
-                tint = if (connectionState == ConnectionState.AUTHENTICATED) GREEN else RED, modifier = Modifier.size(12.dp))
-            Text(if (connectionState == ConnectionState.AUTHENTICATED) "Terhubung" else "Terputus",
+                tint = if (isConnected) GREEN else RED, modifier = Modifier.size(12.dp))
+            Text(if (isConnected) "Terhubung" else when (connectionState) {
+                ConnectionState.CONNECTING -> "Menghubungkan..."
+                ConnectionState.CONNECTED -> "Terhubung..."
+                ConnectionState.AUTHENTICATING -> "Autentikasi..."
+                ConnectionState.AUTH_FAILED -> "Auth Gagal"
+                else -> "Terputus"
+            },
                 style = TextStyle(color = Color.White, fontSize = 10.sp))
             if (latencyMs >= 0) Text("${latencyMs}ms",
                 style = TextStyle(color = when { latencyMs < 5 -> GREEN; latencyMs < 15 -> Color.Yellow; else -> RED }, fontSize = 9.sp))
