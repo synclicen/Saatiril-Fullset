@@ -70,3 +70,26 @@ Stage Summary:
 - Built debug APK successfully (v5 fix compiled and verified)
 - Pushed to GitHub: synclicen/Saatiril-Fullset
 - APK at: /home/z/my-project/android-operator/app/build/outputs/apk/debug/app-debug.apk
+
+---
+Task ID: 2
+Agent: main
+Task: Implement v6 Nuclear Option — Remove CameraX entirely, Camera2 ONLY
+
+Work Log:
+- Analyzed why v5 dual-engine fix still failed
+- Determined CameraX is fundamentally broken for USB cameras (ProcessCameraProvider singleton, stale snapshots, LENS_FACING_EXTERNAL false)
+- Decided to completely eliminate CameraX from camera pipeline
+- Created UnifiedCameraManager.kt — Camera2-only manager for ALL cameras
+- Updated OperatorViewModel to use UnifiedCameraManager instead of BuiltInCameraManager
+- Simplified OperatorScreen to use single TextureView (no PreviewView at all)
+- Removed initCamera LifecycleOwner parameter — Camera2 doesn't need it
+- Removed useCamera2Engine state — always Camera2 now
+- Built and pushed v6 APK successfully
+
+Stage Summary:
+- v6 APK built and pushed to GitHub
+- Key simplification: 2 camera engines → 1 engine (Camera2 only)
+- Key simplification: 2 views (PreviewView + TextureView) → 1 view (TextureView only)
+- Key simplification: complex camera switching → simple close+reopen
+- APK at: /home/z/my-project/android-operator/app/build/outputs/apk/debug/app-debug.apk
