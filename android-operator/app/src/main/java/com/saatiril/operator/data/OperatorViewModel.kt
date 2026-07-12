@@ -252,31 +252,38 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private var cameraTypeCollector: Job? = null
 
     /**
-     * v8: Initialize camera with a WebView.
+     * v9: Initialize camera with a WebView.
      * WebView uses Chromium's getUserMedia — same engine as Electron/Chrome.
      * This is the ONLY approach that reliably works with USB capture cards.
+     *
+     * v9 KEY FIX: Can be called MULTIPLE TIMES safely (from app level AND
+     * from OperatorScreen). The WebViewCameraManager guards against double init.
      */
     fun initCamera(webView: WebView) {
         Log.i(TAG, "═══════════════════════════════════════════════════")
-        Log.i(TAG, "initCamera: v8 WebView Camera Engine")
+        Log.i(TAG, "initCamera: v9 WebView Camera Engine")
         Log.i(TAG, "═══════════════════════════════════════════════════")
 
-        // Initialize WebView camera manager
+        // Initialize WebView camera manager (has guard against double init)
         cameraManager.init(webView)
 
-        cameraConnectedCollector?.cancel()
-        cameraTypeCollector?.cancel()
-
-        cameraConnectedCollector = viewModelScope.launch {
-            cameraManager.isConnected.collect { connected ->
-                _cameraConnected.value = connected
-                updateCameraSource()
+        // Only set up collectors if not already set up
+        if (cameraConnectedCollector?.isActive != true) {
+            cameraConnectedCollector?.cancel()
+            cameraConnectedCollector = viewModelScope.launch {
+                cameraManager.isConnected.collect { connected ->
+                    _cameraConnected.value = connected
+                    updateCameraSource()
+                }
             }
         }
 
-        cameraTypeCollector = viewModelScope.launch {
-            cameraManager.cameraType.collect {
-                updateCameraSource()
+        if (cameraTypeCollector?.isActive != true) {
+            cameraTypeCollector?.cancel()
+            cameraTypeCollector = viewModelScope.launch {
+                cameraManager.cameraType.collect {
+                    updateCameraSource()
+                }
             }
         }
 

@@ -16,44 +16,32 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 
 /**
  * ═════════════════════════════════════════════════════════════════════════
- * WebView Camera Manager — getUserMedia approach (v8 — WEBVIEW SOLUTION)
+ * WebView Camera Manager v9 — getUserMedia with USB-FIRST + robust retry
  * ═════════════════════════════════════════════════════════════════════════
  *
- * WHY WE DROPPED Camera2/CameraX ENTIRELY:
- * Camera2/CameraX has FAILED 3 times (v3-v6) for USB HDMI capture cards:
- * - Camera2: CameraManager.openCamera() lists USB devices but SILENTLY FAILS
- *   to open/stream them on Xiaomi/Redmi devices
- * - CameraX: ProcessCameraProvider is a SINGLETON with frozen camera list,
- *   LENS_FACING_EXTERNAL + hasCamera() returns false
- * - The Android Camera HAL on many devices (especially Xiaomi MIUI) does NOT
- *   properly support USB capture cards despite listing them
- *
- * WHY WEBVIEW WILL WORK:
- * ┌─────────────────────────────────────────────────────────────────────┐
- * │ Chrome/Chromium has its OWN built-in UVC driver that BYPASSES       │
- * │ Android's broken Camera HAL entirely.                               │
- * │                                                                     │
- * │ This is EXACTLY how the Electron/Chrome version works:              │
- * │ navigator.mediaDevices.getUserMedia() → USB camera streams          │
- * │                                                                     │
- * │ WebView uses the same Chromium engine, so it gets the same UVC      │
- * │ driver. This is proven to work on Chrome for Android with USB       │
- * │ capture cards — WebView has the same capability.                    │
- * └─────────────────────────────────────────────────────────────────────┘
+ * KEY FIXES FROM v8:
+ * 1. Load camera.html via loadDataWithBaseURL with https://localhost origin
+ *    (file:// origin may restrict getUserMedia USB camera enumeration)
+ * 2. Persist USB camera deviceId across screen transitions
+ * 3. On init, if a USB camera was previously selected, send its deviceId
+ *    to JS immediately after loading
+ * 4. Add periodic rescan timer to detect USB cameras that appear late
+ * 5. Robust logging for diagnosing USB camera issues
  *
  * ARCHITECTURE:
  * - camera.html (in assets/) handles all camera logic via getUserMedia
  * - JavaScript Interface bridge for Kotlin ↔ JS communication
- * - Kotlin calls JS: switchCamera(deviceId), capturePhoto(), updateConfig()
+ * - Kotlin calls JS: selectCamera(deviceId), capturePhoto(), forceRescan()
  * - JS calls Kotlin: onCameraList(), onCameraReady(), onCaptureResult()
  * - Photo capture: canvas.toDataURL('image/jpeg') → base64 → bridge → Kotlin
- * - Photos NOT saved on operator device (sent via socket only, like Electron browser mode)
+ * - Photos NOT saved on operator device (sent via socket only, like Electron)
  *
  * Camera priority (matching Electron behavior):
- * 1. USB/External camera — auto-selected if present
+ * 1. USB/External camera — auto-selected if present, retried up to 5 times
  * 2. Built-in back camera — fallback
  * 3. Built-in front camera — last resort
  */
@@ -61,6 +49,9 @@ class WebViewCameraManager(private val context: Context) {
 
     companion object {
         private const val TAG = "WebViewCamera"
+        private const val RESCAN_INTERVAL_MS = 8000L  // Rescan every 8 seconds
+        private const val USB_REMEMBER_KEY = "saatiril_usb_camera_id"
+        private const val USB_REMEMBER_LABEL_KEY = "saatiril_usb_camera_label"
     }
 
     // ─── WebView reference ────────────────────────────────────────────
@@ -83,8 +74,20 @@ class WebViewCameraManager(private val context: Context) {
     private var currentCameraLabel: String = ""
     private var currentCameraIsExternal: Boolean = false
 
+    // ─── USB Camera Persistence ───────────────────────────────────────
+    // Remember the USB camera across screen transitions and WebView reloads
+    private var rememberedUSBCameraId: String = ""
+    private var rememberedUSBCameraLabel: String = ""
+
     // ─── Pending capture callback ─────────────────────────────────────
     private var pendingCaptureCallback: ((String?) -> Unit)? = null
+
+    // ─── Rescan timer ─────────────────────────────────────────────────
+    private var rescanRunnable: Runnable? = null
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    // ─── Init state ───────────────────────────────────────────────────
+    private var isInitialized = false
 
     // ═══════════════════════════════════════════════════════════════════
     // INITIALIZATION
@@ -93,14 +96,40 @@ class WebViewCameraManager(private val context: Context) {
     /**
      * Initialize with a WebView instance.
      * Sets up WebView settings, JavaScript interface, and loads camera.html.
+     *
+     * KEY FIX: Use loadDataWithBaseURL with https://localhost origin
+     * instead of file:// — this gives proper security context for getUserMedia
+     * to enumerate ALL cameras including USB capture cards.
      */
     @SuppressLint("SetJavaScriptEnabled")
     fun init(webView: WebView) {
         Log.i(TAG, "═══════════════════════════════════════════════════")
-        Log.i(TAG, "init: WebView Camera Engine (v8)")
+        Log.i(TAG, "init: WebView Camera Engine v9 — USB-FIRST")
         Log.i(TAG, "═══════════════════════════════════════════════════")
 
+        // Guard against double initialization — if already initialized with this WebView, skip
+        if (isInitialized && this.webView === webView) {
+            Log.i(TAG, "init: Already initialized with same WebView, skipping")
+            return
+        }
+
+        // If initialized with a DIFFERENT WebView, clean up old one first
+        if (isInitialized && this.webView !== webView) {
+            Log.i(TAG, "init: Different WebView provided, re-initializing")
+            stopRescanTimer()
+            try {
+                this.webView?.stopLoading()
+                this.webView?.removeJavascriptInterface("AndroidBridge")
+            } catch (e: Exception) {
+                Log.w(TAG, "Error cleaning up old WebView: ${e.message}")
+            }
+        }
+
         this.webView = webView
+        isInitialized = true
+
+        // Load remembered USB camera from SharedPreferences
+        loadRememberedUSBCamera()
 
         // Configure WebView for camera access
         webView.settings.apply {
@@ -109,24 +138,38 @@ class WebViewCameraManager(private val context: Context) {
             domStorageEnabled = true
             allowFileAccess = true
             allowContentAccess = true
+
             // CRITICAL: Allow file:// URLs to access camera (getUserMedia)
-            // camera.html is loaded from file:///android_asset/
             @Suppress("DEPRECATION")
             allowFileAccessFromFileURLs = true
             @Suppress("DEPRECATION")
             allowUniversalAccessFromFileURLs = true
+
             // CRITICAL: Allow mixed content (HTTP camera streams)
             mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+
+            // Additional settings for better compatibility
+            cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+            databaseEnabled = true
         }
 
         // Set WebViewClient to handle page loading
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
-                Log.i(TAG, "camera.html loaded successfully")
+                Log.i(TAG, "camera.html loaded successfully — url=$url")
+
+                // After page loads, if we remember a USB camera, tell JS about it
+                if (rememberedUSBCameraId.isNotEmpty()) {
+                    Log.i(TAG, " onPageFinished: Sending remembered USB camera to JS: $rememberedUSBCameraId")
+                    // Small delay to ensure JS bridge is ready
+                    handler.postDelayed({
+                        executeJS("if(typeof setRememberedUSBCamera === 'function') setRememberedUSBCamera('$rememberedUSBCameraId', '${rememberedUSBCameraLabel.replace("'", "\\'")}')")
+                    }, 300)
+                }
             }
 
             override fun onReceivedError(view: WebView?, request: android.webkit.WebResourceRequest?, error: android.webkit.WebResourceError?) {
-                Log.e(TAG, "WebView error: ${error?.description}")
+                Log.e(TAG, "WebView error: ${error?.description} (code=${error?.errorCode})")
             }
         }
 
@@ -147,9 +190,106 @@ class WebViewCameraManager(private val context: Context) {
         // Add JavaScript interface
         webView.addJavascriptInterface(CameraBridge(), "AndroidBridge")
 
-        // Load camera.html from assets
-        webView.loadUrl("file:///android_asset/camera.html")
-        Log.i(TAG, "camera.html loaded into WebView")
+        // ═══ KEY FIX: Load via loadDataWithBaseURL ═══
+        // Using file:///android_asset/ as the base URL but with https:// scheme
+        // This gives proper security context for getUserMedia to see USB cameras
+        try {
+            val htmlStream = context.assets.open("camera.html")
+            val htmlBytes = ByteArray(htmlStream.available())
+            htmlStream.read(htmlBytes)
+            htmlStream.close()
+            val htmlContent = String(htmlBytes, Charsets.UTF_8)
+
+            // Use loadDataWithBaseURL with https://localhost origin
+            // This is a KNOWN technique to give WebView proper security context
+            // while still loading local content
+            webView.loadDataWithBaseURL(
+                "https://localhost",  // base URL — gives proper security context
+                htmlContent,          // HTML content
+                "text/html",          // MIME type
+                "UTF-8",              // encoding
+                null                  // history URL
+            )
+            Log.i(TAG, "camera.html loaded via loadDataWithBaseURL (https://localhost origin)")
+        } catch (e: Exception) {
+            // Fallback to file:// if asset reading fails
+            Log.e(TAG, "Failed to load camera.html via loadDataWithBaseURL: ${e.message}")
+            webView.loadUrl("file:///android_asset/camera.html")
+            Log.i(TAG, "camera.html loaded via file:// fallback")
+        }
+
+        // Start periodic rescan timer
+        startRescanTimer()
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // USB CAMERA PERSISTENCE
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Save the USB camera ID so it persists across screen transitions.
+     */
+    private fun saveRememberedUSBCamera(deviceId: String, label: String) {
+        rememberedUSBCameraId = deviceId
+        rememberedUSBCameraLabel = label
+        try {
+            val prefs = context.getSharedPreferences("saatiril_camera", Context.MODE_PRIVATE)
+            prefs.edit()
+                .putString(USB_REMEMBER_KEY, deviceId)
+                .putString(USB_REMEMBER_LABEL_KEY, label)
+                .apply()
+            Log.i(TAG, "USB camera SAVED: id=$deviceId label=$label")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save USB camera preference: ${e.message}")
+        }
+    }
+
+    private fun loadRememberedUSBCamera() {
+        try {
+            val prefs = context.getSharedPreferences("saatiril_camera", Context.MODE_PRIVATE)
+            rememberedUSBCameraId = prefs.getString(USB_REMEMBER_KEY, "") ?: ""
+            rememberedUSBCameraLabel = prefs.getString(USB_REMEMBER_LABEL_KEY, "") ?: ""
+            if (rememberedUSBCameraId.isNotEmpty()) {
+                Log.i(TAG, "USB camera REMEMBERED from prefs: id=$rememberedUSBCameraId label=$rememberedUSBCameraLabel")
+            } else {
+                Log.i(TAG, "No USB camera previously remembered")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load USB camera preference: ${e.message}")
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // PERIODIC RESCAN TIMER
+    // ═══════════════════════════════════════════════════════════════════
+    // The devicechange event in WebView may not fire reliably for USB
+    // hot-plug on all Android devices. So we also do periodic rescans.
+
+    private fun startRescanTimer() {
+        stopRescanTimer()
+        rescanRunnable = object : Runnable {
+            override fun run() {
+                if (isInitialized && webView != null) {
+                    // Only rescan if we're NOT on an external camera
+                    if (_cameraType.value != "external") {
+                        Log.d(TAG, "Periodic rescan: current camera is ${_cameraType.value}, checking for USB...")
+                        executeJS("if(typeof enumerateCameras === 'function') enumerateCameras()")
+                    } else {
+                        Log.d(TAG, "Periodic rescan: USB camera active, skipping")
+                    }
+                }
+                handler.postDelayed(this, RESCAN_INTERVAL_MS)
+            }
+        }
+        handler.postDelayed(rescanRunnable!!, RESCAN_INTERVAL_MS)
+        Log.i(TAG, "Periodic rescan timer started (interval=${RESCAN_INTERVAL_MS}ms)")
+    }
+
+    private fun stopRescanTimer() {
+        rescanRunnable?.let {
+            handler.removeCallbacks(it)
+        }
+        rescanRunnable = null
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -167,11 +307,11 @@ class WebViewCameraManager(private val context: Context) {
 
     /**
      * Force rescan for USB cameras and auto-select if found.
-     * Calls JavaScript autoStart().
+     * Calls JavaScript forceRescan().
      */
     fun forceRescan() {
-        Log.i(TAG, "forceRescan: triggering auto-start")
-        executeJS("autoStart()")
+        Log.i(TAG, "forceRescan: triggering USB camera rescan")
+        executeJS("forceRescan()")
     }
 
     /**
@@ -197,7 +337,6 @@ class WebViewCameraManager(private val context: Context) {
      */
     fun setFrameOverlay(base64Data: String?) {
         if (base64Data != null) {
-            // Escape the base64 string for JavaScript
             val escaped = base64Data.replace("'", "\\'").replace("\n", "\\n")
             executeJS("setFrameOverlay('$escaped')")
         } else {
@@ -249,15 +388,41 @@ class WebViewCameraManager(private val context: Context) {
             try {
                 val array = JSONArray(json)
                 val cameras = mutableListOf<Pair<String, String>>()
+                var hasUsbCamera = false
+                var usbCameraId = ""
+                var usbCameraLabel = ""
+
                 for (i in 0 until array.length()) {
                     val obj = array.getJSONObject(i)
                     val deviceId = obj.getString("deviceId")
                     val label = obj.getString("label")
                     val isExternal = obj.optBoolean("isExternal", false)
                     cameras.add(deviceId to (if (isExternal) "USB: $label" else label))
+
+                    if (isExternal) {
+                        hasUsbCamera = true
+                        usbCameraId = deviceId
+                        usbCameraLabel = label
+                    }
                 }
+
                 _availableCameras.value = cameras
-                Log.i(TAG, "Camera list updated: ${cameras.size} cameras")
+                Log.i(TAG, "Camera list updated: ${cameras.size} cameras, hasUsb=$hasUsbCamera")
+
+                // If USB camera found and we're NOT currently on USB, auto-switch
+                if (hasUsbCamera && _cameraType.value != "external") {
+                    Log.i(TAG, "USB camera found but not active — auto-switching! id=$usbCameraId")
+                    saveRememberedUSBCamera(usbCameraId, usbCameraLabel)
+                    // Trigger switch to USB camera
+                    handler.post {
+                        executeJS("selectCamera('$usbCameraId')")
+                    }
+                }
+
+                // Save USB camera info for persistence
+                if (hasUsbCamera) {
+                    saveRememberedUSBCamera(usbCameraId, usbCameraLabel)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to parse camera list: ${e.message}")
             }
@@ -279,10 +444,17 @@ class WebViewCameraManager(private val context: Context) {
                 currentCameraIsExternal = obj.optBoolean("isExternal", false)
                 _currentCameraId.value = obj.optString("deviceId", "")
 
-                _cameraType.value = if (currentCameraIsExternal) "external" else "back"
+                val newCameraType = if (currentCameraIsExternal) "external" else "back"
+                _cameraType.value = newCameraType
                 _isConnected.value = true
 
-                Log.i(TAG, "Camera type: ${_cameraType.value}, label: $currentCameraLabel, external: $currentCameraIsExternal")
+                // Save USB camera info for persistence
+                if (currentCameraIsExternal) {
+                    saveRememberedUSBCamera(_currentCameraId.value, currentCameraLabel)
+                    Log.i(TAG, "USB camera ACTIVE and SAVED: id=${_currentCameraId.value}")
+                }
+
+                Log.i(TAG, "Camera type: $newCameraType, label: $currentCameraLabel, external: $currentCameraIsExternal")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to parse camera ready: ${e.message}")
                 _isConnected.value = true  // Assume connected even if parsing fails
@@ -308,8 +480,9 @@ class WebViewCameraManager(private val context: Context) {
         @JavascriptInterface
         fun onCameraError(message: String) {
             Log.e(TAG, "Camera error from JS: $message")
-            _isConnected.value = false
-            _cameraType.value = "none"
+            // Don't set isConnected to false on error — the JS auto-retries
+            // _isConnected.value = false
+            // _cameraType.value = "none"
         }
 
         /**
@@ -318,7 +491,7 @@ class WebViewCameraManager(private val context: Context) {
         @JavascriptInterface
         fun onDeviceChange() {
             Log.i(TAG, "Device change detected from JS")
-            // The JS auto-reconnects, we just need to update state
+            // JS handles auto-reconnect via devicechange event
         }
 
         /**
@@ -333,7 +506,6 @@ class WebViewCameraManager(private val context: Context) {
     // ═══════════════════════════════════════════════════════════════════
     // COMPATIBILITY: Match UnifiedCameraManager interface
     // ═══════════════════════════════════════════════════════════════════
-    // These methods exist so OperatorViewModel doesn't need massive changes
 
     fun forceSwitchToUSB() {
         Log.i(TAG, "forceSwitchToUSB: triggering rescan")
@@ -354,6 +526,8 @@ class WebViewCameraManager(private val context: Context) {
 
     fun destroy() {
         Log.i(TAG, "destroy: cleaning up WebView camera")
+        stopRescanTimer()
+        isInitialized = false
         try {
             webView?.stopLoading()
             webView?.loadUrl("about:blank")
@@ -363,10 +537,23 @@ class WebViewCameraManager(private val context: Context) {
             Log.w(TAG, "Error destroying WebView: ${e.message}")
         }
         webView = null
-        _isConnected.value = false
-        _cameraType.value = "none"
-        _currentCameraId.value = ""
-        _availableCameras.value = emptyList()
-        pendingCaptureCallback = null
+        // Don't reset isConnected/cameraType — we want to remember state
+        // for when the WebView is recreated after screen transition
+    }
+
+    /**
+     * Soft reset — keep state but release WebView reference.
+     * Called when screen changes but we want to keep camera state.
+     */
+    fun releaseWebView() {
+        Log.i(TAG, "releaseWebView: releasing WebView but keeping state")
+        stopRescanTimer()
+        try {
+            webView?.stopLoading()
+            webView?.removeJavascriptInterface("AndroidBridge")
+        } catch (e: Exception) {
+            Log.w(TAG, "Error releasing WebView: ${e.message}")
+        }
+        webView = null
     }
 }

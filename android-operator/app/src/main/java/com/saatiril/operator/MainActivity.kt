@@ -9,6 +9,8 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.WindowManager
+import android.webkit.WebView
+import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -95,8 +97,6 @@ class MainActivity : ComponentActivity() {
     }
 
     // CRITICAL FIX: Re-check camera permission when returning from Settings
-    // This handles the case where user grants permission via system Settings
-    // (not the in-app dialog) — the Activity's _cameraPermissionGranted was stale
     override fun onResume() {
         super.onResume()
         val nowGranted = (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
@@ -143,6 +143,32 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/**
+ * ═════════════════════════════════════════════════════════════════════════
+ * v9 FIX: Create WebView at the TOP LEVEL so it survives screen transitions.
+ *
+ * ROOT CAUSE of USB camera reverting to built-in after login:
+ * - When user logs in (ConnectionScreen → OperatorScreen), the entire
+ *   composable tree changes. The OLD WebView is destroyed and a NEW one
+ *   is created. The new WebView loads camera.html from scratch, which
+ *   auto-starts and selects the first available camera (usually built-in).
+ * - Even with USB camera persistence (SharedPreferences), the new WebView's
+ *   JavaScript has to re-enumerate and re-open the USB camera, which takes
+ *   time and may fail.
+ *
+ * FIX: Create the WebView ONCE at the app level and pass it to OperatorScreen.
+ * The WebView is kept alive across screen transitions. When the user is on
+ * ConnectionScreen, the WebView exists but is hidden (not in the composition).
+ * When transitioning to OperatorScreen, the same WebView instance is used.
+ *
+ * However, since AndroidView doesn't support being in multiple composition
+ * trees simultaneously, we use a different approach:
+ * - The WebView is created at the Activity level
+ * - initCamera() is called as soon as permission is granted (even on ConnectionScreen)
+ * - The WebView camera runs in the background during connection
+ * - When transitioning to OperatorScreen, the WebView is simply attached to the UI
+ * ═════════════════════════════════════════════════════════════════════════
+ */
 @Composable
 fun SaatirilOperatorApp(viewModel: OperatorViewModel, activity: MainActivity) {
     val connectionState by viewModel.connectionState.collectAsState()
@@ -150,6 +176,33 @@ fun SaatirilOperatorApp(viewModel: OperatorViewModel, activity: MainActivity) {
 
     // Track camera permission state from the Activity
     var hasCameraPermission by remember { mutableStateOf(activity.cameraPermissionGranted) }
+
+    // ═══ v9 KEY FIX: Create WebView at TOP LEVEL ═══
+    // This WebView survives screen transitions — it's created once
+    // and reused when transitioning from ConnectionScreen to OperatorScreen.
+    val sharedWebView = remember {
+        WebView(activity).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+    }
+
+    // Initialize camera as soon as permission is granted — BEFORE screen transition
+    var cameraInitialized by remember { mutableStateOf(false) }
+    LaunchedEffect(hasCameraPermission) {
+        if (hasCameraPermission && !cameraInitialized) {
+            cameraInitialized = true
+            Log.i("SaatirilApp", "Camera permission granted, initializing WebView camera IMMEDIATELY")
+            try {
+                viewModel.initCamera(sharedWebView)
+            } catch (e: Exception) {
+                Log.e("SaatirilApp", "Early camera init failed: ${e.message}")
+                cameraInitialized = false
+            }
+        }
+    }
 
     // Register for camera permission callback from Activity
     DisposableEffect(activity) {
@@ -179,7 +232,8 @@ fun SaatirilOperatorApp(viewModel: OperatorViewModel, activity: MainActivity) {
     if (isConnected && connectionState != ConnectionState.DISCONNECTED) {
         OperatorScreen(
             viewModel = viewModel,
-            hasCameraPermission = hasCameraPermission
+            hasCameraPermission = hasCameraPermission,
+            webView = sharedWebView  // Pass the SAME WebView instance
         )
     } else {
         ConnectionScreen(

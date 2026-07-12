@@ -100,7 +100,8 @@ object Panels {
 @Composable
 fun OperatorScreen(
     viewModel: OperatorViewModel,
-    hasCameraPermission: Boolean = false
+    hasCameraPermission: Boolean = false,
+    webView: WebView? = null  // v9: WebView passed from top level — survives screen transitions
 ) {
     val context = LocalContext.current
     val lifecycleOwner: LifecycleOwner = when (context) {
@@ -160,8 +161,18 @@ fun OperatorScreen(
     }
     val effectivePermission = hasCameraPermission || localPermissionState
 
-    // v8: WebView for camera (getUserMedia via Chromium engine)
-    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    // v9: WebView is passed from top level — created at app level to survive
+    // screen transitions. This is the KEY fix for USB camera reverting to
+    // built-in after login: the WebView (and its USB camera stream) persists
+    // across the ConnectionScreen → OperatorScreen transition.
+    val webViewRef = webView ?: remember {
+        WebView(context).apply {
+            layoutParams = android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+    }
     var cameraInitDone by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -174,13 +185,28 @@ fun OperatorScreen(
         }
     }
 
-    // v8: Init camera ONCE when WebView is ready and permission granted
-    LaunchedEffect(effectivePermission, webViewRef) {
-        val wv = webViewRef
-        if (effectivePermission && wv != null && !cameraInitDone) {
+    // v9: Camera is initialized at the APP LEVEL (in SaatirilOperatorApp),
+    // BEFORE the screen transition. This ensures USB camera is already
+    // streaming when OperatorScreen appears. We only call initCamera here
+    // as a FALLBACK if it wasn't initialized at the app level.
+    LaunchedEffect(effectivePermission) {
+        if (effectivePermission && !cameraInitDone && webView != null) {
+            // WebView was passed but camera not yet initialized (fallback)
             cameraInitDone = true
             try {
-                viewModel.initCamera(wv)
+                viewModel.initCamera(webViewRef)
+            } catch (e: SecurityException) {
+                localPermissionState = false
+                cameraInitDone = false
+            } catch (e: Exception) {
+                Log.e("OperatorScreen", "initCamera failed: ${e.message}")
+                cameraInitDone = false
+            }
+        } else if (effectivePermission && !cameraInitDone && webView == null) {
+            // No WebView passed — create our own (legacy fallback)
+            cameraInitDone = true
+            try {
+                viewModel.initCamera(webViewRef)
             } catch (e: SecurityException) {
                 localPermissionState = false
                 cameraInitDone = false
@@ -297,24 +323,18 @@ fun OperatorScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     // ═══════════════════════════════════════════════════
-                    // v8: WebView for camera preview (getUserMedia)
+                    // v9: WebView for camera preview (getUserMedia)
                     //
                     // WebView uses Chromium's built-in UVC driver that
                     // BYPASSES Android's broken Camera2 HAL. This is the
                     // same engine Chrome/Electron uses for USB cameras.
                     //
-                    // No more TextureView, no more Camera2, no more CameraX.
+                    // KEY FIX: WebView is created in remember() above,
+                    // NOT in the factory. This prevents recreation on
+                    // recomposition which would lose USB camera state.
                     // ═══════════════════════════════════════════════════
                     AndroidView(
-                        factory = { ctx ->
-                            WebView(ctx).apply {
-                                layoutParams = android.widget.FrameLayout.LayoutParams(
-                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-                                )
-                                webViewRef = this
-                            }
-                        },
+                        factory = { _ -> webViewRef },
                         modifier = Modifier.fillMaxSize()
                     )
 

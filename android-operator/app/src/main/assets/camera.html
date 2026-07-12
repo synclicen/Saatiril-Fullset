@@ -24,6 +24,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
   border-radius: 4px;
   z-index: 10;
   pointer-events: none;
+  max-width: 90%;
+  word-break: break-all;
 }
 #error-overlay {
   position: absolute;
@@ -40,6 +42,23 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
 }
 #error-overlay h3 { font-size: 18px; margin-bottom: 8px; }
 #error-overlay p { font-size: 14px; color: #ccc; max-width: 80%; }
+#debug-log {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  right: 4px;
+  color: #0f0;
+  font-size: 10px;
+  font-family: monospace;
+  background: rgba(0,0,0,0.7);
+  padding: 4px;
+  border-radius: 4px;
+  z-index: 10;
+  pointer-events: none;
+  max-height: 80px;
+  overflow-y: auto;
+  word-break: break-all;
+}
 </style>
 </head>
 <body>
@@ -51,17 +70,25 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
   <h3>Camera Error</h3>
   <p id="error-message"></p>
 </div>
+<div id="debug-log"></div>
 
 <script>
 // ═══════════════════════════════════════════════════════════════════
-// Saatiril WebView Camera Engine
+// Saatiril WebView Camera Engine v9 — USB-FIRST with robust retry
 // ═══════════════════════════════════════════════════════════════════
-// This mirrors EXACTLY how the Electron/Chrome version handles USB
-// cameras via getUserMedia. Chrome/Chromium has its own built-in UVC
-// driver that bypasses Android's broken Camera2 HAL.
 //
-// Flow: enumerateDevices → select USB → getUserMedia → video element
-//       Capture: canvas → toDataURL → base64 → Android bridge
+// KEY FIXES FROM v8:
+// 1. USB camera is TRIED FIRST with multiple retries
+// 2. enumerateDevices is called with a temporary stream to get labels
+// 3. Camera selection is PERSISTED — remembered across re-enumerations
+// 4. Detailed debug logging for diagnosing issues
+// 5. Fallback to built-in ONLY after USB camera confirmed unavailable
+// 6. devicechange event triggers immediate USB camera search
+//
+// Camera priority (matching Electron behavior):
+// 1. USB/External camera — tried first, retried 3 times
+// 2. Built-in back camera — fallback
+// 3. Built-in front camera — last resort
 // ═══════════════════════════════════════════════════════════════════
 
 const video = document.getElementById('camera-video');
@@ -69,73 +96,177 @@ const canvas = document.getElementById('capture-canvas');
 const statusEl = document.getElementById('status');
 const errorOverlay = document.getElementById('error-overlay');
 const errorMsg = document.getElementById('error-message');
+const debugLog = document.getElementById('debug-log');
 
 let currentStream = null;
 let currentDeviceId = null;
 let cameraDevices = [];
 let isReady = false;
 let captureConfig = { aspectRatio: 4/3, filterPreset: 'original' };
-let frameOverlay = null; // base64 frame image
+let frameOverlay = null;
 
-// ─── Camera Enumeration ──────────────────────────────────────────
+// ─── USB Camera Persistence ─────────────────────────────────────
+// Remember the USB camera deviceId so we can re-select it after
+// enumeration or page reload. This is the KEY fix — without this,
+// the camera reverts to built-in after any state change.
+
+let rememberedUSBCameraId = null;
+let rememberedUSBCameraLabel = null;
+let usbCameraAttemptCount = 0;
+const MAX_USB_ATTEMPTS = 5;
+let autoStartAttempt = 0;
+const MAX_AUTO_START_ATTEMPTS = 3;
+
+// ─── Debug Logging ──────────────────────────────────────────────
+
+function debugLog(msg) {
+  const line = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+  console.log('[Camera] ' + msg);
+  if (window.AndroidBridge) {
+    try { window.AndroidBridge.log(msg); } catch(e) {}
+  }
+  // Also show in on-screen debug area
+  const el = document.getElementById('debug-log');
+  if (el) {
+    el.textContent = line + '\n' + el.textContent;
+    if (el.textContent.length > 2000) {
+      el.textContent = el.textContent.substring(0, 2000);
+    }
+  }
+}
+
+// ─── Camera Enumeration ─────────────────────────────────────────
 
 async function enumerateCameras() {
   try {
-    // Must get a stream first to get device labels (Chrome security requirement)
-    if (!currentStream) {
-      const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      tempStream.getTracks().forEach(t => t.stop());
+    // CRITICAL: Must get a stream first to get device labels
+    // Without a stream, labels are empty ("") due to Chrome security
+    let needTempStream = !currentStream;
+    let tempStream = null;
+
+    if (needTempStream) {
+      debugLog('enumerateCameras: Getting temp stream for labels...');
+      try {
+        // Try to get the USB camera first for labels
+        tempStream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false
+        });
+      } catch (e) {
+        debugLog('enumerateCameras: Temp stream failed: ' + e.message);
+        // Try again with simpler constraints
+        try {
+          tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        } catch (e2) {
+          debugLog('enumerateCameras: Simple temp stream also failed: ' + e2.message);
+        }
+      }
     }
 
     const devices = await navigator.mediaDevices.enumerateDevices();
     cameraDevices = devices.filter(d => d.kind === 'videoinput');
 
-    const deviceList = cameraDevices.map((d, i) => ({
-      deviceId: d.deviceId,
-      label: d.label || ('Camera ' + (i + 1)),
-      isExternal: isExternalCamera(d)
-    }));
+    // Stop temp stream after enumeration
+    if (tempStream) {
+      tempStream.getTracks().forEach(t => t.stop());
+      debugLog('enumerateCameras: Temp stream stopped');
+    }
 
-    console.log('[Camera] Found ' + deviceList.length + ' cameras:', JSON.stringify(deviceList));
+    const deviceList = cameraDevices.map((d, i) => {
+      const isExt = isExternalCamera(d);
+      return {
+        deviceId: d.deviceId,
+        label: d.label || ('Camera ' + (i + 1)),
+        isExternal: isExt,
+        groupId: d.groupId || ''
+      };
+    });
+
+    debugLog('enumerateCameras: Found ' + deviceList.length + ' cameras');
+    deviceList.forEach((d, i) => {
+      debugLog('  [' + i + '] id=' + d.deviceId.substring(0, 20) + '... label="' + d.label + '" ext=' + d.isExternal);
+    });
+
+    // Check if we found a USB camera and remember it
+    const usbCam = deviceList.find(d => d.isExternal);
+    if (usbCam) {
+      if (!rememberedUSBCameraId || rememberedUSBCameraId !== usbCam.deviceId) {
+        debugLog('enumerateCameras: USB camera FOUND — id=' + usbCam.deviceId.substring(0, 20) + ' label="' + usbCam.label + '"');
+        rememberedUSBCameraId = usbCam.deviceId;
+        rememberedUSBCameraLabel = usbCam.label;
+      }
+    } else {
+      debugLog('enumerateCameras: No USB camera found in device list');
+    }
 
     // Notify Android of camera list
     if (window.AndroidBridge) {
-      window.AndroidBridge.onCameraList(JSON.stringify(deviceList));
+      try {
+        window.AndroidBridge.onCameraList(JSON.stringify(deviceList));
+      } catch(e) {
+        debugLog('onCameraList bridge error: ' + e.message);
+      }
     }
 
     return deviceList;
   } catch (e) {
-    console.error('[Camera] Enumerate failed:', e);
+    debugLog('enumerateCameras FAILED: ' + e.message);
     showError('Failed to enumerate cameras: ' + e.message);
     return [];
   }
 }
 
+// ─── USB Camera Detection ───────────────────────────────────────
+// More robust detection — check label, deviceId patterns, and
+// also check if the camera is NOT a known built-in facing mode
+
 function isExternalCamera(device) {
   const label = (device.label || '').toLowerCase();
-  // USB capture cards typically show as "USB Camera", "Capture Card", "UVC", etc.
-  // On some devices they may show with specific brand names
-  return label.includes('usb') ||
-         label.includes('capture') ||
-         label.includes('uvc') ||
-         label.includes('external') ||
-         label.includes('hdmi') ||
-         label.includes('video capture') ||
-         label.includes('av to usb') ||
-         label.includes('jaso') ||  // JASOZ brand
-         label.includes('ezcap') ||
-         label.includes('magewell') ||
-         label.includes('elgato') ||
-         label.includes('camlink') ||
-         label.includes('avermedia') ||
-         // Generic: devices with higher index are often external
-         (device.deviceId && device.deviceId.length > 20);
+  const deviceId = device.deviceId || '';
+
+  // Known USB capture card brand patterns
+  const usbPatterns = [
+    'usb', 'capture', 'uvc', 'external', 'hdmi',
+    'video capture', 'av to usb', 'jaso', 'ezcap',
+    'magewell', 'elgato', 'camlink', 'avermedia',
+    'macro', 'silicon', 'smi', 'webcam', 'cam',
+    'obs', 'vc', 'digitizer', 'converter', 'adapter'
+  ];
+
+  // Check label against patterns
+  for (const pattern of usbPatterns) {
+    if (label.includes(pattern)) return true;
+  }
+
+  // Built-in cameras typically have these labels
+  const builtinPatterns = [
+    'front', 'selfie', 'facing', 'back camera',
+    'camera 0', 'camera 1', 'camera0', 'camera1'
+  ];
+  const isBuiltin = builtinPatterns.some(p => label.includes(p));
+
+  // If label doesn't match built-in and deviceId is long (hashed), likely external
+  // Android built-in cameras typically have short deviceIds like "0", "1", "2"
+  // USB cameras get longer deviceIds
+  if (!isBuiltin && deviceId.length > 5 && label.length > 0) {
+    return true;
+  }
+
+  // Heuristic: If device is at index >= 2 (beyond front+back), likely external
+  // Many phones have camera0 (back) and camera1 (front)
+  // USB cameras appear as camera2, camera3, etc.
+  const deviceIndex = cameraDevices.indexOf(device);
+  if (deviceIndex >= 2 && !isBuiltin) {
+    return true;
+  }
+
+  return false;
 }
 
-// ─── Camera Selection ────────────────────────────────────────────
+// ─── Camera Selection ───────────────────────────────────────────
 
 async function selectCamera(deviceId) {
-  console.log('[Camera] selectCamera called: deviceId=' + deviceId);
+  debugLog('selectCamera: deviceId=' + (deviceId || 'null'));
 
   // Stop existing stream
   if (currentStream) {
@@ -143,11 +274,14 @@ async function selectCamera(deviceId) {
     currentStream = null;
   }
 
+  isReady = false;
+  hideError();
+
   try {
     let constraints;
 
     if (deviceId) {
-      // Specific device (USB capture card selected from dropdown)
+      // Specific device selected (USB or from dropdown)
       constraints = {
         video: {
           deviceId: { exact: deviceId },
@@ -157,18 +291,20 @@ async function selectCamera(deviceId) {
         audio: false
       };
     } else {
-      // Default: try to find USB camera first, then any camera
-      const usbCamera = cameraDevices.find(d => isExternalCamera(d));
-      if (usbCamera) {
+      // No specific device — use priority logic
+      const usbCam = cameraDevices.find(d => isExternalCamera(d));
+      if (usbCam) {
+        debugLog('selectCamera: Auto-selecting USB camera: ' + usbCam.label);
         constraints = {
           video: {
-            deviceId: { exact: usbCamera.deviceId },
+            deviceId: { exact: usbCam.deviceId },
             width: { ideal: 1920 },
             height: { ideal: 1080 }
           },
           audio: false
         };
       } else {
+        debugLog('selectCamera: No USB camera, using back camera');
         constraints = {
           video: {
             width: { ideal: 1920 },
@@ -180,95 +316,287 @@ async function selectCamera(deviceId) {
       }
     }
 
-    console.log('[Camera] Getting user media with constraints:', JSON.stringify(constraints));
+    debugLog('selectCamera: getUserMedia constraints: ' + JSON.stringify(constraints));
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
 
     currentStream = stream;
-    currentDeviceId = stream.getVideoTracks()[0]?.getSettings()?.deviceId || deviceId;
+    const track = stream.getVideoTracks()[0];
+    currentDeviceId = track?.getSettings()?.deviceId || deviceId;
+
+    debugLog('selectCamera: Stream obtained! Track label="' + (track?.label || 'unknown') + '"');
+
     video.srcObject = stream;
 
     // Wait for video to actually play
     await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Video play timeout after 10s'));
+      }, 10000);
+
       video.onloadedmetadata = () => {
+        debugLog('selectCamera: Video metadata loaded — ' + video.videoWidth + 'x' + video.videoHeight);
         video.play()
-          .then(resolve)
-          .catch(reject);
+          .then(() => {
+            clearTimeout(timeout);
+            resolve();
+          })
+          .catch(e => {
+            clearTimeout(timeout);
+            reject(e);
+          });
       };
-      video.onerror = reject;
-      setTimeout(() => reject(new Error('Video play timeout')), 10000);
+      video.onerror = (e) => {
+        clearTimeout(timeout);
+        reject(new Error('Video element error'));
+      };
     });
 
     isReady = true;
-    const track = stream.getVideoTracks()[0];
     const settings = track?.getSettings() || {};
+    const isExt = isExternalCamera({ deviceId: currentDeviceId, label: track?.label });
     const info = {
       deviceId: currentDeviceId,
       label: track?.label || 'Unknown',
       width: settings.width || video.videoWidth,
       height: settings.height || video.videoHeight,
-      isExternal: isExternalCamera({ deviceId: currentDeviceId, label: track?.label })
+      isExternal: isExt
     };
 
-    statusEl.textContent = (info.isExternal ? 'USB: ' : 'Camera: ') + info.label + ' (' + info.width + 'x' + info.height + ')';
-    console.log('[Camera] Camera ready:', JSON.stringify(info));
+    statusEl.textContent = (isExt ? 'USB: ' : 'Camera: ') + info.label + ' (' + info.width + 'x' + info.height + ')';
+    debugLog('CAMERA READY: ' + JSON.stringify(info));
+
+    // Remember USB camera for persistence
+    if (isExt) {
+      rememberedUSBCameraId = currentDeviceId;
+      rememberedUSBCameraLabel = track?.label || '';
+      debugLog('USB camera REMEMBERED: id=' + currentDeviceId);
+    }
 
     // Notify Android
     if (window.AndroidBridge) {
-      window.AndroidBridge.onCameraReady(JSON.stringify(info));
+      try {
+        window.AndroidBridge.onCameraReady(JSON.stringify(info));
+      } catch(e) {
+        debugLog('onCameraReady bridge error: ' + e.message);
+      }
     }
 
-    // Re-enumerate to get labels
+    // Re-enumerate to get labels for dropdown
     await enumerateCameras();
 
     return info;
   } catch (e) {
-    console.error('[Camera] selectCamera failed:', e);
-    showError('Camera failed: ' + e.message);
+    debugLog('selectCamera FAILED: ' + e.message);
 
+    // If the requested camera failed, try fallback
+    if (deviceId) {
+      debugLog('selectCamera: Trying fallback (no specific device)...');
+      try {
+        return await selectCamera(null);
+      } catch (e2) {
+        debugLog('selectCamera: Fallback also failed: ' + e2.message);
+      }
+    }
+
+    showError('Camera failed: ' + e.message);
     if (window.AndroidBridge) {
-      window.AndroidBridge.onCameraError('Camera failed: ' + e.message);
+      try {
+        window.AndroidBridge.onCameraError('Camera failed: ' + e.message);
+      } catch(e3) {}
     }
     return null;
   }
 }
 
-// ─── Auto-start: Find and start best camera ─────────────────────
+// ─── Auto-start: USB-FIRST with retries ─────────────────────────
 
 async function autoStart() {
-  console.log('[Camera] autoStart called');
+  autoStartAttempt++;
+  debugLog('═══════════════════════════════════════════');
+  debugLog('autoStart: attempt ' + autoStartAttempt + '/' + MAX_AUTO_START_ATTEMPTS);
+  debugLog('═══════════════════════════════════════════');
+
   statusEl.textContent = 'Scanning cameras...';
 
   // Enumerate first
   const devices = await enumerateCameras();
 
   if (devices.length === 0) {
+    debugLog('autoStart: NO cameras found at all!');
     showError('No cameras found');
-    if (window.AndroidBridge) {
-      window.AndroidBridge.onCameraError('No cameras found');
+
+    // Retry after delay if we haven't exhausted attempts
+    if (autoStartAttempt < MAX_AUTO_START_ATTEMPTS) {
+      const delay = autoStartAttempt * 2000; // 2s, 4s, 6s
+      debugLog('autoStart: Retrying in ' + delay + 'ms...');
+      statusEl.textContent = 'No cameras found, retrying...';
+      setTimeout(() => autoStart(), delay);
     }
     return;
   }
 
-  // Try USB camera first (matching Electron behavior)
+  // ─── USB-FIRST STRATEGY ─────────────────────────────────────
+  // 1. If we remember a USB camera from before, try it first
+  // 2. Then try any detected external camera
+  // 3. Only fall back to built-in after USB confirmed unavailable
+
+  // Check remembered USB camera first
+  if (rememberedUSBCameraId) {
+    const stillExists = devices.find(d => d.deviceId === rememberedUSBCameraId);
+    if (stillExists) {
+      debugLog('autoStart: Using REMEMBERED USB camera: ' + rememberedUSBCameraLabel);
+      statusEl.textContent = 'Connecting to USB camera (remembered)...';
+      const result = await selectCamera(rememberedUSBCameraId);
+      if (result && result.isExternal) {
+        debugLog('autoStart: REMEMBERED USB camera connected successfully!');
+        usbCameraAttemptCount = 0;
+        autoStartAttempt = 0;
+        return;
+      }
+      debugLog('autoStart: Remembered USB camera failed, trying other methods...');
+    } else {
+      debugLog('autoStart: Remembered USB camera no longer in device list');
+      rememberedUSBCameraId = null;
+      rememberedUSBCameraLabel = null;
+    }
+  }
+
+  // Try any detected USB/external camera
   const usbCamera = devices.find(d => d.isExternal);
   if (usbCamera) {
-    console.log('[Camera] USB camera found, selecting: ' + usbCamera.label);
+    debugLog('autoStart: USB camera detected — label="' + usbCamera.label + '" id=' + usbCamera.deviceId.substring(0, 20));
     statusEl.textContent = 'Connecting to USB camera...';
-    await selectCamera(usbCamera.deviceId);
+
+    usbCameraAttemptCount = 0;
+    while (usbCameraAttemptCount < MAX_USB_ATTEMPTS) {
+      usbCameraAttemptCount++;
+      debugLog('autoStart: USB attempt ' + usbCameraAttemptCount + '/' + MAX_USB_ATTEMPTS);
+
+      const result = await selectCamera(usbCamera.deviceId);
+      if (result) {
+        debugLog('autoStart: USB camera connected! isExternal=' + result.isExternal);
+        if (result.isExternal) {
+          // SUCCESS — USB camera is streaming
+          autoStartAttempt = 0;
+          return;
+        } else {
+          // getUserMedia returned a stream but it's the built-in camera
+          // This can happen when the USB camera fails and falls back
+          debugLog('autoStart: Got stream but it is NOT external — label="' + result.label + '"');
+          debugLog('autoStart: The USB camera may not be accessible from WebView');
+
+          // Stop the wrong camera
+          if (currentStream) {
+            currentStream.getTracks().forEach(t => t.stop());
+            currentStream = null;
+          }
+
+          // Wait and retry
+          if (usbCameraAttemptCount < MAX_USB_ATTEMPTS) {
+            const delay = usbCameraAttemptCount * 1500;
+            debugLog('autoStart: Retrying USB in ' + delay + 'ms...');
+            statusEl.textContent = 'USB camera retry ' + usbCameraAttemptCount + '...';
+            await new Promise(r => setTimeout(r, delay));
+
+            // Re-enumerate in case device list changed
+            const newDevices = await enumerateCameras();
+            const newUsb = newDevices.find(d => d.isExternal);
+            if (newUsb && newUsb.deviceId !== usbCamera.deviceId) {
+              debugLog('autoStart: New USB camera found after re-enumeration');
+              // Continue loop with new device
+              continue;
+            }
+            continue;
+          }
+        }
+      } else {
+        debugLog('autoStart: USB camera getUserMedia FAILED on attempt ' + usbCameraAttemptCount);
+        if (usbCameraAttemptCount < MAX_USB_ATTEMPTS) {
+          const delay = usbCameraAttemptCount * 2000;
+          debugLog('autoStart: Retrying USB in ' + delay + 'ms...');
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+      }
+    }
+
+    debugLog('autoStart: All USB attempts exhausted, falling back to built-in');
   } else {
-    console.log('[Camera] No USB camera, using default');
-    statusEl.textContent = 'Starting camera...';
-    await selectCamera(null);
+    debugLog('autoStart: No USB/external camera detected in device list');
+  }
+
+  // ─── FALLBACK: Built-in camera ──────────────────────────────
+  debugLog('autoStart: Starting built-in camera as fallback');
+  statusEl.textContent = 'Starting camera...';
+  autoStartAttempt = 0;
+  usbCameraAttemptCount = 0;
+  await selectCamera(null);
+}
+
+// ─── Force Rescan (called from Android "Pindai Ulang USB") ──────
+
+async function forceRescan() {
+  debugLog('═══════════════════════════════════════════');
+  debugLog('forceRescan: User requested USB camera rescan');
+  debugLog('═══════════════════════════════════════════');
+
+  // Reset state
+  usbCameraAttemptCount = 0;
+  autoStartAttempt = 0;
+
+  // Re-enumerate
+  const devices = await enumerateCameras();
+
+  // Check for USB cameras
+  const usbCamera = devices.find(d => d.isExternal);
+  if (usbCamera) {
+    debugLog('forceRescan: USB camera found! Selecting: ' + usbCamera.label);
+    statusEl.textContent = 'USB camera found, connecting...';
+
+    // Stop current camera
+    if (currentStream) {
+      currentStream.getTracks().forEach(t => t.stop());
+      currentStream = null;
+      isReady = false;
+    }
+
+    // Select USB camera
+    await selectCamera(usbCamera.deviceId);
+  } else if (rememberedUSBCameraId) {
+    debugLog('forceRescan: No USB in list but remembered one — trying remembered ID');
+    const stillExists = devices.find(d => d.deviceId === rememberedUSBCameraId);
+    if (stillExists) {
+      if (currentStream) {
+        currentStream.getTracks().forEach(t => t.stop());
+        currentStream = null;
+        isReady = false;
+      }
+      await selectCamera(rememberedUSBCameraId);
+    } else {
+      debugLog('forceRescan: Remembered USB camera gone from system');
+      rememberedUSBCameraId = null;
+      rememberedUSBCameraLabel = null;
+      statusEl.textContent = 'No USB camera found';
+    }
+  } else {
+    debugLog('forceRescan: No USB camera found at all');
+    statusEl.textContent = 'No USB camera found';
+    // Try enumerating again after a delay
+    debugLog('forceRescan: Will retry enumeration in 3 seconds...');
+    setTimeout(async () => {
+      debugLog('forceRescan: Delayed retry starting...');
+      await autoStart();
+    }, 3000);
   }
 }
 
-// ─── Photo Capture ───────────────────────────────────────────────
+// ─── Photo Capture ──────────────────────────────────────────────
 
 function capturePhoto() {
   if (!isReady || !currentStream) {
-    console.error('[Camera] Cannot capture: camera not ready');
+    debugLog('Cannot capture: camera not ready');
     if (window.AndroidBridge) {
-      window.AndroidBridge.onCaptureResult(null);
+      try { window.AndroidBridge.onCaptureResult(null); } catch(e) {}
     }
     return;
   }
@@ -276,9 +604,9 @@ function capturePhoto() {
   const vw = video.videoWidth;
   const vh = video.videoHeight;
   if (!vw || !vh) {
-    console.error('[Camera] Cannot capture: video dimensions unknown');
+    debugLog('Cannot capture: video dimensions unknown');
     if (window.AndroidBridge) {
-      window.AndroidBridge.onCaptureResult(null);
+      try { window.AndroidBridge.onCaptureResult(null); } catch(e) {}
     }
     return;
   }
@@ -299,13 +627,11 @@ function capturePhoto() {
   const videoRatio = vw / vh;
   let sx, sy, sw, sh;
   if (videoRatio > aspectRatio) {
-    // Video is wider — crop sides
     sw = vh * aspectRatio;
     sh = vh;
     sx = (vw - sw) / 2;
     sy = 0;
   } else {
-    // Video is taller — crop top/bottom
     sw = vw;
     sh = vw / aspectRatio;
     sx = 0;
@@ -326,24 +652,24 @@ function capturePhoto() {
     try {
       ctx.drawImage(frameOverlay, 0, 0, targetWidth, targetHeight);
     } catch (e) {
-      console.warn('[Camera] Frame overlay draw failed:', e);
+      debugLog('Frame overlay draw failed: ' + e.message);
     }
   }
 
   // Convert to JPEG base64
   const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
 
-  console.log('[Camera] Photo captured: ' + targetWidth + 'x' + targetHeight + ' (' + dataUrl.length + ' chars)');
+  debugLog('Photo captured: ' + targetWidth + 'x' + targetHeight + ' (' + dataUrl.length + ' chars)');
 
   // Send to Android
   if (window.AndroidBridge) {
-    window.AndroidBridge.onCaptureResult(dataUrl);
+    try { window.AndroidBridge.onCaptureResult(dataUrl); } catch(e) {}
   }
 
   return dataUrl;
 }
 
-// ─── CSS Filter Presets (matching Electron version) ──────────────
+// ─── CSS Filter Presets (matching Electron version) ─────────────
 
 function applyFilter(ctx, preset) {
   switch (preset) {
@@ -378,7 +704,7 @@ function applyFilter(ctx, preset) {
   }
 }
 
-// ─── Frame Overlay ───────────────────────────────────────────────
+// ─── Frame Overlay ──────────────────────────────────────────────
 
 function setFrameOverlay(base64Data) {
   if (!base64Data) {
@@ -388,24 +714,24 @@ function setFrameOverlay(base64Data) {
   const img = new Image();
   img.onload = () => {
     frameOverlay = img;
-    console.log('[Camera] Frame overlay loaded: ' + img.width + 'x' + img.height);
+    debugLog('Frame overlay loaded: ' + img.width + 'x' + img.height);
   };
   img.onerror = (e) => {
-    console.error('[Camera] Frame overlay load failed:', e);
+    debugLog('Frame overlay load failed');
     frameOverlay = null;
   };
   img.src = base64Data;
 }
 
-// ─── Update Config ───────────────────────────────────────────────
+// ─── Update Config ──────────────────────────────────────────────
 
 function updateConfig(config) {
   if (config.aspectRatio) captureConfig.aspectRatio = config.aspectRatio;
   if (config.filterPreset) captureConfig.filterPreset = config.filterPreset;
-  console.log('[Camera] Config updated:', JSON.stringify(captureConfig));
+  debugLog('Config updated: aspectRatio=' + captureConfig.aspectRatio + ' filter=' + captureConfig.filterPreset);
 }
 
-// ─── Error Display ───────────────────────────────────────────────
+// ─── Error Display ──────────────────────────────────────────────
 
 function showError(message) {
   errorMsg.textContent = message;
@@ -417,42 +743,71 @@ function hideError() {
   errorOverlay.style.display = 'none';
 }
 
-// ─── Device Change Listener ──────────────────────────────────────
+// ─── Device Change Listener ─────────────────────────────────────
+// This is CRITICAL for USB hot-plug support.
+// When a USB device is plugged in, Chrome fires devicechange event.
 
 navigator.mediaDevices.addEventListener('devicechange', async () => {
-  console.log('[Camera] Device change detected');
+  debugLog('═══════════════════════════════════════════');
+  debugLog('DEVICE CHANGE EVENT FIRED!');
+  debugLog('═══════════════════════════════════════════');
+
   const devices = await enumerateCameras();
 
   // Check if current camera was disconnected
   if (currentDeviceId) {
     const stillExists = devices.find(d => d.deviceId === currentDeviceId);
     if (!stillExists) {
-      console.log('[Camera] Current camera disconnected, auto-restarting');
+      debugLog('Current camera DISCONNECTED, auto-restarting');
       currentDeviceId = null;
       isReady = false;
       if (currentStream) {
         currentStream.getTracks().forEach(t => t.stop());
         currentStream = null;
       }
+      // Reset attempt counters
+      usbCameraAttemptCount = 0;
+      autoStartAttempt = 0;
       await autoStart();
+      return;
     }
+  }
+
+  // Check if a NEW USB camera appeared
+  const newUsb = devices.find(d => d.isExternal && d.deviceId !== currentDeviceId);
+  if (newUsb) {
+    debugLog('NEW USB camera detected! Label="' + newUsb.label + '"');
+    debugLog('Switching to USB camera immediately...');
+
+    // Stop current camera
+    if (currentStream) {
+      currentStream.getTracks().forEach(t => t.stop());
+      currentStream = null;
+      isReady = false;
+    }
+
+    // Select the USB camera
+    await selectCamera(newUsb.deviceId);
   }
 
   // Notify Android of device change
   if (window.AndroidBridge) {
-    window.AndroidBridge.onDeviceChange();
+    try { window.AndroidBridge.onDeviceChange(); } catch(e) {}
   }
 });
 
-// ─── Initialization ──────────────────────────────────────────────
+// ─── Initialization ─────────────────────────────────────────────
 
-console.log('[Camera] Saatiril WebView Camera Engine loaded');
+debugLog('Saatiril WebView Camera Engine v9 loaded');
+debugLog('UserAgent: ' + navigator.userAgent);
 statusEl.textContent = 'Camera engine ready, waiting for permission...';
 
-// Auto-start after a short delay to let Android set up the bridge
+// Auto-start after delay to let Android bridge set up
+// Start with a longer delay to ensure the WebView is fully ready
 setTimeout(() => {
+  debugLog('Initial autoStart triggered');
   autoStart();
-}, 500);
+}, 1000);
 
 </script>
 </body>
