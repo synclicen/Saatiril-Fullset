@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.webkit.WebView
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.PermissionChecker
@@ -159,8 +160,8 @@ fun OperatorScreen(
     }
     val effectivePermission = hasCameraPermission || localPermissionState
 
-    // v6: Only ONE view needed — TextureView for ALL cameras
-    var textureViewRef by remember { mutableStateOf<android.view.TextureView?>(null) }
+    // v8: WebView for camera (getUserMedia via Chromium engine)
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var cameraInitDone by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -173,13 +174,13 @@ fun OperatorScreen(
         }
     }
 
-    // v6: Init camera ONCE when TextureView is ready and permission granted
-    LaunchedEffect(effectivePermission, textureViewRef) {
-        val tv = textureViewRef
-        if (effectivePermission && tv != null && !cameraInitDone) {
+    // v8: Init camera ONCE when WebView is ready and permission granted
+    LaunchedEffect(effectivePermission, webViewRef) {
+        val wv = webViewRef
+        if (effectivePermission && wv != null && !cameraInitDone) {
             cameraInitDone = true
             try {
-                viewModel.initCamera(tv)
+                viewModel.initCamera(wv)
             } catch (e: SecurityException) {
                 localPermissionState = false
                 cameraInitDone = false
@@ -296,20 +297,22 @@ fun OperatorScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     // ═══════════════════════════════════════════════════
-                    // v6: SINGLE TextureView for ALL cameras (Camera2 ONLY)
+                    // v8: WebView for camera preview (getUserMedia)
                     //
-                    // No more dual-engine, no more PreviewView, no more
-                    // chicken-and-egg. Camera2 handles EVERYTHING via
-                    // TextureView. Switching cameras = close + reopen.
+                    // WebView uses Chromium's built-in UVC driver that
+                    // BYPASSES Android's broken Camera2 HAL. This is the
+                    // same engine Chrome/Electron uses for USB cameras.
+                    //
+                    // No more TextureView, no more Camera2, no more CameraX.
                     // ═══════════════════════════════════════════════════
                     AndroidView(
                         factory = { ctx ->
-                            android.view.TextureView(ctx).apply {
+                            WebView(ctx).apply {
                                 layoutParams = android.widget.FrameLayout.LayoutParams(
                                     android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
                                     android.widget.FrameLayout.LayoutParams.MATCH_PARENT
                                 )
-                                textureViewRef = this
+                                webViewRef = this
                             }
                         },
                         modifier = Modifier.fillMaxSize()
