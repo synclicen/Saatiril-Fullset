@@ -114,3 +114,90 @@ Stage Summary:
 - Camera preview: Admin's aspect ratio enforced via dynamic Modifier calculation
 - Photo sync: STUDENT_DONE sent in all modes + diagnostic logging
 - Photo save format: Verified correct, no code changes needed
+
+---
+Task ID: 1 (continued - Round 3)
+Agent: Bug Fix Agent
+Task: Fix 4 bugs in Saatiril Android APK operator app
+
+Work Log:
+
+BUG 1 FIX — Orientation/Landscape breaks camera aspect ratio:
+- Root cause: Activity had android:screenOrientation="fullSensor", allowing rotation
+- When phone rotates to landscape, camera capture rotates too, breaking admin's chosen aspect ratio
+- Photo booth cameras are always mounted in portrait — rotation should never happen
+- Fix in AndroidManifest.xml:
+  - Changed android:screenOrientation="fullSensor" to android:screenOrientation="portrait"
+  - Locks the Activity to portrait orientation, ensuring consistent camera output
+
+BUG 2 FIX — USB camera not used after entering project session:
+- Root cause: No visible UI to switch cameras; switchCamera() only cycled front/back/external
+- After USB camera is detected on connection screen, entering the project session may not use it
+- No way for operator to manually select USB camera if auto-detection failed
+- Fixes across 3 files:
+  a) BuiltInCameraManager.kt:
+    - Added getAvailableCameras(): List<Pair<String, String>> — returns list of (cameraId, displayName)
+      e.g., [("0", "Kamera Belakang"), ("2", "USB Capture Card"), ("1", "Kamera Depan")]
+    - Added switchToCameraById(cameraId: String) — switches to specific camera by ID
+      Uses CameraFilter to select exact camera; updates isUsingExternalCamera and currentLensFacing
+  b) OperatorViewModel.kt:
+    - Added getAvailableCameras() delegate method
+    - Added switchToCameraById(cameraId: String) delegate method
+  c) OperatorScreen.kt:
+    - Added DropdownMenu/DropdownMenuItem imports
+    - Added showCameraPicker state variable
+    - Changed onSwitchCamera callback from simple toggle to opening camera picker dropdown
+    - Camera picker dropdown shows all available cameras with appropriate icons:
+      - USB → Icons.Default.Usb
+      - Front → Icons.Default.CameraFront
+      - Back → Icons.Default.CameraAlt
+    - Active camera highlighted with GOLD tint, others in MUTED
+    - "Tidak ada kamera" fallback when no cameras available
+
+BUG 3 FIX — Startup delay when opening Saatiril portable:
+- Root cause: ImageCapture used CAPTURE_MODE_MAXIMIZE_QUALITY which has significant latency
+- For photo booth use, quality difference is negligible but speed matters
+- Fix in BuiltInCameraManager.kt:
+  - Changed ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+    to .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+  - Makes capture much faster with negligible quality loss for photo booth use
+
+BUG 4 FIX — Delay after pressing shutter / moving to next queue item:
+- Root cause: finalizeCapture() was sequential — operator had to wait for:
+  1. STUDENT_DONE send
+  2. delay(100L) between events
+  3. PHOTOS_SAVED send (heavy — includes base64 photo data)
+  4. OP_PROGRESS send
+  5. Local photo save (IO — already on background thread)
+  6. Local project state update
+  7. SYNC_DB send (heavy — entire project state)
+  8. Capture state reset (only THEN could operator proceed)
+- Fix in OperatorViewModel.kt — restructured finalizeCapture() into 2 phases:
+  PHASE 1 (IMMEDIATE — operator can proceed):
+    1. Send STUDENT_DONE (lightweight — unblocks MC instantly)
+    2. Reset capture state (_currentTarget = null, _capturedPhotos = empty, phase = STANDBY)
+    3. Clear mcCallBuffer entry
+    4. Update local project state (student → "done")
+    5. updateOpQueue() — refreshes queue display
+  PHASE 2 (BACKGROUND — runs on Dispatchers.IO, doesn't block operator):
+    1. Send PHOTOS_SAVED (heavy — base64 photo data)
+    2. Send OP_PROGRESS
+    3. Save photos to local Android storage
+    4. Send SYNC_DB (heavy — entire project state)
+- Removed the delay(100L) between STUDENT_DONE and PHOTOS_SAVED
+  (no longer needed since PHOTOS_SAVED is now in background phase)
+- Removed finally { _isSending.value = false } — now set to false in PHASE 1
+- Error handling: catch block now explicitly sets _isSending.value = false
+
+Files modified:
+1. AndroidManifest.xml — portrait orientation lock
+2. BuiltInCameraManager.kt — MINIMIZE_LATENCY + getAvailableCameras() + switchToCameraById()
+3. OperatorViewModel.kt — camera picker delegates + restructured finalizeCapture()
+4. OperatorScreen.kt — camera picker dropdown UI
+
+Stage Summary:
+- 4 bugs fixed across 4 files
+- Orientation: Portrait lock ensures consistent camera output
+- USB camera: Camera picker dropdown lets operator select any available camera
+- Startup: MINIMIZE_LATENCY capture mode for faster photo capture
+- Shutter delay: 2-phase finalizeCapture() — operator ready instantly after capture

@@ -16,6 +16,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -136,6 +138,7 @@ fun OperatorScreen(
         mutableStateOf(setOf(Panels.TARGET_INFO, Panels.SHUTTER_MODE, Panels.QUEUE_LIST))
     }
     var showPanelSelector by remember { mutableStateOf(false) }
+    var showCameraPicker by remember { mutableStateOf(false) }
 
     // ─── Bottom panel height (resizable via drag) ───────────
     // Default: 40% of screen for panels, 60% for camera
@@ -217,9 +220,49 @@ fun OperatorScreen(
             capturePhase = capturePhase,
             isPhotoshoot = isPhotoshoot,
             savePath = savePath,
-            onSwitchCamera = { viewModel.switchCamera() },
+            onSwitchCamera = { showCameraPicker = !showCameraPicker },
             onTogglePanelSelector = { showPanelSelector = !showPanelSelector }
         )
+
+        // Camera picker dropdown
+        DropdownMenu(
+            expanded = showCameraPicker,
+            onDismissRequest = { showCameraPicker = false },
+            modifier = Modifier.background(PANEL)
+        ) {
+            val cameras = remember { viewModel.getAvailableCameras() }
+            if (cameras.isNotEmpty()) {
+                cameras.forEach { (cameraId, displayName) ->
+                    DropdownMenuItem(
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(
+                                    when {
+                                        displayName.contains("USB", ignoreCase = true) -> Icons.Default.Usb
+                                        displayName.contains("Depan", ignoreCase = true) -> Icons.Default.CameraFront
+                                        else -> Icons.Default.CameraAlt
+                                    },
+                                    contentDescription = null,
+                                    tint = if (cameraSource == "uvc" && displayName.contains("USB", ignoreCase = true) ||
+                                               cameraSource == "builtin" && !displayName.contains("USB", ignoreCase = true)) GOLD else MUTED,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(displayName, style = TextStyle(color = Color.White, fontSize = 12.sp))
+                            }
+                        },
+                        onClick = {
+                            viewModel.switchToCameraById(cameraId)
+                            showCameraPicker = false
+                        }
+                    )
+                }
+            } else {
+                DropdownMenuItem(
+                    text = { Text("Tidak ada kamera", style = TextStyle(color = MUTED, fontSize = 12.sp)) },
+                    onClick = { showCameraPicker = false }
+                )
+            }
+        }
 
         // ─── CAMERA PREVIEW AREA ────────────────────────────
         // Fills remaining space above the panel divider.

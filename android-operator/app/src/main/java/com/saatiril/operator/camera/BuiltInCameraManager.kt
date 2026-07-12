@@ -350,9 +350,9 @@ class BuiltInCameraManager(private val context: Context) {
                 it.setSurfaceProvider(previewView.surfaceProvider)
             }
 
-        // Image capture — maximize quality
+        // Image capture — minimize latency for faster capture (quality difference negligible for photo booth)
         imageCapture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setTargetAspectRatio(AspectRatio.RATIO_16_9)
             .build()
 
@@ -458,6 +458,62 @@ class BuiltInCameraManager(private val context: Context) {
                     .build()
             }
         }
+        startCamera(owner, pv)
+    }
+
+    /**
+     * Get list of available camera descriptions for UI camera picker.
+     * Returns list of pairs: (cameraId, displayName)
+     * e.g., [("0", "Kamera Belakang"), ("2", "USB Capture Card"), ("1", "Kamera Depan")]
+     */
+    fun getAvailableCameras(): List<Pair<String, String>> {
+        val provider = cameraProvider ?: return emptyList()
+        val cameras = mutableListOf<Pair<String, String>>()
+
+        for (cameraInfo in provider.availableCameraInfos) {
+            val cameraId = getCameraId(cameraInfo) ?: continue
+            val lensFacing = cameraInfo.lensFacing
+            val displayName = when {
+                isExternalCameraId(cameraId) -> "USB Capture Card"
+                lensFacing == CameraSelector.LENS_FACING_BACK -> "Kamera Belakang"
+                lensFacing == CameraSelector.LENS_FACING_FRONT -> "Kamera Depan"
+                else -> "Kamera ($cameraId)"
+            }
+            cameras.add(cameraId to displayName)
+        }
+        return cameras
+    }
+
+    /**
+     * Switch to a specific camera by its ID.
+     * Used by the camera picker UI.
+     */
+    fun switchToCameraById(cameraId: String) {
+        val owner = lifecycleOwner ?: return
+        val pv = previewView ?: return
+        val provider = cameraProvider ?: return
+
+        // Find the camera info for this ID
+        val targetCameraInfo = provider.availableCameraInfos.find { getCameraId(it) == cameraId } ?: return
+
+        // Build selector for this specific camera
+        val targetId = cameraId
+        val selector = CameraSelector.Builder()
+            .addCameraFilter { cameras ->
+                cameras.filter { getCameraId(it) == targetId }
+            }
+            .build()
+
+        isUsingExternalCamera = isExternalCameraId(cameraId)
+        currentLensFacing = when {
+            isUsingExternalCamera -> CameraSelector.LENS_FACING_EXTERNAL
+            targetCameraInfo.lensFacing == CameraSelector.LENS_FACING_BACK -> CameraSelector.LENS_FACING_BACK
+            targetCameraInfo.lensFacing == CameraSelector.LENS_FACING_FRONT -> CameraSelector.LENS_FACING_FRONT
+            else -> CameraSelector.LENS_FACING_BACK
+        }
+        currentCameraSelector = selector
+
+        Log.i(TAG, "switchToCameraById: Switching to camera $cameraId (external=$isUsingExternalCamera)")
         startCamera(owner, pv)
     }
 

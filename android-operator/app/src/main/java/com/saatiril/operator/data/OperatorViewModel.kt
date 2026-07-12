@@ -364,6 +364,16 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         builtInCameraManager.switchCamera()
     }
 
+    // ─── Camera Picker ──────────────────────────────────────────
+
+    fun getAvailableCameras(): List<Pair<String, String>> {
+        return builtInCameraManager.getAvailableCameras()
+    }
+
+    fun switchToCameraById(cameraId: String) {
+        builtInCameraManager.switchToCameraById(cameraId)
+    }
+
     // ─── Photo Capture ──────────────────────────────────────────
 
     /**
@@ -879,16 +889,15 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     // ─── Finalize Capture ───────────────────────────────────────
 
     /**
-     * Complete the capture pipeline:
-     * 1. Send STUDENT_DONE (standard mode only — lightweight, unblocks MC immediately)
-     * 2. Send PHOTOS_SAVED (photos + filename for Admin gallery)
-     * 3. Send OP_PROGRESS
-     * 4. Save photos to local Android storage (PhotoSaver)
-     * 5. Update local project state (student status → "done")
-     * 6. Send SYNC_DB to sync with other clients
-     * 7. Reset capture state
+     * Complete the capture pipeline — OPTIMIZED for instant operator readiness.
      *
-     * This matches the Windows version's finalizeCapture flow exactly.
+     * Priority order:
+     * 1. IMMEDIATE: Send STUDENT_DONE (lightweight — unblocks MC instantly)
+     * 2. IMMEDIATE: Reset capture state (operator can proceed to next target)
+     * 3. BACKGROUND: Send PHOTOS_SAVED, save photos locally, send SYNC_DB
+     *
+     * This matches the Windows version's "IMMEDIATE: update local state + emit lightweight SYNC_DB (no delays!)"
+     * approach where the operator UI becomes available instantly after capture.
      */
     private suspend fun finalizeCapture(student: Student, photos: List<String>) {
         val mode = _project.value?.config?.mode
@@ -898,7 +907,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             return
         }
 
-        Log.i(TAG, "finalizeCapture: student=${student.nama}, photos=${photos.size}, mode=$mode, targetFolder='${proj.config.targetFolder}'")
+        Log.i(TAG, "finalizeCapture: student=${student.nama}, photos=${photos.size}, mode=$mode")
         _capturePhase.value = CapturePhase.SENDING
         _isSending.value = true
 
@@ -908,68 +917,35 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             val currentVersion = proj.captureVersions[versionKey] ?: 0
             val newVersion = currentVersion + 1
 
-            // Build filenames — one per photo, matching Windows version naming convention
+            // Build filenames
             val filenames: List<String> = if (CameraModes.isPhotoshootMode(mode)) {
                 listOf(FilenameUtils.buildPhotoshootFilename(student.nim, student.nama, _myChannel.value, newVersion))
             } else {
                 photos.mapIndexed { idx, _ ->
-                    val suffix = idx + 1  // 1 = Toga, 2 = Ijazah
+                    val suffix = idx + 1
                     val type = if (suffix == 1) "Toga" else "Ijazah"
                     FilenameUtils.buildStandardFilename(student.nim, student.nama, suffix, type, newVersion)
                 }
             }
-
             val primaryFilename = filenames.firstOrNull() ?: ""
 
-            Log.d(TAG, "finalizeCapture: filenames=$filenames, version=$newVersion")
-
-            // 1. Send STUDENT_DONE first (lightweight — lets MC call next student immediately)
-            // BUG FIX: Also send STUDENT_DONE in photoshoot mode.
-            // The admin needs this event to update the student status display
-            // from "active_N" to "done". Previously, photoshoot mode only sent
-            // PHOTOS_SAVED, but the admin's UI expects STUDENT_DONE for status updates.
+            // ═══ PHASE 1: IMMEDIATE — unblock MC and reset operator state ═══
+            // Send STUDENT_DONE first (lightweight — lets MC call next student immediately)
             socketManager.sendStudentDone(student.id)
-            if (!CameraModes.isPhotoshootMode(mode)) {
-                // Small delay between STUDENT_DONE and PHOTOS_SAVED in standard mode
-                // to ensure the lightweight event gets through first
-                delay(100L)
+
+            // Reset capture state IMMEDIATELY so operator can proceed to next target
+            _currentTarget.value = null
+            _capturedPhotos.value = emptyList()
+            _capturePhase.value = CapturePhase.STANDBY
+            _isSending.value = false
+
+            // Clear matching entry from mcCallBuffer
+            val buffer = _mcCallBuffer.value.toMutableList()
+            if (buffer.removeAll { it.id == student.id }) {
+                _mcCallBuffer.value = buffer
             }
 
-            // 2. Send PHOTOS_SAVED with all photo data
-            socketManager.sendPhotosSaved(
-                student = student,
-                photos = photos,
-                version = newVersion,
-                filename = primaryFilename
-            )
-
-            // 3. Send OP_PROGRESS
-            socketManager.sendOpProgress("Selesai — Menunggu target...")
-
-            // 4. Save photos to local Android storage using PhotoSaver
-            val projectName = proj.name.ifBlank { "Saatiril" }
-            val targetFolder = proj.config.targetFolder
-            val appContext = getApplication<Application>()
-            viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                photos.forEachIndexed { idx, photoBase64 ->
-                    val filename = filenames.getOrElse(idx) { "photo_${idx + 1}.jpg" }
-                    Log.d(TAG, "Saving photo $idx: $filename (project=$projectName, targetFolder=$targetFolder)")
-                    val savedPath = PhotoSaver.savePhoto(
-                        context = appContext,
-                        base64Data = photoBase64,
-                        filename = filename,
-                        projectName = projectName,
-                        targetFolder = targetFolder
-                    )
-                    if (savedPath != null) {
-                        Log.i(TAG, "Photo saved locally: $savedPath")
-                    } else {
-                        Log.w(TAG, "Failed to save photo locally: $filename")
-                    }
-                }
-            }
-
-            // 5. Update local project state
+            // Update local project state (student status → "done")
             val updatedDb = proj.database.map { s ->
                 if (s.id == student.id) s.copy(status = "done") else s
             }
@@ -980,36 +956,61 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
                 removeAll { it.student.id == student.id && it.channel == _myChannel.value }
                 add(PhotoHistoryItem(student = student, photos = photos, channel = _myChannel.value))
             }
-
             val updatedProject = proj.copy(
                 database = updatedDb,
                 captureVersions = updatedVersions,
                 photoHistory = updatedHistory
             )
             _project.value = updatedProject
-
-            // 6. Send SYNC_DB to sync with other clients
-            socketManager.sendSyncDb(updatedProject)
-
-            // 7. Reset capture state
-            _currentTarget.value = null
-            _capturedPhotos.value = emptyList()
-            _capturePhase.value = CapturePhase.STANDBY
-
-            // 8. Clear matching entry from mcCallBuffer
-            val buffer = _mcCallBuffer.value.toMutableList()
-            if (buffer.removeAll { it.id == student.id }) {
-                _mcCallBuffer.value = buffer
-                Log.d(TAG, "finalizeCapture: Cleared ${student.nama} from mcCallBuffer (size=${buffer.size})")
-            }
-
             updateOpQueue()
 
-            Log.i(TAG, "Capture finalized for ${student.nama} — ${photos.size} photo(s) saved")
+            Log.i(TAG, "finalizeCapture: Operator state reset — ready for next target")
+
+            // ═══ PHASE 2: BACKGROUND — heavy operations don't block operator ═══
+            viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    // Send PHOTOS_SAVED with all photo data
+                    socketManager.sendPhotosSaved(
+                        student = student,
+                        photos = photos,
+                        version = newVersion,
+                        filename = primaryFilename
+                    )
+
+                    // Send OP_PROGRESS
+                    socketManager.sendOpProgress("Selesai — Menunggu target...")
+
+                    // Save photos to local Android storage
+                    val projectName = proj.name.ifBlank { "Saatiril" }
+                    val targetFolder = proj.config.targetFolder
+                    val appContext = getApplication<Application>()
+                    photos.forEachIndexed { idx, photoBase64 ->
+                        val filename = filenames.getOrElse(idx) { "photo_${idx + 1}.jpg" }
+                        val savedPath = PhotoSaver.savePhoto(
+                            context = appContext,
+                            base64Data = photoBase64,
+                            filename = filename,
+                            projectName = projectName,
+                            targetFolder = targetFolder
+                        )
+                        if (savedPath != null) {
+                            Log.i(TAG, "Photo saved locally: $savedPath")
+                        } else {
+                            Log.w(TAG, "Failed to save photo locally: $filename")
+                        }
+                    }
+
+                    // Send SYNC_DB to sync with other clients
+                    socketManager.sendSyncDb(updatedProject)
+
+                    Log.i(TAG, "finalizeCapture: Background tasks complete for ${student.nama}")
+                } catch (e: Exception) {
+                    Log.e(TAG, "finalizeCapture: Background task error: ${e.message}", e)
+                }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to finalize capture: ${e.message}", e)
             _capturePhase.value = CapturePhase.READY_1
-        } finally {
             _isSending.value = false
         }
     }
