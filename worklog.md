@@ -265,3 +265,62 @@ Stage Summary:
 - USB camera icon on switch button turns green when active
 - USB camera persists through screen transitions via pendingRescan mechanism
 - APK built and available for download
+
+---
+Task ID: 3
+Agent: Main Agent
+Task: Fix USB camera not working after login - systematic root cause analysis and fix
+
+Work Log:
+- Performed deep analysis of USB camera detection flow using Explore subagent
+- Identified ROOT CAUSE: CameraX 1.3.x's `availableCameraInfos` is a SNAPSHOT that does NOT update when cameras are hot-plugged
+- Secondary cause: `isExternalCameraId()` couldn't detect numeric camera IDs ("2", "3") used by most Android devices for external cameras
+- Tertiary cause: Camera2 service registration delay — external camera not in list when `selectBestCamera()` runs
+- Also found: `isExternalCameraId()` regex `.*\\d+-.*` was too broad (false positives)
+
+KEY FIXES APPLIED:
+
+1. BuiltInCameraManager.kt (complete rewrite of camera detection):
+   - `forceReinitForUSB()`: Full re-initialization of ProcessCameraProvider when USB device detected. Gets fresh provider with updated camera list.
+   - `forceReinitProviderThenSelect()`: Internal method to reset provider state and re-init
+   - `isExternalByCamera2()`: Uses CameraManager.getCameraCharacteristics() to check LENS_FACING_EXTERNAL (most reliable). Falls back to CameraInfo.lensFacing, then string matching.
+   - `findExternalCamera()` rewritten with 4 detection methods:
+     Method 1: Camera2 LENS_FACING characteristic (most reliable)
+     Method 2: LENS_FACING_EXTERNAL selector (API 30+)
+     Method 3: String-based ID matching ("external", "usb", "uvc")
+     Method 4: Heuristic — extra camera (ID >= 2) + UVC device present
+   - `isExternalCameraId()`: Removed overly broad regex, kept string-based matching only
+   - `onUsbDeviceChanged()`: New method to handle USB attach/detach events
+   - `pendingUsbRescan` flag: When USB detected before provider ready, provider init is delayed with 1.5s for Camera2 registration
+   - `getAvailableCameras()` now uses `isExternalByCamera2()` for display name detection
+   - `switchToCameraById()` now uses `isExternalByCamera2()` for external camera detection
+   - Added `AndroidCameraManager` import alias for Camera2 CameraManager
+   - Added `USB_CAMERA_REGISTRATION_DELAY_MS = 1500L` constant
+
+2. OperatorViewModel.kt:
+   - `uvcConnectedCollector`: Now delays 1.5s before calling `forceReinitForUSB()` when UVC attached
+   - `startPeriodicCameraRescan()`: New — every 5 seconds, if UVC attached but using built-in camera, force re-init
+   - `setUvcDeviceAttached()`: Now uses `forceReinitForUSB()` with delay when USB attached
+   - `forceRescanUsbCamera()`: New public method for user-triggered USB rescan
+   - `periodicCameraRescanJob`: New coroutine job, cancelled in onCleared()
+
+3. OperatorScreen.kt:
+   - Added `onForceRescanUsb` parameter to `TopBarWithCameraPicker`
+   - Added "Pindai Ulang USB" (Rescan USB) button in camera picker dropdown with Refresh icon
+   - User can manually trigger USB camera rescan from the UI
+
+Build:
+- First build failed: `cameraCharacteristics` unresolved on Camera2CameraInfo
+  (CameraX 1.3.x doesn't expose this property)
+- Fixed by using CameraManager.getSystemService() instead
+- Second build: SUCCESS
+- APK: ~18.7 MB (app-debug.apk)
+- Commit: ee9a2d6
+
+Stage Summary:
+- USB camera detection completely rewritten with robust multi-method detection
+- ProcessCameraProvider is now re-initialized when USB device detected (fixes stale snapshot)
+- Periodic rescan ensures USB camera is eventually detected even if initial timing fails
+- User can manually trigger rescan via "Pindai Ulang USB" button
+- Camera2 LENS_FACING_EXTERNAL characteristic used for reliable external camera detection
+- APK built successfully and available for download
