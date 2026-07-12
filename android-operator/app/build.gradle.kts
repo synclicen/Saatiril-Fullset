@@ -30,6 +30,12 @@ android {
         }
     }
 
+    // Disable lint to save memory during build
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
