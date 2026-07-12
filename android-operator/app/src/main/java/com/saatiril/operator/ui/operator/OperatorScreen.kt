@@ -231,6 +231,10 @@ fun OperatorScreen(
                 viewModel.switchToCameraById(cameraId)
                 showCameraPicker = false
             },
+            onForceRescanUsb = {
+                viewModel.forceRescanUsbCamera()
+                showCameraPicker = false
+            },
             onTogglePanelSelector = { showPanelSelector = !showPanelSelector }
         )
 
@@ -688,6 +692,7 @@ private fun TopBarWithCameraPicker(
     availableCameras: List<Pair<String, String>>,
     currentCameraId: String,
     onCameraSelected: (String) -> Unit,
+    onForceRescanUsb: () -> Unit,
     onTogglePanelSelector: () -> Unit
 ) {
     Row(
@@ -826,7 +831,17 @@ private fun TopBarWithCameraPicker(
                     }
 
                     HorizontalDivider(color = BORDER, thickness = 0.5.dp)
-                    // Camera source indicator
+                    // Force rescan USB button
+                    DropdownMenuItem(
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Icon(Icons.Default.Refresh, contentDescription = null, tint = CYAN, modifier = Modifier.size(14.dp))
+                                Text("Pindai Ulang USB", style = TextStyle(color = CYAN, fontSize = 11.sp))
+                            }
+                        },
+                        onClick = onForceRescanUsb
+                    )
+                    HorizontalDivider(color = BORDER, thickness = 0.5.dp)
                     DropdownMenuItem(
                         text = {
                             val srcLabel = when (cameraSource) { "uvc" -> "USB Capture"; "builtin" -> "Kamera HP"; else -> "Tidak ada" }

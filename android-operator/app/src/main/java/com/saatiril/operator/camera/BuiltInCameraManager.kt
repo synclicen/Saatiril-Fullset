@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.hardware.camera2.CameraCharacteristics
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.core.*
@@ -20,21 +23,30 @@ import kotlinx.coroutines.flow.asStateFlow
  * USB HDMI capture cards (which Android exposes as external cameras).
  *
  * Camera selection strategy:
- * 1. EXTERNAL (USB HDMI capture cards) — highest priority, detected by camera ID containing "external"
+ * 1. EXTERNAL (USB HDMI capture cards) — highest priority
  * 2. BACK — built-in rear camera (fallback)
  * 3. FRONT — built-in front camera (last resort)
  *
- * CRITICAL FIXES from camera-not-detected bug:
- * - init() is now IDEMPOTENT: calling it multiple times is safe (cleans up old camera first)
- * - init() checks CAMERA permission BEFORE accessing CameraX
- * - Camera selection failures no longer leave _isConnected/_cameraType in stale state
- * - Added reinit() for re-initializing camera with a new PreviewView or LifecycleOwner
+ * CRITICAL FIXES in this version:
+ * - forceReinitForUSB(): Re-initializes ProcessCameraProvider when USB device
+ *   is detected, because CameraX 1.3.x's availableCameraInfos is a SNAPSHOT
+ *   that does NOT update when cameras are hot-plugged.
+ * - findExternalCamera() uses Camera2 LENS_FACING characteristic for reliable
+ *   detection (not just string matching on camera IDs which are numeric on
+ *   most devices like "2", "3" etc.)
+ * - isExternalCameraId() improved: removed overly broad regex, added
+ *   Camera2 characteristic-based detection
+ * - Pending rescan with delay: when USB detected before provider is ready,
+ *   the provider re-init includes a delay for Camera2 service registration
+ * - Periodic rescan support: ViewModel can trigger periodic checks for
+ *   USB cameras that weren't detected on first attempt
  */
 @androidx.camera.camera2.interop.ExperimentalCamera2Interop
 class BuiltInCameraManager(private val context: Context) {
 
     companion object {
         private const val TAG = "BuiltInCameraManager"
+        private const val USB_CAMERA_REGISTRATION_DELAY_MS = 1500L
     }
 
     private var cameraProvider: ProcessCameraProvider? = null
@@ -51,9 +63,9 @@ class BuiltInCameraManager(private val context: Context) {
     private var providerInitialized: Boolean = false
     private var initInProgress: Boolean = false
 
-    // Pending rescan flag — set when rescanForExternalCamera() is called
-    // before cameraProvider is ready. The rescan is executed once provider initializes.
-    private var pendingRescan: Boolean = false
+    // Pending rescan flag — set when USB device is detected before provider is ready.
+    // The rescan is executed with a delay once the provider initializes.
+    private var pendingUsbRescan: Boolean = false
 
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
@@ -72,10 +84,6 @@ class BuiltInCameraManager(private val context: Context) {
 
     // ─── Permission Check ──────────────────────────────────────
 
-    /**
-     * Check if CAMERA permission is granted.
-     * This MUST be checked before calling init() or any CameraX API.
-     */
     fun hasCameraPermission(): Boolean {
         return (ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
     }
@@ -86,15 +94,9 @@ class BuiltInCameraManager(private val context: Context) {
      * Initialize camera with the given LifecycleOwner and PreviewView.
      *
      * IDEMPOTENT: Calling this multiple times is safe.
-     * - If camera provider is already initialized, it will be reused
-     * - If camera is already running with the same lifecycle/preview, it's a no-op
-     * - If lifecycle or preview changed, camera will be re-bound
-     *
      * CRITICAL: Must only be called after CAMERA permission is granted.
-     * Call hasCameraPermission() first.
      */
     fun init(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
-        // Permission check — MUST have camera permission before accessing CameraX
         if (!hasCameraPermission()) {
             Log.e(TAG, "CAMERA permission not granted — cannot initialize camera")
             _cameraType.value = "none"
@@ -108,23 +110,19 @@ class BuiltInCameraManager(private val context: Context) {
         this.previewView = previewView
 
         if (providerInitialized && cameraProvider != null) {
-            // Provider already initialized — just rebind camera if lifecycle/preview changed
             if (ownerChanged || previewChanged) {
                 Log.i(TAG, "Camera provider already initialized, rebinding with new lifecycle/preview")
                 selectBestCamera(lifecycleOwner, previewView)
             } else if (_isConnected.value) {
-                // Already connected with same lifecycle/preview — nothing to do
                 Log.d(TAG, "Camera already initialized and connected — skipping")
                 return
             } else {
-                // Not connected but provider exists — try to select camera
                 Log.i(TAG, "Camera provider exists but not connected — retrying camera selection")
                 selectBestCamera(lifecycleOwner, previewView)
             }
             return
         }
 
-        // First-time initialization
         if (initInProgress) {
             Log.d(TAG, "Camera init already in progress — skipping duplicate call")
             return
@@ -139,12 +137,21 @@ class BuiltInCameraManager(private val context: Context) {
                     cameraProvider = cameraProviderFuture.get()
                     providerInitialized = true
                     initInProgress = false
-                    selectBestCamera(lifecycleOwner, previewView)
-                    // Execute pending rescan if one was requested before provider was ready
-                    if (pendingRescan) {
-                        Log.i(TAG, "Executing pending rescan after provider initialization")
-                        pendingRescan = false
-                        rescanForExternalCamera()
+
+                    // CRITICAL FIX: If USB was detected before provider was ready,
+                    // delay camera selection to allow Camera2 service to register
+                    // the external USB camera. Without this delay, availableCameraInfos
+                    // won't include the USB camera because CameraX 1.3.x takes a
+                    // snapshot at provider init time.
+                    if (pendingUsbRescan) {
+                        Log.i(TAG, "USB was detected before provider ready — delaying selection for Camera2 registration")
+                        pendingUsbRescan = false
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            // Re-init provider to get fresh camera list including USB camera
+                            forceReinitProviderThenSelect()
+                        }, USB_CAMERA_REGISTRATION_DELAY_MS)
+                    } else {
+                        selectBestCamera(lifecycleOwner, previewView)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to get camera provider from future: ${e.message}")
@@ -163,23 +170,79 @@ class BuiltInCameraManager(private val context: Context) {
 
     /**
      * Re-initialize camera after permission is granted.
-     * Safe to call even if camera was already initialized.
      */
     fun reinit(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
         Log.i(TAG, "Re-initializing camera (permission may have just been granted)")
-        // Reset state
         _isConnected.value = false
         _cameraType.value = "none"
-
-        // Try to clean up existing camera
         try {
             cameraProvider?.unbindAll()
         } catch (e: Exception) {
             Log.w(TAG, "Error unbinding during reinit: ${e.message}")
         }
-
-        // Re-initialize
         init(lifecycleOwner, previewView)
+    }
+
+    /**
+     * CRITICAL FIX: Force full re-initialization of ProcessCameraProvider
+     * when a USB camera is detected. This is necessary because CameraX 1.3.x's
+     * availableCameraInfos is a SNAPSHOT and does NOT update when cameras are
+     * hot-plugged. We must get a fresh ProcessCameraProvider instance to
+     * enumerate cameras including the newly attached USB camera.
+     *
+     * Called by OperatorViewModel when UVC device is detected, with a delay
+     * to allow Camera2 service time to register the external camera.
+     */
+    fun forceReinitForUSB() {
+        val owner = lifecycleOwner ?: return
+        val pv = previewView ?: return
+
+        Log.i(TAG, "forceReinitForUSB: Full re-init to detect USB camera")
+
+        // Clean up existing provider completely
+        try {
+            cameraProvider?.unbindAll()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error unbinding during force reinit: ${e.message}")
+        }
+
+        // Reset all provider state so init() gets a fresh ProcessCameraProvider
+        cameraProvider = null
+        providerInitialized = false
+        initInProgress = false
+        pendingUsbRescan = false
+        _isConnected.value = false
+        _cameraType.value = "none"
+
+        // Re-initialize — this gets a fresh ProcessCameraProvider
+        // which will enumerate all cameras including the USB camera
+        init(owner, pv)
+    }
+
+    /**
+     * Internal: Force reinitialize the ProcessCameraProvider and then select best camera.
+     * Used when we detect that a USB camera was attached but the current provider
+     * doesn't list it (stale snapshot).
+     */
+    private fun forceReinitProviderThenSelect() {
+        val owner = lifecycleOwner ?: return
+        val pv = previewView ?: return
+
+        Log.i(TAG, "forceReinitProviderThenSelect: Resetting provider for fresh camera enumeration")
+
+        try {
+            cameraProvider?.unbindAll()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error unbinding during forced provider reinit: ${e.message}")
+        }
+
+        // Reset provider state completely so ProcessCameraProvider.getInstance()
+        // returns a new instance with fresh camera list
+        cameraProvider = null
+        providerInitialized = false
+        initInProgress = false
+
+        init(owner, pv)
     }
 
     /**
@@ -189,19 +252,18 @@ class BuiltInCameraManager(private val context: Context) {
     private fun selectBestCamera(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
         val provider = cameraProvider ?: return
 
-        // Reset state before selection attempt
         _isConnected.value = false
         _cameraType.value = "none"
 
-        // Enumerate all available cameras
         val availableCameras = provider.availableCameraInfos
         Log.i(TAG, "Available cameras: ${availableCameras.size}")
 
-        // Log each camera for debugging
+        // Log each camera for debugging with external detection info
         for (cameraInfo in availableCameras) {
             val cameraId = getCameraId(cameraInfo)
             val lensFacing = cameraInfo.lensFacing
-            Log.d(TAG, "  Camera: id=$cameraId, lensFacing=$lensFacing")
+            val isExt = isExternalByCamera2(cameraInfo, cameraId ?: "")
+            Log.d(TAG, "  Camera: id=$cameraId, lensFacing=$lensFacing, isExternal=$isExt")
         }
 
         // Try to find an external camera (USB HDMI capture card)
@@ -247,27 +309,50 @@ class BuiltInCameraManager(private val context: Context) {
             Log.e(TAG, "No camera available at all: ${e.message}")
         }
 
-        // No camera found at all
         Log.e(TAG, "NO CAMERA DETECTED — device may have no camera or permission denied")
         _cameraType.value = "none"
         _isConnected.value = false
     }
 
     /**
-     * Find an external camera (USB HDMI capture card) by enumerating camera IDs.
-     * External cameras typically have IDs containing "external" or have
-     * LENS_FACING_EXTERNAL on API 30+.
+     * Find an external camera (USB HDMI capture card).
+     *
+     * Uses multiple detection methods in order of reliability:
+     * 1. Camera2 LENS_FACING characteristic (most reliable)
+     * 2. LENS_FACING_EXTERNAL selector (API 30+)
+     * 3. String-based ID matching ("external", "usb", "uvc")
+     * 4. Heuristic: extra camera with UVC device present
      */
     private fun findExternalCamera(provider: ProcessCameraProvider): CameraSelector? {
         try {
-            // Method 1: Try LENS_FACING_EXTERNAL (API 30+)
+            val cameraInfos = provider.availableCameraInfos
+
+            // ── Method 1: Camera2 LENS_FACING characteristic ──
+            // This is the MOST RELIABLE method. Camera IDs on most devices
+            // are just numbers ("0", "1", "2"), so string matching fails.
+            // Camera2's LENS_FACING_EXTERNAL = 2 reliably identifies external cameras.
+            for (cameraInfo in cameraInfos) {
+                val cameraId = getCameraId(cameraInfo) ?: continue
+                if (isExternalByCamera2(cameraInfo, cameraId)) {
+                    Log.i(TAG, "Found external camera by Camera2 LENS_FACING: id=$cameraId")
+                    val targetCameraId = cameraId
+                    val selector = CameraSelector.Builder()
+                        .addCameraFilter { cameras ->
+                            cameras.filter { cam -> getCameraId(cam) == targetCameraId }
+                        }
+                        .build()
+                    return selector
+                }
+            }
+
+            // ── Method 2: LENS_FACING_EXTERNAL selector (API 30+) ──
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 try {
                     val externalSelector = CameraSelector.Builder()
                         .requireLensFacing(CameraSelector.LENS_FACING_EXTERNAL)
                         .build()
                     if (provider.hasCamera(externalSelector)) {
-                        Log.i(TAG, "Found camera via LENS_FACING_EXTERNAL")
+                        Log.i(TAG, "Found camera via LENS_FACING_EXTERNAL selector")
                         currentLensFacing = CameraSelector.LENS_FACING_EXTERNAL
                         return externalSelector
                     }
@@ -276,39 +361,42 @@ class BuiltInCameraManager(private val context: Context) {
                 }
             }
 
-            // Method 2: Enumerate cameras and find one with "external" in the camera ID
-            val cameraInfos = provider.availableCameraInfos
+            // ── Method 3: String-based ID matching ──
             for (cameraInfo in cameraInfos) {
                 val cameraId = getCameraId(cameraInfo)
                 if (cameraId != null && isExternalCameraId(cameraId)) {
-                    Log.i(TAG, "Found external camera by ID: $cameraId — building selector via CameraFilter")
+                    Log.i(TAG, "Found external camera by ID pattern: $cameraId")
                     val targetCameraId = cameraId
                     val selector = CameraSelector.Builder()
                         .addCameraFilter { cameras ->
-                            cameras.filter { cam ->
-                                getCameraId(cam) == targetCameraId
-                            }
+                            cameras.filter { cam -> getCameraId(cam) == targetCameraId }
                         }
                         .build()
                     return selector
                 }
             }
 
-            // Method 3: Check if there are more cameras than just front+back
-            var backCameraCount = 0
-            for (cameraInfo in cameraInfos) {
-                val lensFacing = cameraInfo.lensFacing
-                if (lensFacing == CameraSelector.LENS_FACING_BACK) {
-                    backCameraCount++
+            // ── Method 4: Heuristic — extra camera + UVC device present ──
+            // If UVC device is physically connected AND there are more than 2 cameras,
+            // the camera with ID >= 2 is likely the USB capture card.
+            if (UVCCameraManager.hasUVCDevice(context) && cameraInfos.size > 2) {
+                Log.i(TAG, "UVC device present with ${cameraInfos.size} cameras — looking for extra camera")
+                for (cameraInfo in cameraInfos) {
+                    val cameraId = getCameraId(cameraInfo) ?: continue
+                    val idNum = cameraId.toIntOrNull()
+                    // Camera IDs "0" and "1" are typically back and front.
+                    // ID "2" or higher is likely the USB capture card.
+                    if (idNum != null && idNum >= 2) {
+                        Log.i(TAG, "Found likely USB camera (id >= 2 with UVC device): id=$cameraId")
+                        val targetCameraId = cameraId
+                        val selector = CameraSelector.Builder()
+                            .addCameraFilter { cameras ->
+                                cameras.filter { cam -> getCameraId(cam) == targetCameraId }
+                            }
+                            .build()
+                        return selector
+                    }
                 }
-            }
-
-            if (backCameraCount > 1) {
-                Log.i(TAG, "Found $backCameraCount back-facing cameras — likely includes USB capture card")
-                currentLensFacing = CameraSelector.LENS_FACING_BACK
-                return CameraSelector.Builder()
-                    .requireLensFacing(CameraSelector.LENS_FACING_BACK)
-                    .build()
             }
 
             Log.i(TAG, "No external camera detected among ${cameraInfos.size} cameras")
@@ -320,18 +408,28 @@ class BuiltInCameraManager(private val context: Context) {
     }
 
     /**
+     * Check if a camera is external using Camera2 characteristics.
+     * This is the most reliable method — checks LENS_FACING value.
+     * LENS_FACING_EXTERNAL = 2 in Camera2 API.
+     */
+    private fun isExternalByCamera2(cameraInfo: CameraInfo, cameraId: String): Boolean {
+        return try {
+            val camera2Info = Camera2CameraInfo.from(cameraInfo)
+            val characteristics = camera2Info.cameraCharacteristics
+            val lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING)
+            lensFacing == CameraCharacteristics.LENS_FACING_EXTERNAL
+        } catch (e: Exception) {
+            Log.d(TAG, "Cannot check Camera2 characteristics for camera $cameraId: ${e.message}")
+            false
+        }
+    }
+
+    /**
      * Get the camera ID string from a CameraInfo object.
-     * Uses Camera2CameraInfo interop to get the Camera2 camera ID.
      */
     private fun getCameraId(cameraInfo: CameraInfo): String? {
         return try {
             Camera2CameraInfo.from(cameraInfo).cameraId
-        } catch (e: NoSuchMethodError) {
-            Log.d(TAG, "Camera2 interop not available: ${e.message}")
-            null
-        } catch (e: NoClassDefFoundError) {
-            Log.d(TAG, "Camera2CameraInfo class not found: ${e.message}")
-            null
         } catch (e: Exception) {
             Log.d(TAG, "Cannot get Camera2 camera ID: ${e.message}")
             null
@@ -339,28 +437,29 @@ class BuiltInCameraManager(private val context: Context) {
     }
 
     /**
-     * Check if a camera ID indicates an external camera (USB HDMI capture card).
+     * Check if a camera ID string indicates an external camera.
+     * Note: On most devices, external cameras have simple numeric IDs like "2", "3"
+     * which WON'T match here. Use isExternalByCamera2() for reliable detection.
+     * This is a secondary/fallback method.
      */
     private fun isExternalCameraId(cameraId: String): Boolean {
         val lowerId = cameraId.lowercase()
         return lowerId.contains("external") ||
                lowerId.contains("usb") ||
-               lowerId.contains("uvc") ||
-               lowerId.matches(Regex(".*\\d+-.*"))
+               lowerId.contains("uvc")
+        // REMOVED: overly broad regex ".*\\d+-.*" which caused false positives
     }
 
     private fun startCamera(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
         val provider = cameraProvider ?: return
         val selector = currentCameraSelector ?: return
 
-        // Unbind all use cases first
         try {
             provider.unbindAll()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to unbind camera use cases: ${e.message}")
         }
 
-        // Preview
         preview = Preview.Builder()
             .setTargetAspectRatio(AspectRatio.RATIO_16_9)
             .build()
@@ -368,7 +467,6 @@ class BuiltInCameraManager(private val context: Context) {
                 it.setSurfaceProvider(previewView.surfaceProvider)
             }
 
-        // Image capture — minimize latency for faster capture (quality difference negligible for photo booth)
         imageCapture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setTargetAspectRatio(AspectRatio.RATIO_16_9)
@@ -383,7 +481,6 @@ class BuiltInCameraManager(private val context: Context) {
             )
             _isConnected.value = true
 
-            // Determine camera type for display
             _cameraType.value = when {
                 isUsingExternalCamera -> "external"
                 currentLensFacing == CameraSelector.LENS_FACING_BACK -> "back"
@@ -391,15 +488,12 @@ class BuiltInCameraManager(private val context: Context) {
                 else -> "unknown"
             }
 
-            // Track current camera ID for picker highlighting
             _currentCameraId.value = try {
                 camera?.cameraInfo?.let { getCameraId(it) } ?: ""
             } catch (e: Exception) {
-                Log.d(TAG, "Cannot get current camera ID: ${e.message}")
                 ""
             }
 
-            // Refresh the available cameras list for the picker dropdown
             refreshAvailableCameras()
 
             Log.i(TAG, "Camera started successfully (type: ${_cameraType.value}, id: ${_currentCameraId.value}, external: $isUsingExternalCamera)")
@@ -411,7 +505,6 @@ class BuiltInCameraManager(private val context: Context) {
             Log.e(TAG, "Failed to start camera (type: ${_cameraType.value}): ${e.message}")
             _isConnected.value = false
 
-            // If external camera failed, try back camera as fallback
             if (isUsingExternalCamera) {
                 Log.w(TAG, "External camera failed, falling back to back camera")
                 isUsingExternalCamera = false
@@ -430,7 +523,6 @@ class BuiltInCameraManager(private val context: Context) {
                 }
             }
 
-            // Try front camera as last resort
             try {
                 val frontSelector = CameraSelector.Builder()
                     .requireLensFacing(CameraSelector.LENS_FACING_FRONT)
@@ -451,7 +543,6 @@ class BuiltInCameraManager(private val context: Context) {
 
     /**
      * Switch between front and back camera.
-     * If using an external camera, switch between external and back.
      */
     fun switchCamera() {
         val owner = lifecycleOwner ?: return
@@ -492,11 +583,7 @@ class BuiltInCameraManager(private val context: Context) {
 
     /**
      * Get list of available camera descriptions for UI camera picker.
-     * Returns list of pairs: (cameraId, displayName)
-     * e.g., [("0", "Kamera Belakang"), ("2", "USB Capture Card"), ("1", "Kamera Depan")]
-     *
-     * Also updates the reactive _availableCameras StateFlow so the UI can
-     * observe camera list changes (e.g., USB device attach/detach).
+     * Also updates the reactive _availableCameras StateFlow.
      */
     fun getAvailableCameras(): List<Pair<String, String>> {
         val provider = cameraProvider ?: return emptyList()
@@ -504,41 +591,33 @@ class BuiltInCameraManager(private val context: Context) {
 
         for (cameraInfo in provider.availableCameraInfos) {
             val cameraId = getCameraId(cameraInfo) ?: continue
-            val lensFacing = cameraInfo.lensFacing
+            val isExt = isExternalByCamera2(cameraInfo, cameraId)
             val displayName = when {
-                isExternalCameraId(cameraId) -> "USB Capture Card"
-                lensFacing == CameraSelector.LENS_FACING_BACK -> "Kamera Belakang"
-                lensFacing == CameraSelector.LENS_FACING_FRONT -> "Kamera Depan"
+                isExt -> "USB Capture Card"
+                cameraInfo.lensFacing == CameraSelector.LENS_FACING_BACK -> "Kamera Belakang"
+                cameraInfo.lensFacing == CameraSelector.LENS_FACING_FRONT -> "Kamera Depan"
                 else -> "Kamera ($cameraId)"
             }
             cameras.add(cameraId to displayName)
         }
-        // Update reactive state
         _availableCameras.value = cameras
         return cameras
     }
 
-    /**
-     * Refresh the available cameras list and update the reactive StateFlow.
-     * Called when USB devices are attached/detached or on camera provider init.
-     */
     fun refreshAvailableCameras() {
         getAvailableCameras()
     }
 
     /**
      * Switch to a specific camera by its ID.
-     * Used by the camera picker UI.
      */
     fun switchToCameraById(cameraId: String) {
         val owner = lifecycleOwner ?: return
         val pv = previewView ?: return
         val provider = cameraProvider ?: return
 
-        // Find the camera info for this ID
         val targetCameraInfo = provider.availableCameraInfos.find { getCameraId(it) == cameraId } ?: return
 
-        // Build selector for this specific camera
         val targetId = cameraId
         val selector = CameraSelector.Builder()
             .addCameraFilter { cameras ->
@@ -546,7 +625,7 @@ class BuiltInCameraManager(private val context: Context) {
             }
             .build()
 
-        isUsingExternalCamera = isExternalCameraId(cameraId)
+        isUsingExternalCamera = isExternalByCamera2(targetCameraInfo, cameraId) || isExternalCameraId(cameraId)
         currentLensFacing = when {
             isUsingExternalCamera -> CameraSelector.LENS_FACING_EXTERNAL
             targetCameraInfo.lensFacing == CameraSelector.LENS_FACING_BACK -> CameraSelector.LENS_FACING_BACK
@@ -561,23 +640,30 @@ class BuiltInCameraManager(private val context: Context) {
     }
 
     /**
-     * Re-scan for external cameras (called when USB device is attached/detached).
-     * If an external camera becomes available and we're on built-in, switch to it.
-     * Always refreshes the available cameras list for the picker UI.
-     *
-     * If cameraProvider isn't ready yet, sets pendingRescan flag so the rescan
-     * is executed once the provider initializes (fixes USB camera not persisting
-     * when transitioning from connection screen to operator session).
+     * Called when USB device is attached/detached.
+     * Sets pendingUsbRescan flag if provider isn't ready yet.
+     */
+    fun onUsbDeviceChanged() {
+        if (cameraProvider == null || !providerInitialized) {
+            Log.i(TAG, "onUsbDeviceChanged: provider not ready, setting pendingUsbRescan flag")
+            pendingUsbRescan = true
+            return
+        }
+        // Provider is ready — handled by ViewModel's delayed forceReinitForUSB
+    }
+
+    /**
+     * Re-scan for external cameras. Called by ViewModel with proper timing.
+     * If an external camera is found and we're not using it, switch to it.
+     * If external camera is lost, fall back to built-in.
      */
     fun rescanForExternalCamera() {
-        // If provider not ready, defer the rescan
         if (cameraProvider == null) {
-            Log.i(TAG, "rescanForExternalCamera: provider not ready, setting pendingRescan flag")
-            pendingRescan = true
+            Log.i(TAG, "rescanForExternalCamera: provider not ready, setting pendingUsbRescan flag")
+            pendingUsbRescan = true
             return
         }
 
-        // Always refresh camera list first
         refreshAvailableCameras()
 
         val owner = lifecycleOwner ?: return
@@ -617,8 +703,6 @@ class BuiltInCameraManager(private val context: Context) {
                 override fun onCaptureSuccess(image: ImageProxy) {
                     try {
                         val bitmap = image.toBitmap()
-
-                        // Rotate if needed based on image rotation
                         val rotation = image.imageInfo.rotationDegrees
                         val rotated = if (rotation != 0) {
                             val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
@@ -629,7 +713,6 @@ class BuiltInCameraManager(private val context: Context) {
                         } else {
                             bitmap
                         }
-
                         onResult(rotated)
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to process captured image: ${e.message}")
@@ -647,12 +730,7 @@ class BuiltInCameraManager(private val context: Context) {
         )
     }
 
-    /**
-     * Convert ImageProxy to Bitmap.
-     * Handles JPEG, YUV_420_888, and other image formats.
-     */
     private fun ImageProxy.toBitmap(): Bitmap {
-        // Try JPEG format first (most common for ImageCapture)
         if (format == android.graphics.ImageFormat.JPEG ||
             format == android.graphics.ImageFormat.DEPTH_JPEG) {
             val buffer = planes[0].buffer
@@ -662,39 +740,30 @@ class BuiltInCameraManager(private val context: Context) {
                 ?: throw IllegalStateException("Failed to decode JPEG image")
         }
 
-        // For YUV_420_888 and other formats, convert using manual YUV→RGB
         return try {
             val yBuffer = planes[0].buffer
             val uBuffer = planes[1].buffer
             val vBuffer = planes[2].buffer
-
             val yRowStride = planes[0].rowStride
             val uvRowStride = planes[1].rowStride
             val uvPixelStride = planes[1].pixelStride
-
             val width = width
             val height = height
-
             val argb = IntArray(width * height)
 
             for (y in 0 until height) {
                 for (x in 0 until width) {
                     val yIndex = y * yRowStride + x
                     val uvIndex = (y / 2) * uvRowStride + (x / 2) * uvPixelStride
-
                     val yValue = yBuffer.get(yIndex).toInt() and 0xFF
                     val uValue = uBuffer.get(uvIndex).toInt() and 0xFF
                     val vValue = vBuffer.get(uvIndex).toInt() and 0xFF
-
-                    // YUV to RGB conversion (BT.601)
                     val r = (yValue + 1.370705 * (vValue - 128)).toInt().coerceIn(0, 255)
                     val g = (yValue - 0.337633 * (uValue - 128) - 0.698001 * (vValue - 128)).toInt().coerceIn(0, 255)
                     val b = (yValue + 1.732446 * (uValue - 128)).toInt().coerceIn(0, 255)
-
                     argb[y * width + x] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
                 }
             }
-
             Bitmap.createBitmap(argb, width, height, Bitmap.Config.ARGB_8888)
         } catch (e: Exception) {
             Log.e(TAG, "YUV conversion failed, trying direct buffer decode: ${e.message}")
@@ -722,7 +791,7 @@ class BuiltInCameraManager(private val context: Context) {
         isUsingExternalCamera = false
         providerInitialized = false
         initInProgress = false
-        pendingRescan = false
+        pendingUsbRescan = false
         _isConnected.value = false
         _cameraType.value = "none"
         _currentCameraId.value = ""
