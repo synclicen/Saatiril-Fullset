@@ -121,3 +121,62 @@ Stage Summary:
 - Key insight: Camera2/CameraX CANNOT reliably open USB capture cards. WebView + getUserMedia() CAN because Chrome engine has native UVC support
 - APK verified to contain all v7 code (WebViewCameraManager, camera.html in assets)
 - Previous APK was STALE - user needs to download the new one from GitHub
+---
+Task ID: 1
+Agent: Main Agent
+Task: v8 WebView Camera Engine — Complete rewrite mirroring Electron/Chrome getUserMedia approach
+
+Work Log:
+- Analyzed user's frustration: USB camera STILL not working after v3-v7 attempts
+- User clarified hardware: Redmi 13 5G + JASOZ USB HDMI capture card + Sony Alpha 7 DSLR
+- User emphasized: Photos only saved on admin device, NOT on operator device
+- Verified GitHub repo state: v7 was latest commit with WebView approach already started
+- Deep study of Electron version's camera flow:
+  - Electron uses navigator.mediaDevices.getUserMedia() with deviceId: {exact: deviceId}
+  - enumerateDevices() lists all cameras including USB capture cards
+  - Camera selection via dropdown (matching Windows behavior)
+  - Photo capture: canvas → toDataURL('image/jpeg') → base64 → socket emit
+  - In browser mode (non-Electron), photos NOT saved locally — admin saves via PHOTOS_SAVED event
+- Read ALL existing Android code files (16 Kotlin + 2 Gradle)
+- Designed v8 architecture: WebView + getUserMedia mirroring Electron exactly
+- Created camera.html (14814 bytes) with complete JS camera engine:
+  - enumerateCameras() with USB detection via label matching
+  - selectCamera(deviceId) with getUserMedia constraints matching Electron
+  - capturePhoto() with canvas → toDataURL pipeline
+  - Filter presets via CSS filter (matching Electron's CSS filter approach)
+  - Frame overlay rendering
+  - devicechange event listener for hot-plug detection
+  - Auto-start: USB camera first, then fallback to built-in
+- Created WebViewCameraManager.kt with JavaScript bridge:
+  - @JavascriptInterface CameraBridge for JS → Kotlin callbacks
+  - onPermissionRequest GRANTS ALL requests (critical for getUserMedia)
+  - allowFileAccessFromFileURLs + allowUniversalAccessFromFileURLs (for file:// camera.html)
+  - hardwareAccelerated=true in manifest
+  - Compatible interface with old UnifiedCameraManager
+- Rewrote OperatorViewModel.kt:
+  - WebViewCameraManager replaces UnifiedCameraManager
+  - Removed UVCCameraManager (WebView handles USB detection via devicechange)
+  - Removed CameraCapture processing (done in JS/canvas)
+  - Removed PhotoSaver.savePhoto() call (photos NOT saved on operator device)
+  - initCamera(webView) replaces initCamera(textureView)
+  - capturePhoto receives base64 string directly from WebView
+- Updated OperatorScreen.kt:
+  - WebView replaces TextureView in AndroidView factory
+  - webViewRef replaces textureViewRef
+- Updated AndroidManifest.xml:
+  - Added hardwareAccelerated=true
+  - Storage permissions marked as not needed (backward compat only)
+- Fixed compile error: parseAspectRatio() returns Float, updateConfig expects Double → .toDouble()
+- Clean rebuild: BUILD SUCCESSFUL in 1m 26s (34 tasks, all executed)
+- APK: 18699863 bytes, verified camera.html in assets/
+- Updated apk-download.zip with fresh v8 APK
+- Force pushed to GitHub: commit b4c0dff (v8)
+
+Stage Summary:
+- v8 WebView Camera Engine pushed to GitHub
+- FUNDAMENTAL change: Replaced native Camera2/CameraX with WebView + getUserMedia
+- This mirrors EXACTLY how Electron/Chrome handles USB cameras
+- Chromium engine has its own UVC driver that bypasses Android's broken Camera HAL
+- Photos NOT saved on operator device (matching Electron browser mode)
+- APK available at: android-operator/apk-download/apk-download.zip
+- GitHub: synclicen/Saatiril-Fullset, commit b4c0dff
