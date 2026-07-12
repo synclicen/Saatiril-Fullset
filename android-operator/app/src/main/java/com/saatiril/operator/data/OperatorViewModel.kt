@@ -8,7 +8,8 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewModelScope
-import com.saatiril.operator.camera.BuiltInCameraManager
+import android.view.TextureView
+import com.saatiril.operator.camera.UnifiedCameraManager
 import com.saatiril.operator.camera.CameraCapture
 import com.saatiril.operator.camera.UVCCameraManager
 import com.saatiril.operator.util.FilenameUtils
@@ -47,9 +48,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     private val socketManager = SocketManager()
 
-    // ─── Camera Managers ───────────────────────────────────────
+    // ─── Camera Manager (v6: Camera2 ONLY — no CameraX) ──────────
 
-    val builtInCameraManager = BuiltInCameraManager(application)
+    val cameraManager = UnifiedCameraManager(application)
     val uvcCameraManager = UVCCameraManager(application)
 
     // ─── Connection State ───────────────────────────────────────
@@ -218,19 +219,12 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     val cameraConnected: StateFlow<Boolean> = _cameraConnected.asStateFlow()
 
     // Expose reactive camera list and current camera ID from BuiltInCameraManager
-    val availableCameras: StateFlow<List<Pair<String, String>>> = builtInCameraManager.availableCameras
-    val currentCameraId: StateFlow<String> = builtInCameraManager.currentCameraId
+    val availableCameras: StateFlow<List<Pair<String, String>>> = cameraManager.availableCameras
+    val currentCameraId: StateFlow<String> = cameraManager.currentCameraIdFlow
 
-    // Expose whether Camera2 engine (USB) is active — UI needs this to know
-    // whether to show PreviewView (CameraX) or TextureView (Camera2)
-    val useCamera2Engine: StateFlow<Boolean> = builtInCameraManager.useCamera2Engine
+    // v6: No more useCamera2Engine — Camera2 is ALWAYS used for ALL cameras
 
-    // ─── TextureView for Camera2 engine ─────────────────────────
-    // Set by OperatorScreen when the TextureView is created
-
-    fun setTextureView(textureView: android.view.TextureView) {
-        builtInCameraManager.setTextureView(textureView)
-    }
+    // v6: No setTextureView needed — initCamera receives TextureView directly
 
     // ─── Frame Overlay ──────────────────────────────────────────
 
@@ -323,148 +317,107 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private var uvcManagerInitialized: Boolean = false
     private var periodicCameraRescanJob: Job? = null
 
-    fun initCamera(lifecycleOwner: LifecycleOwner, previewView: androidx.camera.view.PreviewView, textureView: android.view.TextureView? = null) {
+    /**
+     * v6: Initialize camera with a TextureView. Camera2 ONLY — no CameraX.
+     * This is much simpler than the old dual-engine approach.
+     */
+    fun initCamera(textureView: TextureView) {
         Log.i(TAG, "═══════════════════════════════════════════════════")
-        Log.i(TAG, "initCamera called — v5 dual-engine initialization")
-        Log.i(TAG, "  previewView: ${previewView != null}, textureView: ${textureView != null}")
+        Log.i(TAG, "initCamera: v6 Camera2-ONLY initialization")
         Log.i(TAG, "═══════════════════════════════════════════════════")
 
-        // CRITICAL FIX (v3): Initialize UVC manager FIRST so USB detection is ready
-        // BEFORE BuiltInCameraManager starts its camera selection
+        // Initialize UVC detector
         if (!uvcManagerInitialized) {
             uvcCameraManager.init()
             uvcManagerInitialized = true
-
-            // Check immediately: is a USB camera already connected?
-            val uvcAlreadyConnected = uvcCameraManager.isConnected.value
-            if (uvcAlreadyConnected) {
-                Log.i(TAG, "initCamera: UVC device ALREADY connected at init time — will prioritize USB camera")
-            }
         }
 
         cameraConnectedCollector?.cancel()
         cameraTypeCollector?.cancel()
         uvcConnectedCollector?.cancel()
 
-        // Initialize BuiltInCameraManager (v5: pass BOTH views upfront)
-        builtInCameraManager.init(lifecycleOwner, previewView, textureView)
+        // v6: Single init with TextureView — Camera2 handles ALL cameras
+        cameraManager.init(textureView)
 
         cameraConnectedCollector = viewModelScope.launch {
-            builtInCameraManager.isConnected.collect { connected ->
+            cameraManager.isConnected.collect { connected ->
                 _cameraConnected.value = connected
                 updateCameraSource()
             }
         }
 
         cameraTypeCollector = viewModelScope.launch {
-            builtInCameraManager.cameraType.collect {
+            cameraManager.cameraType.collect {
                 updateCameraSource()
             }
         }
 
-        // CRITICAL FIX (v3): When UVC device is detected, use the new
-        // attemptBindExternalCamera approach which uses Camera2 for discovery
-        // and CameraX for binding. This works even when CameraX's
-        // availableCameraInfos doesn't include the USB camera.
+        // When UVC device is detected, switch to USB camera
         uvcConnectedCollector = viewModelScope.launch {
             uvcCameraManager.isConnected.collect { uvcConnected ->
                 _uvcDeviceAttached.value = uvcConnected
                 if (uvcConnected) {
-                    // USB camera detected — the new forceReinitForUSB() uses
-                    // Camera2 CameraManager to discover the camera, then tries
-                    // direct binding by camera ID. Delay for Camera2 registration.
-                    Log.i(TAG, "═══════════════════════════════════════════════════")
-                    Log.i(TAG, "UVC device attached — scheduling USB camera activation")
-                    Log.i(TAG, "═══════════════════════════════════════════════════")
-                    delay(2000) // Wait for Camera2 to register the USB camera
-                    builtInCameraManager.forceReinitForUSB()
+                    Log.i(TAG, "UVC device attached — switching to USB camera")
+                    delay(2000) // Wait for Camera2 to register USB camera
+                    cameraManager.forceSwitchToUSB()
                 } else {
-                    // USB camera detached — fall back to built-in
-                    Log.i(TAG, "UVC device detached — switching to built-in camera")
-                    builtInCameraManager.onUsbDeviceChanged()
-                    builtInCameraManager.rescanForExternalCamera()
+                    Log.i(TAG, "UVC device detached — camera will continue with current")
                 }
                 updateCameraSource()
             }
         }
 
-        // Safety net: If UVC was already connected when we init (user plugged in
-        // USB before launching app or during connection screen), force a delayed
-        // attempt to activate the USB camera. The initial init() may have missed
-        // it because Camera2 hadn't registered it yet.
+        // Safety net: If USB was already connected, force switch after delay
         if (uvcCameraManager.isConnected.value) {
-            Log.i(TAG, "initCamera: UVC already connected — scheduling delayed USB camera activation")
+            Log.i(TAG, "initCamera: UVC already connected — scheduling USB switch")
             viewModelScope.launch {
-                delay(3000) // Generous delay to ensure Camera2 has registered the USB camera
-                val cameraType = builtInCameraManager.cameraType.value
-                if (cameraType != "external" && cameraType != "external_pending") {
-                    Log.i(TAG, "initCamera: Still on $cameraType camera after 3s — forcing USB camera activation")
-                    builtInCameraManager.forceReinitForUSB()
+                delay(3000)
+                val cameraType = cameraManager.cameraType.value
+                if (cameraType != "external") {
+                    Log.i(TAG, "initCamera: Still on $cameraType camera after 3s — forcing USB switch")
+                    cameraManager.forceSwitchToUSB()
                 }
             }
         }
 
-        // Start periodic rescan: if UVC device is attached but we're not
-        // using external camera, retry every 5 seconds
+        // Start periodic rescan
         startPeriodicCameraRescan()
 
         Log.i(TAG, "Camera initialized — cameraSource=${_cameraSource.value}, uvcConnected=${uvcCameraManager.isConnected.value}")
     }
 
-    /**
-     * Periodic camera rescan: checks every 5 seconds if UVC device is
-     * attached but we're still using built-in camera. If so, tries to
-     * activate the USB camera using the new Camera2-based approach.
-     *
-     * This is a safety net for cases where:
-     * - The initial forceReinitForUSB timing was too early
-     * - Camera2 service was slow to register the external camera
-     * - The USB device was connected during app startup
-     */
     private fun startPeriodicCameraRescan() {
         periodicCameraRescanJob?.cancel()
         periodicCameraRescanJob = viewModelScope.launch {
-            // First check after 3 seconds (early detection)
             delay(3000)
-            val uvcConnected = uvcCameraManager.isConnected.value
-            val cameraType = builtInCameraManager.cameraType.value
-            // Skip rescan if external camera is already connected or being activated
-            if (uvcConnected && cameraType != "external" && cameraType != "external_pending") {
-                Log.i(TAG, "Early rescan: UVC attached but using $cameraType camera, forcing USB activation")
-                builtInCameraManager.forceReinitForUSB()
+            // Early check
+            if (uvcCameraManager.isConnected.value && cameraManager.cameraType.value != "external") {
+                Log.i(TAG, "Early rescan: UVC attached but not using USB, forcing switch")
+                cameraManager.forceSwitchToUSB()
             }
 
-            // Then check every 5 seconds
+            // Periodic check every 5 seconds
             while (isActive) {
                 delay(5000)
-                val uvcConn = uvcCameraManager.isConnected.value
-                val camType = builtInCameraManager.cameraType.value
-                // Skip rescan if external camera is already connected or being activated
-                if (uvcConn && camType != "external" && camType != "external_pending") {
-                    Log.i(TAG, "Periodic rescan: UVC attached but using $camType camera, forcing USB activation")
-                    builtInCameraManager.forceReinitForUSB()
+                if (uvcCameraManager.isConnected.value && cameraManager.cameraType.value != "external") {
+                    Log.i(TAG, "Periodic rescan: UVC attached but not using USB, forcing switch")
+                    cameraManager.forceSwitchToUSB()
                 }
             }
         }
     }
 
     private fun updateCameraSource() {
-        val connected = builtInCameraManager.isConnected.value
-        val cameraType = builtInCameraManager.cameraType.value
+        val connected = cameraManager.isConnected.value
+        val cameraType = cameraManager.cameraType.value
 
         if (!connected) {
-            // "external_pending" means USB camera is being activated
-            // (waiting for TextureView) — treat as "uvc" for UI display
-            if (cameraType == "external_pending") {
-                _cameraSource.value = "uvc"
-            } else {
-                _cameraSource.value = "none"
-            }
+            _cameraSource.value = "none"
             return
         }
 
         _cameraSource.value = when (cameraType) {
-            "external", "external_pending" -> "uvc"
+            "external" -> "uvc"
             "back" -> "builtin"
             "front" -> "builtin"
             else -> "none"
@@ -472,32 +425,36 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun switchCamera() {
-        builtInCameraManager.switchCamera()
+        // Cycle through available cameras
+        val cameras = cameraManager.availableCameras.value
+        val currentId = cameraManager.currentCameraIdFlow.value
+        val currentIndex = cameras.indexOfFirst { it.first == currentId }
+        val nextIndex = (currentIndex + 1) % cameras.size
+        if (cameras.isNotEmpty()) {
+            cameraManager.switchToCamera(cameras[nextIndex].first)
+        }
     }
 
-    // ─── Camera Picker ──────────────────────────────────────────
-
     fun getAvailableCameras(): List<Pair<String, String>> {
-        return builtInCameraManager.getAvailableCameras()
+        cameraManager.refreshCameraList()
+        return cameraManager.availableCameras.value
     }
 
     fun switchToCameraById(cameraId: String) {
-        builtInCameraManager.switchToCameraById(cameraId)
+        cameraManager.switchToCamera(cameraId)
     }
 
     /**
-     * Force rescan for USB cameras. Called when user taps "Pindai Ulang USB"
-     * in the camera picker dropdown. Uses Camera2 for discovery + CameraX for binding.
+     * Force rescan for USB cameras. Called when user taps "Pindai Ulang USB".
      */
     fun forceRescanUsbCamera() {
         Log.i(TAG, "═══════════════════════════════════════════════════")
         Log.i(TAG, "forceRescanUsbCamera: User requested USB camera rescan")
         Log.i(TAG, "═══════════════════════════════════════════════════")
         uvcCameraManager.scanForUVCDevices()
-        // Use a longer delay to ensure Camera2 has registered the USB camera
         viewModelScope.launch {
             delay(1500)
-            builtInCameraManager.forceReinitForUSB()
+            cameraManager.forceSwitchToUSB()
         }
     }
 
@@ -527,7 +484,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     private fun doCapture() {
         Log.i(TAG, "doCapture: phase=${_capturePhase.value}, target=${_currentTarget.value?.nama}")
-        builtInCameraManager.capturePhoto { bitmap ->
+        cameraManager.capturePhoto { bitmap ->
             if (bitmap == null) {
                 Log.e(TAG, "Capture returned null bitmap")
                 return@capturePhoto
@@ -1256,15 +1213,10 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         _uvcDeviceAttached.value = attached
         if (attached) {
             uvcCameraManager.scanForUVCDevices()
-            // Schedule delayed force re-init to activate USB camera
-            // Uses Camera2 for discovery + CameraX for binding
             viewModelScope.launch {
-                delay(2000) // Wait for Camera2 to register the USB camera
-                builtInCameraManager.forceReinitForUSB()
+                delay(2000)
+                cameraManager.forceSwitchToUSB()
             }
-        } else {
-            builtInCameraManager.onUsbDeviceChanged()
-            builtInCameraManager.rescanForExternalCamera()
         }
     }
 
@@ -1280,7 +1232,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         uvcConnectedCollector?.cancel()
         periodicCameraRescanJob?.cancel()
         socketManager.destroy()
-        builtInCameraManager.destroy()
+        cameraManager.destroy()
         uvcCameraManager.destroy()
     }
 }

@@ -4,7 +4,6 @@ import android.Manifest
 import android.util.Log
 import android.widget.ImageView
 import androidx.activity.ComponentActivity
-import androidx.camera.view.PreviewView
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -130,7 +129,7 @@ fun OperatorScreen(
     val savePath by viewModel.savePath.collectAsState()
     val availableCameras by viewModel.availableCameras.collectAsState()
     val currentCameraId by viewModel.currentCameraId.collectAsState()
-    val useCamera2Engine by viewModel.useCamera2Engine.collectAsState()
+    // v6: No useCamera2Engine — Camera2 is ALWAYS used
 
     val config = project?.config
     val mode = config?.mode ?: CameraModes.SINGLE
@@ -152,7 +151,7 @@ fun OperatorScreen(
     val minPanelHeight = (screenHeight * 0.15f)
     val maxPanelHeight = (screenHeight * 0.65f)
 
-    // ─── Camera permission + initialization ─────────────────
+    // ─── Camera permission + initialization (v6: Camera2 ONLY) ──
     var localPermissionState by remember {
         mutableStateOf(
             (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PermissionChecker.PERMISSION_GRANTED)
@@ -160,11 +159,7 @@ fun OperatorScreen(
     }
     val effectivePermission = hasCameraPermission || localPermissionState
 
-    // v5 FIX: Create BOTH views simultaneously — no more chicken-and-egg!
-    // PreviewView for CameraX (built-in cameras)
-    // TextureView for Camera2 (USB cameras)
-    // Both exist from the start, only one is visible at a time.
-    var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
+    // v6: Only ONE view needed — TextureView for ALL cameras
     var textureViewRef by remember { mutableStateOf<android.view.TextureView?>(null) }
     var cameraInitDone by remember { mutableStateOf(false) }
 
@@ -178,17 +173,13 @@ fun OperatorScreen(
         }
     }
 
-    // v5 FIX: Initialize camera ONCE when BOTH views are ready.
-    // Don't re-init on recomposition — only init when we have both views
-    // and permission. The LaunchedEffect key is a combination of permission
-    // and view readiness, but we only call initCamera ONCE.
-    LaunchedEffect(effectivePermission, previewViewRef, textureViewRef) {
-        val pv = previewViewRef
+    // v6: Init camera ONCE when TextureView is ready and permission granted
+    LaunchedEffect(effectivePermission, textureViewRef) {
         val tv = textureViewRef
-        if (effectivePermission && pv != null && tv != null && !cameraInitDone) {
+        if (effectivePermission && tv != null && !cameraInitDone) {
             cameraInitDone = true
             try {
-                viewModel.initCamera(lifecycleOwner, pv, tv)
+                viewModel.initCamera(tv)
             } catch (e: SecurityException) {
                 localPermissionState = false
                 cameraInitDone = false
@@ -196,26 +187,6 @@ fun OperatorScreen(
                 Log.e("OperatorScreen", "initCamera failed: ${e.message}")
                 cameraInitDone = false
             }
-        } else if (effectivePermission && pv != null && tv == null && !cameraInitDone) {
-            // TextureView not ready yet — set TextureView when it arrives
-            // But still init with PreviewView first so built-in camera can start
-            // setTextureView will be called separately when TextureView is created
-            if (!cameraInitDone) {
-                cameraInitDone = true
-                try {
-                    viewModel.initCamera(lifecycleOwner, pv)
-                } catch (e: SecurityException) {
-                    localPermissionState = false
-                    cameraInitDone = false
-                } catch (e: Exception) {
-                    cameraInitDone = false
-                }
-            }
-        }
-        // Set TextureView for Camera2 engine when it becomes available
-        // This handles the case where TextureView is created after initCamera
-        if (effectivePermission && tv != null && cameraInitDone) {
-            viewModel.setTextureView(tv)
         }
     }
 
@@ -325,43 +296,12 @@ fun OperatorScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     // ═══════════════════════════════════════════════════
-                    // v5 FIX: DUAL ENGINE — BOTH views created simultaneously!
+                    // v6: SINGLE TextureView for ALL cameras (Camera2 ONLY)
                     //
-                    // OLD (broken): Only ONE view created at a time based on
-                    // useCamera2Engine. When switching engines, the old view
-                    // was destroyed and new one created → chicken-and-egg race.
-                    //
-                    // NEW (v5): BOTH views always exist. Only one is VISIBLE
-                    // at a time (controlled by useCamera2Engine state).
-                    // This means initCamera() ALWAYS has both views available
-                    // and can switch engines instantly without view recreation.
+                    // No more dual-engine, no more PreviewView, no more
+                    // chicken-and-egg. Camera2 handles EVERYTHING via
+                    // TextureView. Switching cameras = close + reopen.
                     // ═══════════════════════════════════════════════════
-
-                    // PreviewView for CameraX engine (built-in cameras)
-                    // Always created — visible only when NOT using USB camera
-                    AndroidView(
-                        factory = { ctx ->
-                            PreviewView(ctx).apply {
-                                layoutParams = android.widget.FrameLayout.LayoutParams(
-                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-                                )
-                                scaleType = PreviewView.ScaleType.FILL_CENTER
-                                previewViewRef = this
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                        update = { view ->
-                            // Show PreviewView only when NOT using USB camera
-                            view.visibility = if (useCamera2Engine)
-                                android.view.View.GONE
-                            else
-                                android.view.View.VISIBLE
-                        }
-                    )
-
-                    // TextureView for Camera2 engine (USB cameras)
-                    // Always created — visible only when using USB camera
                     AndroidView(
                         factory = { ctx ->
                             android.view.TextureView(ctx).apply {
@@ -372,14 +312,7 @@ fun OperatorScreen(
                                 textureViewRef = this
                             }
                         },
-                        modifier = Modifier.fillMaxSize(),
-                        update = { view ->
-                            // Show TextureView only when using USB camera
-                            view.visibility = if (useCamera2Engine)
-                                android.view.View.VISIBLE
-                            else
-                                android.view.View.GONE
-                        }
+                        modifier = Modifier.fillMaxSize()
                     )
 
                     // Gridline Overlay
