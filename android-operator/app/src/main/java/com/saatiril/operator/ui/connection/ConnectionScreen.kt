@@ -556,12 +556,26 @@ private fun ConnectionFormCard(
                 )
             }
 
-            // Connection error from SocketManager (e.g. OkHttp conflict, URL error)
+            // Connection error from SocketManager — show when DISCONNECTED or when
+            // we have a specific error during CONNECTING (not the raw socket error)
             if (connectionError != null && connectionState == ConnectionState.DISCONNECTED) {
-                Text(
-                    connectionError ?: "",
-                    style = TextStyle(color = RED.copy(alpha = 0.8f), fontSize = if (compact) 9.sp else 11.sp)
-                )
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = RED.copy(alpha = 0.1f)),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.WifiOff, contentDescription = null, tint = RED, modifier = Modifier.size(18.dp))
+                        Text(
+                            connectionError ?: "",
+                            style = TextStyle(color = RED, fontSize = if (compact) 9.sp else 11.sp)
+                        )
+                    }
+                }
             }
 
             // Connect Button

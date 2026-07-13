@@ -82,6 +82,9 @@ class SocketManager {
     @Volatile
     private var myChannel: Int = 1
 
+    @Volatile
+    private var connectErrorCount: Int = 0
+
     private var pingIntervalJob: java.util.Timer? = null
 
     // Main thread handler for posting listener notifications
@@ -117,6 +120,7 @@ class SocketManager {
 
         myChannel = channel
         passwordHash = password?.let { sha256(it) }
+        connectErrorCount = 0  // Reset error counter on new connection attempt
         connectionState = ConnectionState.CONNECTING
         notifyListenersOnUiThread("state_changed", connectionState)
 
@@ -223,6 +227,7 @@ class SocketManager {
         s.on(Socket.EVENT_CONNECT) {
             try {
                 Log.i(TAG, "Socket connected")
+                connectErrorCount = 0  // Reset error counter on successful connect
                 connectionState = ConnectionState.CONNECTED
                 notifyListenersOnUiThread("state_changed", connectionState)
                 identify()
@@ -246,11 +251,24 @@ class SocketManager {
             try {
                 val errorMsg = args.getOrElse(0) { "unknown" }
                 Log.e(TAG, "Connection error: $errorMsg")
-                if (connectionState != ConnectionState.AUTHENTICATING &&
+
+                // Count connect errors — if we keep failing, show DISCONNECTED
+                // with a useful error instead of staying stuck at CONNECTING forever.
+                connectErrorCount++
+                if (connectErrorCount >= 3) {
+                    Log.w(TAG, "Connection failed $connectErrorCount times — switching to DISCONNECTED state")
+                    connectionState = ConnectionState.DISCONNECTED
+                    notifyListenersOnUiThread("connection_error",
+                        "Tidak dapat terhubung ke server. Pastikan:\n" +
+                        "1. IP & Port benar\n" +
+                        "2. Server berjalan di jaringan yang sama\n" +
+                        "3. Tidak ada firewall yang memblokir"
+                    )
+                } else if (connectionState != ConnectionState.AUTHENTICATING &&
                     connectionState != ConnectionState.AUTH_FAILED) {
                     connectionState = ConnectionState.CONNECTING
+                    notifyListenersOnUiThread("connection_error", "Mencoba menghubungkan... (percobaan $connectErrorCount)")
                 }
-                notifyListenersOnUiThread("connection_error", errorMsg?.toString() ?: "Connection failed")
                 notifyListenersOnUiThread("state_changed", connectionState)
             } catch (e: Exception) {
                 Log.e(TAG, "Error in CONNECT_ERROR handler: ${e.message}", e)

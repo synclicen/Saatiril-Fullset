@@ -180,3 +180,41 @@ Stage Summary:
 - Photos NOT saved on operator device (matching Electron browser mode)
 - APK available at: android-operator/apk-download/apk-download.zip
 - GitHub: synclicen/Saatiril-Fullset, commit b4c0dff
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix "stuck on Menghubungkan..." — Socket.io version incompatibility between Android APK and server
+
+Work Log:
+- User reported app stuck on "Menghubungkan..." after clicking connect with IP 192.168.203.156:3003
+- Used VLM skill to analyze screenshot: app shows "Menghubungkan..." (Connecting...) with USB capture card detected
+- Investigated connection logic in SocketManager.kt, ConnectionScreen.kt, OperatorViewModel.kt
+- Investigated server code in mini-services/saatiril-socket/index.ts
+- Found CRITICAL ROOT CAUSE: Socket.io version incompatibility
+  - Android APK uses socket.io-client:2.1.0 (Java, Engine.IO v3 protocol)
+  - Server uses socket.io:4.8.3 (Engine.IO v4 protocol)
+  - Server did NOT have allowEIO3:true, so it REJECTED Engine.IO v3 handshakes
+  - curl test confirmed: EIO=3 returned "Transport unknown" BEFORE fix
+  - curl test confirmed: EIO=3 returns valid session AFTER fix
+- Fixed server: Added allowEIO3: true to Socket.io Server options in index.ts
+- Fixed Android SocketManager.kt:
+  - Added connectErrorCount variable to track consecutive connection errors
+  - After 3 failed attempts, state changes to DISCONNECTED with helpful error message
+  - Previously: state stayed at CONNECTING forever (UI showed "Menghubungkan..." indefinitely)
+  - Now: shows clear error "Tidak dapat terhubung ke server" with troubleshooting tips
+  - Error count resets on successful connect and on new connection attempt
+- Fixed ConnectionScreen.kt:
+  - Enhanced error display with Card + WifiOff icon for better visibility
+  - Previously: error text was barely visible plain text
+  - Now: error shows in a red-tinted card with icon
+- Updated version: versionCode=11, versionName=1.0.11-socketio-fix
+- Built APK successfully (20 MB, 1m 57s build time)
+- Verified Engine.IO v3 handshake works after server fix
+
+Stage Summary:
+- ROOT CAUSE: Socket.io client/server protocol incompatibility (EIO v3 vs v4)
+- Fix: Added allowEIO3: true to server config
+- Also improved: connection error UX (no more stuck "Menghubungkan...")
+- APK: /home/z/my-project/saatiril-operator-v11-socketio-fix.apk (20 MB)
+- ZIP: /home/z/my-project/saatiril-operator-v11-socketio-fix.zip (15 MB)
+- Server auto-restarted (bun --hot) with new config

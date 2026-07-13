@@ -71,6 +71,11 @@ const io = new Server(httpServer, {
   pingInterval: PING_INTERVAL,
   pingTimeout: PING_TIMEOUT,
   maxHttpBufferSize: MAX_HTTP_BUFFER,
+  // CRITICAL: Allow Engine.IO v3 clients (Android socket.io-client 2.x)
+  // Without this, the Android APK CANNOT connect because
+  // socket.io-client:2.1.0 uses Engine.IO v3 protocol while
+  // socket.io v4 server defaults to Engine.IO v4.
+  allowEIO3: true,
   // Connection state recovery — if client reconnects within 2min,
   // it gets missed events automatically
   connectionStateRecovery: {
