@@ -1,0 +1,1394 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>SAATIRIL Operator</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #1a0b2e;
+      --panel: #2a164a;
+      --card: #3b2263;
+      --border: #533485;
+      --gold: #d4af37;
+      --muted: #c4b5fd;
+      --danger: #ef4444;
+      --success: #22c55e;
+    }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg); color: #fff; overflow: hidden;
+      height: 100vh; width: 100vw;
+      -webkit-user-select: none; user-select: none;
+    }
+    /* ── Connection Screen ── */
+    .connection-screen {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      height: 100vh; padding: 24px; gap: 20px;
+    }
+    .connection-screen.hidden { display: none; }
+    .logo-text {
+      font-size: 28px; font-weight: 800; letter-spacing: 3px;
+      background: linear-gradient(135deg, var(--gold), #f5e6a3, var(--gold));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .logo-sub { font-size: 11px; color: var(--muted); letter-spacing: 2px; margin-top: 4px; text-align: center; }
+    .form-card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 16px; padding: 24px; width: 100%; max-width: 380px;
+    }
+    .form-group { margin-bottom: 16px; }
+    .form-label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+    .form-input {
+      width: 100%; padding: 12px 14px; border-radius: 10px;
+      background: var(--card); border: 1px solid var(--border);
+      color: #fff; font-size: 15px; outline: none;
+      transition: border-color 0.2s;
+    }
+    .form-input:focus { border-color: var(--gold); }
+    .form-input::placeholder { color: rgba(196,181,253,0.4); }
+    .form-row { display: flex; gap: 12px; }
+    .form-row .form-group { flex: 1; }
+    .channel-btns { display: flex; gap: 8px; }
+    .channel-btn {
+      flex: 1; padding: 10px; border-radius: 10px; font-weight: 700; font-size: 14px;
+      background: var(--card); border: 2px solid var(--border); color: var(--muted);
+      cursor: pointer; transition: all 0.2s;
+    }
+    .channel-btn.active { border-color: var(--gold); color: var(--gold); background: rgba(212,175,55,0.1); }
+    .connect-btn {
+      width: 100%; padding: 14px; border-radius: 12px; font-weight: 700; font-size: 16px;
+      background: linear-gradient(135deg, var(--gold), #c49b2e); color: var(--bg);
+      border: none; cursor: pointer; transition: opacity 0.2s;
+    }
+    .connect-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .connect-btn:active { opacity: 0.8; }
+    .error-card {
+      background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3);
+      border-radius: 10px; padding: 12px; width: 100%; max-width: 380px;
+      color: #fca5a5; font-size: 13px; text-align: center;
+    }
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+      border-radius: 20px; font-size: 11px; font-weight: 600;
+    }
+    .status-badge.connecting { background: rgba(234,179,8,0.15); color: #facc15; }
+    .status-badge.connected { background: rgba(34,197,94,0.15); color: #4ade80; }
+    .status-badge.disconnected { background: rgba(239,68,68,0.15); color: #f87171; }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; }
+    .connecting .status-dot { background: #facc15; animation: pulse 1.5s infinite; }
+    .connected .status-dot { background: #4ade80; }
+    .disconnected .status-dot { background: #f87171; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .usb-status {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 10px 14px; width: 100%; max-width: 380px;
+      display: flex; align-items: center; gap: 10px; font-size: 12px;
+    }
+    .usb-icon { font-size: 18px; }
+    .usb-label { flex: 1; color: var(--muted); }
+    .usb-value { font-weight: 700; color: var(--gold); }
+
+    /* ── Operator Screen ── */
+    .operator-screen { display: none; height: 100vh; flex-direction: column; }
+    .operator-screen.active { display: flex; }
+    
+    /* Top Bar */
+    .top-bar {
+      display: flex; align-items: center; padding: 6px 12px; gap: 8px;
+      background: var(--panel); border-bottom: 1px solid var(--border);
+      min-height: 44px; flex-shrink: 0;
+    }
+    .top-bar-title { font-size: 12px; font-weight: 700; color: var(--gold); letter-spacing: 1px; }
+    .top-bar-sep { width: 1px; height: 20px; background: var(--border); }
+    .camera-selector {
+      display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0;
+    }
+    .camera-select {
+      flex: 1; padding: 4px 8px; border-radius: 6px; font-size: 11px;
+      background: var(--card); border: 1px solid var(--border); color: #fff;
+      outline: none; min-width: 0;
+    }
+    .rescan-btn {
+      padding: 4px 8px; border-radius: 6px; font-size: 10px; font-weight: 700;
+      background: var(--card); border: 1px solid var(--border); color: var(--muted);
+      cursor: pointer; white-space: nowrap;
+    }
+    .rescan-btn:active { background: var(--border); }
+    .latency-badge { font-size: 10px; color: var(--muted); font-weight: 600; }
+    .disconnect-btn {
+      padding: 4px 8px; border-radius: 6px; font-size: 10px; font-weight: 700;
+      background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3);
+      color: #f87171; cursor: pointer;
+    }
+    
+    /* Camera Area */
+    .camera-area {
+      flex: 1; position: relative; background: #000; overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .camera-area video {
+      width: 100%; height: 100%; object-fit: cover;
+    }
+    .camera-area canvas { display: none; }
+    .no-camera-msg {
+      position: absolute; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 8px; z-index: 5;
+    }
+    .no-camera-msg.hidden { display: none; }
+    .no-camera-icon { font-size: 48px; opacity: 0.3; }
+    .no-camera-text { font-size: 14px; color: var(--muted); text-align: center; }
+    
+    /* Gridline overlay */
+    .gridline-overlay {
+      position: absolute; inset: 0; pointer-events: none; z-index: 6;
+    }
+    .gridline-overlay.hidden { display: none; }
+    
+    /* Frame overlay */
+    .frame-overlay {
+      position: absolute; inset: 0; pointer-events: none; z-index: 5;
+      width: 100%; height: 100%; object-fit: fill;
+    }
+    .frame-overlay.hidden { display: none; }
+    
+    /* Timer countdown */
+    .timer-overlay {
+      position: absolute; inset: 0; display: flex; align-items: center;
+      justify-content: center; pointer-events: none; z-index: 15;
+    }
+    .timer-overlay.hidden { display: none; }
+    .timer-circle {
+      width: 80px; height: 80px; border-radius: 50%;
+      background: rgba(26,11,46,0.8); border: 4px solid var(--gold);
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 0 40px rgba(212,175,55,0.4);
+    }
+    .timer-number { font-size: 36px; font-weight: 800; color: var(--gold); }
+    
+    /* Flash effect */
+    .flash-overlay {
+      position: absolute; inset: 0; background: #fff; pointer-events: none;
+      z-index: 20; opacity: 0; transition: opacity 0.1s;
+    }
+    .flash-overlay.active { opacity: 0.8; }
+    
+    /* Target info */
+    .target-info {
+      position: absolute; top: 8px; left: 8px; z-index: 10;
+      background: rgba(26,11,46,0.85); border: 1px solid var(--border);
+      border-radius: 8px; padding: 6px 10px; font-size: 11px;
+    }
+    .target-info.hidden { display: none; }
+    .target-nama { font-weight: 700; color: var(--gold); font-size: 13px; }
+    .target-nim { color: var(--muted); font-size: 10px; }
+    .target-phase { 
+      display: inline-block; padding: 2px 6px; border-radius: 4px;
+      font-size: 9px; font-weight: 700; margin-top: 3px;
+    }
+    .target-phase.ready-1 { background: rgba(234,179,8,0.2); color: #facc15; }
+    .target-phase.ready-2 { background: rgba(168,85,247,0.2); color: #c084fc; }
+    .target-phase.sending { background: rgba(34,197,94,0.2); color: #4ade80; }
+    .target-phase.standby { background: rgba(196,181,253,0.15); color: var(--muted); }
+    
+    /* Photo progress dots */
+    .photo-dots {
+      position: absolute; top: 8px; right: 8px; z-index: 10;
+      display: flex; gap: 4px;
+    }
+    .photo-dots.hidden { display: none; }
+    .photo-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--border);
+    }
+    .photo-dot.done { background: var(--gold); }
+    .photo-dot.current { background: #facc15; animation: pulse 1s infinite; }
+
+    /* ── Bottom Panel ── */
+    .bottom-panel {
+      flex-shrink: 0; background: var(--panel); border-top: 1px solid var(--border);
+      padding: 8px 12px; display: flex; flex-direction: column; gap: 8px;
+    }
+    
+    /* Capture controls row */
+    .capture-row { display: flex; align-items: center; gap: 8px; }
+    .shutter-mode-btns { display: flex; gap: 4px; }
+    .shutter-btn {
+      padding: 5px 8px; border-radius: 6px; font-size: 10px; font-weight: 700;
+      background: var(--card); border: 1px solid var(--border); color: var(--muted);
+      cursor: pointer;
+    }
+    .shutter-btn.active { border-color: var(--gold); color: var(--gold); background: rgba(212,175,55,0.1); }
+    
+    /* Capture button */
+    .capture-btn {
+      width: 56px; height: 56px; border-radius: 50%; border: 3px solid var(--gold);
+      background: transparent; cursor: pointer; position: relative;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.15s; margin: 0 auto;
+    }
+    .capture-btn:active { transform: scale(0.92); }
+    .capture-btn.disabled { border-color: var(--border); opacity: 0.4; cursor: not-allowed; }
+    .capture-btn-inner {
+      width: 42px; height: 42px; border-radius: 50%;
+      background: var(--gold); transition: all 0.15s;
+    }
+    .capture-btn.disabled .capture-btn-inner { background: var(--border); }
+    .capture-btn.sending .capture-btn-inner { background: var(--success); }
+    
+    /* Quick toggles row */
+    .toggle-row { display: flex; gap: 6px; justify-content: center; }
+    .toggle-btn {
+      padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 600;
+      background: var(--card); border: 1px solid var(--border); color: var(--muted);
+      cursor: pointer;
+    }
+    .toggle-btn.active { border-color: var(--gold); color: var(--gold); }
+    
+    /* Queue list */
+    .queue-section { 
+      max-height: 120px; overflow-y: auto; 
+      background: var(--card); border-radius: 8px; border: 1px solid var(--border);
+    }
+    .queue-header { 
+      padding: 6px 10px; font-size: 10px; font-weight: 700; color: var(--muted);
+      border-bottom: 1px solid var(--border); position: sticky; top: 0;
+      background: var(--card);
+    }
+    .queue-item {
+      padding: 5px 10px; font-size: 11px; border-bottom: 1px solid rgba(83,52,133,0.3);
+      display: flex; align-items: center; gap: 8px; cursor: pointer;
+    }
+    .queue-item:active { background: rgba(212,175,55,0.1); }
+    .queue-item.active-item { background: rgba(212,175,55,0.1); }
+    .queue-item .q-nama { flex: 1; font-weight: 600; color: #fff; }
+    .queue-item .q-nim { font-size: 9px; color: var(--muted); }
+    .queue-item .q-status { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; }
+    .queue-item .q-status.pending { background: rgba(196,181,253,0.15); color: var(--muted); }
+    .queue-item .q-status.active { background: rgba(212,175,55,0.2); color: var(--gold); }
+    .queue-item .q-status.done { background: rgba(34,197,94,0.15); color: #4ade80; }
+
+    /* Session password prompt */
+    .password-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+      display: flex; align-items: center; justify-content: center; z-index: 100;
+    }
+    .password-overlay.hidden { display: none; }
+    .password-card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 16px; padding: 24px; width: 90%; max-width: 320px;
+    }
+    .password-title { font-size: 16px; font-weight: 700; color: var(--gold); margin-bottom: 8px; text-align: center; }
+    .password-desc { font-size: 12px; color: var(--muted); text-align: center; margin-bottom: 16px; }
+    
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- CONNECTION SCREEN                                                          -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="connectionScreen" class="connection-screen">
+  <div>
+    <div class="logo-text">SAATIRIL</div>
+    <div class="logo-sub">SISTEM AUTO TRACK INPUT, RAW INTO LIVE<br>OPERATOR KAMERA</div>
+  </div>
+  
+  <div class="form-card">
+    <div class="form-group">
+      <label class="form-label">Server IP</label>
+      <input id="serverIp" class="form-input" type="text" placeholder="192.168.1.100" value="">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Port</label>
+        <input id="serverPort" class="form-input" type="text" placeholder="3000" value="3000">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Channel</label>
+        <div class="channel-btns">
+          <button class="channel-btn active" data-ch="1" onclick="selectChannel(1)">Ch.1</button>
+          <button class="channel-btn" data-ch="2" onclick="selectChannel(2)">Ch.2</button>
+        </div>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Password Sesi (opsional)</label>
+      <input id="sessionPassword" class="form-input" type="password" placeholder="Kosongkan jika tidak ada">
+    </div>
+    <button id="connectBtn" class="connect-btn" onclick="handleConnect()">Hubungkan</button>
+  </div>
+  
+  <div id="connectionStatus" class="status-badge connecting" style="display:none">
+    <div class="status-dot"></div>
+    <span>Menghubungkan...</span>
+  </div>
+  
+  <div id="errorCard" class="error-card" style="display:none"></div>
+  
+  <div id="usbStatus" class="usb-status" style="display:none">
+    <span class="usb-icon">📷</span>
+    <span class="usb-label">USB Capture Card:</span>
+    <span class="usb-value" id="usbValue">Memindai...</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- PASSWORD PROMPT OVERLAY                                                    -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="passwordOverlay" class="password-overlay hidden">
+  <div class="password-card">
+    <div class="password-title">🔒 Password Diperlukan</div>
+    <div class="password-desc">Sesi ini dilindungi password. Masukkan password untuk melanjutkan.</div>
+    <div class="form-group">
+      <input id="authPassword" class="form-input" type="password" placeholder="Password sesi">
+    </div>
+    <button class="connect-btn" onclick="handleAuthSubmit()">Lanjutkan</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- OPERATOR SCREEN                                                            -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="operatorScreen" class="operator-screen">
+  <!-- Top Bar -->
+  <div class="top-bar">
+    <span class="top-bar-title">SAATIRIL</span>
+    <div class="top-bar-sep"></div>
+    <div class="camera-selector">
+      <select id="cameraSelect" class="camera-select" onchange="handleCameraChange()">
+        <option value="">Memuat kamera...</option>
+      </select>
+      <button class="rescan-btn" onclick="rescanCameras()">🔄 Pindai</button>
+    </div>
+    <span id="latencyBadge" class="latency-badge">--ms</span>
+    <button class="disconnect-btn" onclick="handleDisconnect()">✕</button>
+  </div>
+  
+  <!-- Camera Area -->
+  <div class="camera-area">
+    <video id="videoPreview" autoplay playsinline muted></video>
+    <canvas id="captureCanvas"></canvas>
+    
+    <div id="noCameraMsg" class="no-camera-msg">
+      <div class="no-camera-icon">📷</div>
+      <div class="no-camera-text">Kamera belum terhubung<br>Pilih kamera di atas</div>
+    </div>
+    
+    <!-- Gridline overlay -->
+    <svg id="gridlineOverlay" class="gridline-overlay hidden" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <!-- Filled dynamically -->
+    </svg>
+    
+    <!-- Frame overlay -->
+    <img id="frameOverlay" class="frame-overlay hidden" alt="">
+    
+    <!-- Timer -->
+    <div id="timerOverlay" class="timer-overlay hidden">
+      <div class="timer-circle">
+        <span id="timerNumber" class="timer-number">3</span>
+      </div>
+    </div>
+    
+    <!-- Flash -->
+    <div id="flashOverlay" class="flash-overlay"></div>
+    
+    <!-- Target info -->
+    <div id="targetInfo" class="target-info hidden">
+      <div id="targetNama" class="target-nama">-</div>
+      <div id="targetNim" class="target-nim">-</div>
+      <div id="targetPhase" class="target-phase standby">STANDBY</div>
+    </div>
+    
+    <!-- Photo progress dots -->
+    <div id="photoDots" class="photo-dots hidden">
+      <div id="dot1" class="photo-dot"></div>
+      <div id="dot2" class="photo-dot"></div>
+    </div>
+  </div>
+  
+  <!-- Bottom Panel -->
+  <div class="bottom-panel">
+    <!-- Capture row -->
+    <div class="capture-row">
+      <div class="shutter-mode-btns">
+        <button class="shutter-btn active" data-mode="manual" onclick="setShutterMode('manual')">📷</button>
+        <button class="shutter-btn" data-mode="timer-3" onclick="setShutterMode('timer-3')">3s</button>
+        <button class="shutter-btn" data-mode="timer-5" onclick="setShutterMode('timer-5')">5s</button>
+        <button class="shutter-btn" data-mode="timer-10" onclick="setShutterMode('timer-10')">10s</button>
+      </div>
+      <button id="captureBtn" class="capture-btn disabled" onclick="handleCaptureClick()">
+        <div class="capture-btn-inner"></div>
+      </button>
+      <div class="shutter-mode-btns">
+        <button class="toggle-btn" id="gridToggle" onclick="toggleGridline()">📐 Grid</button>
+        <button class="toggle-btn" id="mirrorToggle" onclick="toggleMirror()">↔️ Mirror</button>
+      </div>
+    </div>
+    
+    <!-- Queue -->
+    <div id="queueSection" class="queue-section">
+      <div class="queue-header">📋 Antrian Peserta</div>
+      <div id="queueList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Socket.io client -->
+<script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// SAATIRIL Operator — Chrome Web App for USB Capture Card Camera
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── State ────────────────────────────────────────────────────────────────
+let socket = null
+let myChannel = 1
+let connectionState = 'disconnected' // disconnected | connecting | connected | authenticated
+let sessionPasswordHash = null
+
+// Camera
+let currentStream = null
+let selectedDeviceId = null
+let videoDevices = []
+let cameraAvailable = false
+let isMirrored = true // Mirror by default for selfie view
+
+// Capture
+let capturePhase = 'standby' // standby | ready-1 | ready-2 | sending
+let currentTarget = null
+let capturedPhotos = [] // { label: string, dataUrl: string }
+let shutterMode = 'manual'
+let timerCountdown = 0
+let timerInterval = null
+
+// Project data
+let currentProject = null
+let frameData = null
+
+// Gridline
+let gridlineEnabled = false
+let gridlineType = 'thirds' // thirds | quarters | crosshair | diagonal
+
+// Latency
+let latencyMs = 0
+let pingInterval = null
+
+// USB detection
+let usbCameraDetected = false
+
+// ── SHA-256 Hash ─────────────────────────────────────────────────────────
+async function sha256(text) {
+  const encoder = new TextEncoder()
+  const data = encoder.encode(text)
+  if (crypto.subtle) {
+    try {
+      const buf = await crypto.subtle.digest('SHA-256', data)
+      return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
+    } catch(e) {}
+  }
+  // Pure JS fallback for HTTP contexts
+  let h0=0x6a09e667, h1=0xbb67ae85, h2=0x3c6ef372, h3=0xa54ff53a
+  let h4=0x510e527f, h5=0x9b05688c, h6=0x1f83d9ab, h7=0x5be0cd19
+  const w = new Uint32Array(64)
+  const padded = new Uint8Array(Math.ceil((data.length+9)/64)*64)
+  padded.set(data); padded[data.length]=0x80
+  const dv=new DataView(padded.buffer)
+  dv.setUint32(padded.length-8, data.length*8, false)
+  for(let o=0;o<padded.length;o+=64){
+    for(let i=0;i<16;i++) w[i]=dv.getUint32(o+i*4,false)
+    for(let i=16;i<64;i++){const s=w[i-15],t=w[i-2];w[i]=(rotr(s,7)^rotr(s,18)^(s>>>3))+w[i-7]+(rotr(t,17)^rotr(t,19)^(t>>>10))+w[i-16]|0}
+    let a=h0,b=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h_=h7
+    for(let i=0;i<64;i++){const S1=rotr(e,6)^rotr(e,11)^rotr(e,25),ch=(e&f)^(~e&g),temp1=h_+S1+ch+0x428a2f98+i+w[i]|0;const S0=rotr(a,2)^rotr(a,13)^rotr(a,22),maj=(a&b)^(a&c)^(b&c),temp2=S0+maj;h_=g;g=f;f=e;e=d+temp1|0;d=c;c=b;b=a;a=temp1+temp2|0}
+    h0=h0+a|0;h1=h1+b|0;h2=h2+c|0;h3=h3+d|0;h4=h4+e|0;h5=h5+f|0;h6=h6+g|0;h7=h7+h_|0
+  }
+  function rotr(x,n){return(x>>>n)|(x<<32-n)}
+  return [h0,h1,h2,h3,h4,h5,h6,h7].map(h=>(h>>>0).toString(16).padStart(8,'0')).join('')
+}
+
+// ── Camera Functions ─────────────────────────────────────────────────────
+async function enumerateVideoDevices() {
+  try {
+    // Request temporary access first if no permission yet (needed for device labels)
+    if (!currentStream) {
+      try {
+        const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        tempStream.getTracks().forEach(t => t.stop())
+      } catch(e) {
+        console.warn('[OP] Initial camera permission denied or no camera:', e)
+      }
+    }
+    
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    videoDevices = devices.filter(d => d.kind === 'videoinput')
+    
+    console.log('[OP] Video devices found:', videoDevices.map(d => d.label || d.deviceId.slice(0,8)))
+    
+    // Detect USB cameras by label keywords
+    usbCameraDetected = videoDevices.some(d => {
+      const label = (d.label || '').toLowerCase()
+      return label.includes('usb') || label.includes('capture') || label.includes('uvc') || 
+             label.includes('external') || label.includes('video capture') || label.includes('hdmi')
+    })
+    
+    // Update USB status display
+    const usbEl = document.getElementById('usbStatus')
+    const usbVal = document.getElementById('usbValue')
+    if (videoDevices.length > 0) {
+      usbEl.style.display = 'flex'
+      if (usbCameraDetected) {
+        usbVal.textContent = '✅ Terdeteksi'
+        usbVal.style.color = 'var(--success)'
+      } else {
+        usbVal.textContent = `${videoDevices.length} kamera (tanpa USB)`
+        usbVal.style.color = 'var(--muted)'
+      }
+    }
+    
+    // Update camera selector
+    updateCameraSelector()
+    
+    // Auto-select USB camera if available and none selected
+    if (usbCameraDetected && !selectedDeviceId) {
+      const usbDevice = videoDevices.find(d => {
+        const label = (d.label || '').toLowerCase()
+        return label.includes('usb') || label.includes('capture') || label.includes('uvc') || 
+               label.includes('external') || label.includes('video capture') || label.includes('hdmi')
+      })
+      if (usbDevice) {
+        selectedDeviceId = usbDevice.deviceId
+        startCamera(usbDevice.deviceId)
+      }
+    }
+    
+    return videoDevices
+  } catch(err) {
+    console.error('[OP] enumerateVideoDevices failed:', err)
+    return []
+  }
+}
+
+function updateCameraSelector() {
+  const select = document.getElementById('cameraSelect')
+  select.innerHTML = ''
+  
+  if (videoDevices.length === 0) {
+    select.innerHTML = '<option value="">Tidak ada kamera</option>'
+    return
+  }
+  
+  videoDevices.forEach((d, i) => {
+    const opt = document.createElement('option')
+    opt.value = d.deviceId
+    const label = d.label || `Kamera ${i+1}`
+    // Mark USB cameras
+    const isUSB = label.toLowerCase().includes('usb') || label.toLowerCase().includes('capture') ||
+                  label.toLowerCase().includes('uvc') || label.toLowerCase().includes('external') ||
+                  label.toLowerCase().includes('video capture') || label.toLowerCase().includes('hdmi')
+    opt.textContent = isUSB ? `🔌 ${label}` : `📱 ${label}`
+    if (d.deviceId === selectedDeviceId) opt.selected = true
+    select.appendChild(opt)
+  })
+}
+
+async function startCamera(deviceId) {
+  console.log('[OP] Starting camera, deviceId:', deviceId?.slice(0,8) || 'none')
+  
+  // Stop existing stream
+  if (currentStream) {
+    currentStream.getTracks().forEach(t => t.stop())
+    currentStream = null
+  }
+  
+  const video = document.getElementById('videoPreview')
+  
+  try {
+    let constraints
+    if (deviceId) {
+      // Specific device — use exact deviceId to guarantee we get THAT camera
+      constraints = {
+        video: { 
+          deviceId: { exact: deviceId }, 
+          width: { ideal: 1920 }, height: { ideal: 1080 } 
+        },
+        audio: false
+      }
+    } else {
+      // Default — prefer environment (back) camera on mobile
+      constraints = {
+        video: { 
+          facingMode: 'environment',
+          width: { ideal: 1920 }, height: { ideal: 1080 } 
+        },
+        audio: false
+      }
+    }
+    
+    console.log('[OP] getUserMedia constraints:', JSON.stringify(constraints))
+    const stream = await navigator.mediaDevices.getUserMedia(constraints)
+    currentStream = stream
+    selectedDeviceId = deviceId || stream.getVideoTracks()[0]?.getSettings()?.deviceId
+    cameraAvailable = true
+    
+    // Apply mirror if needed
+    video.style.transform = isMirrored ? 'scaleX(-1)' : 'none'
+    video.srcObject = stream
+    
+    // Log which camera we actually got
+    const track = stream.getVideoTracks()[0]
+    console.log('[OP] Camera stream active:', {
+      label: track.label,
+      deviceId: track.getSettings()?.deviceId?.slice(0,8),
+      width: track.getSettings()?.width,
+      height: track.getSettings()?.height,
+      facingMode: track.getSettings()?.facingMode
+    })
+    
+    // Hide no-camera message
+    document.getElementById('noCameraMsg').classList.add('hidden')
+    
+    // Update selector to show current device
+    updateCameraSelector()
+    
+  } catch(err) {
+    console.error('[OP] Camera start failed:', err)
+    cameraAvailable = false
+    document.getElementById('noCameraMsg').classList.remove('hidden')
+    
+    // If exact deviceId failed, try without exact
+    if (deviceId) {
+      console.log('[OP] Retrying without exact deviceId...')
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, 
+          audio: false 
+        })
+        currentStream = stream
+        cameraAvailable = true
+        video.srcObject = stream
+        selectedDeviceId = stream.getVideoTracks()[0]?.getSettings()?.deviceId
+        document.getElementById('noCameraMsg').classList.add('hidden')
+        updateCameraSelector()
+      } catch(err2) {
+        console.error('[OP] Camera fallback also failed:', err2)
+      }
+    }
+  }
+}
+
+function handleCameraChange() {
+  const select = document.getElementById('cameraSelect')
+  const deviceId = select.value
+  if (deviceId && deviceId !== selectedDeviceId) {
+    selectedDeviceId = deviceId
+    startCamera(deviceId)
+  }
+}
+
+async function rescanCameras() {
+  console.log('[OP] Rescanning cameras...')
+  await enumerateVideoDevices()
+  // If we had a selected device, restart with it
+  if (selectedDeviceId) {
+    startCamera(selectedDeviceId)
+  } else if (videoDevices.length > 0) {
+    // Auto-select USB camera or first camera
+    const usbDevice = videoDevices.find(d => {
+      const label = (d.label || '').toLowerCase()
+      return label.includes('usb') || label.includes('capture') || label.includes('uvc') || 
+             label.includes('external') || label.includes('video capture') || label.includes('hdmi')
+    })
+    const device = usbDevice || videoDevices[0]
+    selectedDeviceId = device.deviceId
+    startCamera(device.deviceId)
+  }
+}
+
+function toggleMirror() {
+  isMirrored = !isMirrored
+  const video = document.getElementById('videoPreview')
+  video.style.transform = isMirrored ? 'scaleX(-1)' : 'none'
+  document.getElementById('mirrorToggle').classList.toggle('active', isMirrored)
+}
+
+// ── Device change listener (USB hot-plug) ────────────────────────────────
+navigator.mediaDevices?.addEventListener('devicechange', async () => {
+  console.log('[OP] Device change detected — rescanning...')
+  await enumerateVideoDevices()
+  // Auto-switch to newly connected USB camera
+  const usbDevice = videoDevices.find(d => {
+    const label = (d.label || '').toLowerCase()
+    return label.includes('usb') || label.includes('capture') || label.includes('uvc') || 
+           label.includes('external') || label.includes('video capture') || label.includes('hdmi')
+  })
+  if (usbDevice && usbDevice.deviceId !== selectedDeviceId) {
+    console.log('[OP] USB camera detected — auto-switching to:', usbDevice.label)
+    selectedDeviceId = usbDevice.deviceId
+    startCamera(usbDevice.deviceId)
+  }
+})
+
+// ── Connection Functions ─────────────────────────────────────────────────
+function selectChannel(ch) {
+  myChannel = ch
+  document.querySelectorAll('.channel-btn').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.ch) === ch)
+  })
+}
+
+function setConnectionState(state, errorMsg) {
+  connectionState = state
+  const badge = document.getElementById('connectionStatus')
+  const errorCard = document.getElementById('errorCard')
+  const connectBtn = document.getElementById('connectBtn')
+  
+  badge.style.display = 'inline-flex'
+  badge.className = 'status-badge ' + state
+  
+  if (state === 'connecting') {
+    badge.innerHTML = '<div class="status-dot"></div><span>Menghubungkan...</span>'
+    connectBtn.disabled = true
+    connectBtn.textContent = 'Menghubungkan...'
+    errorCard.style.display = 'none'
+  } else if (state === 'connected') {
+    badge.innerHTML = '<div class="status-dot"></div><span>Terautentikasi ✓</span>'
+    badge.className = 'status-badge connected'
+    connectBtn.disabled = false
+    connectBtn.textContent = 'Hubungkan'
+  } else if (state === 'disconnected') {
+    badge.innerHTML = '<div class="status-dot"></div><span>Terputus</span>'
+    connectBtn.disabled = false
+    connectBtn.textContent = 'Hubungkan'
+    if (errorMsg) {
+      errorCard.textContent = errorMsg
+      errorCard.style.display = 'block'
+    }
+  }
+}
+
+async function handleConnect() {
+  const ip = document.getElementById('serverIp').value.trim()
+  const port = document.getElementById('serverPort').value.trim() || '3000'
+  const password = document.getElementById('sessionPassword').value
+  
+  if (!ip) {
+    document.getElementById('errorCard').textContent = 'Masukkan alamat IP server'
+    document.getElementById('errorCard').style.display = 'block'
+    return
+  }
+  
+  // Save IP for later
+  localStorage.setItem('saatiril_server_ip', ip)
+  localStorage.setItem('saatiril_server_port', port)
+  
+  // Hash password if provided
+  if (password) {
+    sessionPasswordHash = await sha256(password)
+  }
+  
+  setConnectionState('connecting')
+  connectToServer(ip, port)
+}
+
+function connectToServer(ip, port) {
+  if (socket) {
+    socket.disconnect()
+    socket = null
+  }
+  
+  const serverUrl = `http://${ip}:${port}`
+  console.log('[OP] Connecting to:', serverUrl)
+  
+  socket = io(serverUrl, {
+    path: '/',
+    transports: ['websocket', 'polling'],
+    upgrade: true,
+    reconnection: true,
+    reconnectionAttempts: 10,
+    reconnectionDelay: 2000,
+    timeout: 10000,
+  })
+  
+  socket.on('connect', () => {
+    console.log('[OP] Socket connected:', socket.id)
+    // Identify ourselves
+    socket.emit('identify', {
+      role: 'operator',
+      channel: myChannel,
+      sessionPasswordHash: sessionPasswordHash
+    })
+  })
+  
+  socket.on('auth-requirement', (data) => {
+    console.log('[OP] Auth requirement:', data)
+    if (data.passwordRequired && !sessionPasswordHash) {
+      // Show password prompt
+      document.getElementById('passwordOverlay').classList.remove('hidden')
+    }
+  })
+  
+  socket.on('auth-success', (data) => {
+    console.log('[OP] Auth success:', data)
+    setConnectionState('connected')
+    document.getElementById('passwordOverlay').classList.add('hidden')
+    
+    // Transition to operator screen
+    showOperatorScreen()
+    
+    // Request current state from admin
+    socket.emit('lan-message', { event: 'REQUEST_STATE', data: { channel: myChannel } })
+    
+    // Start latency ping
+    startLatencyPing()
+  })
+  
+  socket.on('auth-failed', (data) => {
+    console.log('[OP] Auth failed:', data)
+    document.getElementById('passwordOverlay').classList.remove('hidden')
+  })
+  
+  socket.on('lan-message', (payload) => {
+    handleLanMessage(payload)
+  })
+  
+  socket.on('disconnect', (reason) => {
+    console.log('[OP] Socket disconnected:', reason)
+    setConnectionState('disconnected', 'Koneksi terputus: ' + reason)
+    stopLatencyPing()
+  })
+  
+  socket.on('connect_error', (err) => {
+    console.error('[OP] Connection error:', err.message)
+    setConnectionState('disconnected', 'Gagal terhubung: ' + err.message)
+  })
+}
+
+async function handleAuthSubmit() {
+  const password = document.getElementById('authPassword').value
+  if (!password) return
+  sessionPasswordHash = await sha256(password)
+  socket.emit('identify', {
+    role: 'operator',
+    channel: myChannel,
+    sessionPasswordHash: sessionPasswordHash
+  })
+}
+
+function handleDisconnect() {
+  if (socket) {
+    socket.disconnect()
+    socket = null
+  }
+  stopLatencyPing()
+  document.getElementById('connectionScreen').classList.remove('hidden')
+  document.getElementById('operatorScreen').classList.remove('active')
+  setConnectionState('disconnected')
+}
+
+// ── Screen Transitions ───────────────────────────────────────────────────
+function showOperatorScreen() {
+  document.getElementById('connectionScreen').classList.add('hidden')
+  document.getElementById('operatorScreen').classList.add('active')
+  
+  // Start camera if not already
+  if (!cameraAvailable) {
+    enumerateVideoDevices().then(() => {
+      if (videoDevices.length > 0 && !selectedDeviceId) {
+        // Prefer USB camera, then first available
+        const usbDevice = videoDevices.find(d => {
+          const label = (d.label || '').toLowerCase()
+          return label.includes('usb') || label.includes('capture') || label.includes('uvc') || 
+                 label.includes('external') || label.includes('video capture') || label.includes('hdmi')
+        })
+        const device = usbDevice || videoDevices[0]
+        selectedDeviceId = device.deviceId
+        startCamera(device.deviceId)
+      }
+    })
+  }
+}
+
+// ── LAN Message Handler ──────────────────────────────────────────────────
+function handleLanMessage(payload) {
+  if (!payload || !payload.event) return
+  
+  switch (payload.event) {
+    case 'MC_CALL': {
+      const data = payload.data
+      console.log('[OP] MC_CALL received:', data)
+      if (data.channel === myChannel) {
+        currentTarget = data.student || data
+        capturedPhotos = []
+        capturePhase = 'ready-1'
+        updateTargetDisplay()
+        updateCaptureButton()
+      }
+      break
+    }
+    
+    case 'STUDENT_RESET': {
+      const data = payload.data
+      console.log('[OP] STUDENT_RESET received:', data)
+      if (data.channel === myChannel || (currentTarget && currentTarget.id === data.studentId)) {
+        currentTarget = null
+        capturedPhotos = []
+        capturePhase = 'standby'
+        updateTargetDisplay()
+        updateCaptureButton()
+      }
+      break
+    }
+    
+    case 'SYNC_DB': {
+      const data = payload.data
+      console.log('[OP] SYNC_DB received, project:', data?.name)
+      if (data) {
+        currentProject = data
+        if (data.config?.frame) {
+          frameData = data.config.frame
+          const frameImg = document.getElementById('frameOverlay')
+          if (frameData && frameData !== '__FRAME_SAVED__') {
+            frameImg.src = frameData
+            frameImg.classList.remove('hidden')
+          } else {
+            frameImg.classList.add('hidden')
+          }
+        }
+        updateQueueList()
+        
+        // Recover target if there's an active student on our channel
+        const activeStudent = data.database?.find(s => 
+          s.assignedChannel === myChannel && 
+          (s.status === `active_${myChannel}` || s.status?.startsWith('active'))
+        )
+        if (activeStudent && !currentTarget) {
+          currentTarget = activeStudent
+          capturePhase = capturedPhotos.length === 0 ? 'ready-1' : 
+                         capturedPhotos.length === 1 ? 'ready-2' : 'standby'
+          updateTargetDisplay()
+          updateCaptureButton()
+        }
+      }
+      break
+    }
+    
+    case 'PHOTOS_SAVED': {
+      console.log('[OP] PHOTOS_SAVED ack received')
+      break
+    }
+    
+    case 'SERVER_SHUTDOWN': {
+      console.log('[OP] Server shutting down')
+      handleDisconnect()
+      break
+    }
+  }
+}
+
+// ── Target Display ───────────────────────────────────────────────────────
+function updateTargetDisplay() {
+  const info = document.getElementById('targetInfo')
+  const dots = document.getElementById('photoDots')
+  const isPhotoshoot = currentProject?.config?.mode?.includes('photoshoot')
+  
+  if (currentTarget && capturePhase !== 'standby') {
+    info.classList.remove('hidden')
+    document.getElementById('targetNama').textContent = currentTarget.nama || '-'
+    document.getElementById('targetNim').textContent = currentTarget.nim || '-'
+    const phaseEl = document.getElementById('targetPhase')
+    phaseEl.textContent = capturePhase === 'ready-1' ? 'SIAP FOTO 1' : 
+                          capturePhase === 'ready-2' ? 'SIAP FOTO 2' : 
+                          capturePhase === 'sending' ? 'MENGIRIM...' : 'STANDBY'
+    phaseEl.className = 'target-phase ' + capturePhase
+  } else {
+    info.classList.add('hidden')
+  }
+  
+  // Photo progress dots (only for standard dual mode)
+  if (currentTarget && !isPhotoshoot && capturePhase !== 'standby') {
+    dots.classList.remove('hidden')
+    document.getElementById('dot1').className = 'photo-dot' + (capturedPhotos.length >= 1 ? ' done' : (capturePhase === 'ready-1' ? ' current' : ''))
+    document.getElementById('dot2').className = 'photo-dot' + (capturedPhotos.length >= 2 ? ' done' : (capturePhase === 'ready-2' ? ' current' : ''))
+  } else {
+    dots.classList.add('hidden')
+  }
+}
+
+// ── Capture Logic ────────────────────────────────────────────────────────
+function updateCaptureButton() {
+  const btn = document.getElementById('captureBtn')
+  const canCapture = currentTarget && (capturePhase === 'ready-1' || capturePhase === 'ready-2')
+  btn.classList.toggle('disabled', !canCapture)
+  btn.classList.toggle('sending', capturePhase === 'sending')
+}
+
+function handleCaptureClick() {
+  if (!currentTarget) return
+  if (capturePhase !== 'ready-1' && capturePhase !== 'ready-2') return
+  
+  if (shutterMode.startsWith('timer-')) {
+    // Start/cancel timer
+    if (timerInterval) {
+      cancelTimer()
+    } else {
+      startTimer(parseInt(shutterMode.split('-')[1]))
+    }
+  } else {
+    // Manual — capture immediately
+    doCapture()
+  }
+}
+
+function startTimer(seconds) {
+  timerCountdown = seconds
+  document.getElementById('timerOverlay').classList.remove('hidden')
+  document.getElementById('timerNumber').textContent = seconds
+  
+  timerInterval = setInterval(() => {
+    timerCountdown--
+    if (timerCountdown <= 0) {
+      cancelTimer()
+      doCapture()
+    } else {
+      document.getElementById('timerNumber').textContent = timerCountdown
+    }
+  }, 1000)
+}
+
+function cancelTimer() {
+  if (timerInterval) {
+    clearInterval(timerInterval)
+    timerInterval = null
+  }
+  timerCountdown = 0
+  document.getElementById('timerOverlay').classList.add('hidden')
+}
+
+function doCapture() {
+  const canvas = document.getElementById('captureCanvas')
+  const video = document.getElementById('videoPreview')
+  
+  if (!video || video.readyState < 2) {
+    console.warn('[OP] Video not ready for capture')
+    return
+  }
+  
+  // Determine aspect ratio from project config
+  const ratioMap = { '4:3': 4/3, '16:9': 16/9, '3:4': 3/4, '2:3': 2/3, '1:1': 1 }
+  const ratio = ratioMap[currentProject?.config?.ratio] || 4/3
+  
+  const targetWidth = 1920
+  const targetHeight = Math.round(targetWidth / ratio)
+  canvas.width = targetWidth
+  canvas.height = targetHeight
+  
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#000'
+  ctx.fillRect(0, 0, targetWidth, targetHeight)
+  
+  // Draw video with proper cropping
+  const vw = video.videoWidth
+  const vh = video.videoHeight
+  const videoRatio = vw / vh
+  let sx = 0, sy = 0, sw = vw, sh = vh
+  if (videoRatio > ratio) {
+    sw = vh * ratio
+    sx = (vw - sw) / 2
+  } else {
+    sh = vw / ratio
+    sy = (vh - sh) / 2
+  }
+  
+  // Apply mirror if needed (canvas capture is not mirrored automatically)
+  if (isMirrored) {
+    ctx.translate(targetWidth, 0)
+    ctx.scale(-1, 1)
+  }
+  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight)
+  if (isMirrored) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+  }
+  
+  // Draw frame overlay
+  const frameImg = document.getElementById('frameOverlay')
+  if (frameImg && frameImg.src && !frameImg.classList.contains('hidden') && frameImg.complete) {
+    ctx.drawImage(frameImg, 0, 0, targetWidth, targetHeight)
+  }
+  
+  // Get JPEG data
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.95)
+  
+  // Flash effect
+  triggerFlash()
+  
+  // Determine photo label
+  const isPhotoshoot = currentProject?.config?.mode?.includes('photoshoot')
+  const label = isPhotoshoot ? 'photo' : 
+                (capturePhase === 'ready-1' ? 'toga' : 'ijazah')
+  
+  capturedPhotos.push({ label, dataUrl })
+  
+  const isDualMode = !isPhotoshoot && currentProject?.config?.mode?.includes('dual') !== false
+  
+  if (isDualMode && capturePhase === 'ready-1') {
+    // First photo done, wait for second
+    capturePhase = 'ready-2'
+    updateTargetDisplay()
+    updateCaptureButton()
+  } else {
+    // All photos captured — send
+    capturePhase = 'sending'
+    updateTargetDisplay()
+    updateCaptureButton()
+    sendPhotos()
+  }
+}
+
+function triggerFlash() {
+  const flash = document.getElementById('flashOverlay')
+  flash.classList.add('active')
+  setTimeout(() => flash.classList.remove('active'), 150)
+}
+
+async function sendPhotos() {
+  if (!socket || !currentTarget) return
+  
+  const nim = currentTarget.nim || currentTarget.id
+  const nama = currentTarget.nama || 'Unknown'
+  const isPhotoshoot = currentProject?.config?.mode?.includes('photoshoot')
+  const channel = myChannel
+  
+  // Build filenames
+  const photos = capturedPhotos.map((p, i) => {
+    let filename
+    if (isPhotoshoot) {
+      filename = channel === 1 ? `${nim}_${nama}.jpg` : `${nim}_${nama}_Ch${channel}.jpg`
+    } else {
+      const suffix = p.label === 'toga' ? '1_Toga' : '2_Ijazah'
+      filename = `${nim}_${nama}_${suffix}.jpg`
+    }
+    return { filename, data: p.dataUrl, label: p.label }
+  })
+  
+  console.log('[OP] Sending photos:', photos.map(p => p.filename))
+  
+  // 1. IMMEDIATE: Send STUDENT_DONE so MC can call next student
+  socket.emit('lan-message', {
+    event: 'STUDENT_DONE',
+    data: { 
+      studentId: currentTarget.id, 
+      channel: channel,
+      timestamp: Date.now()
+    }
+  })
+  
+  // 2. Send PHOTOS_SAVED with photo data for admin to save
+  socket.emit('lan-message', {
+    event: 'PHOTOS_SAVED',
+    data: {
+      studentId: currentTarget.id,
+      nim: nim,
+      nama: nama,
+      channel: channel,
+      photos: photos,
+      timestamp: Date.now()
+    }
+  })
+  
+  // 3. Send lightweight SYNC_DB
+  socket.emit('lan-message', {
+    event: 'SYNC_DB',
+    data: {
+      ...currentProject,
+      photoHistory: [
+        ...(currentProject?.photoHistory || []),
+        {
+          studentId: currentTarget.id,
+          nim: nim,
+          nama: nama,
+          channel: channel,
+          photos: photos.map(p => ({ filename: p.filename, label: p.label })),
+          timestamp: Date.now()
+        }
+      ]
+    }
+  })
+  
+  // Reset capture state
+  capturedPhotos = []
+  currentTarget = null
+  capturePhase = 'standby'
+  updateTargetDisplay()
+  updateCaptureButton()
+}
+
+// ── Shutter Mode ─────────────────────────────────────────────────────────
+function setShutterMode(mode) {
+  shutterMode = mode
+  document.querySelectorAll('.shutter-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === mode)
+  })
+  cancelTimer()
+}
+
+// ── Gridline ─────────────────────────────────────────────────────────────
+function toggleGridline() {
+  gridlineEnabled = !gridlineEnabled
+  document.getElementById('gridToggle').classList.toggle('active', gridlineEnabled)
+  const overlay = document.getElementById('gridlineOverlay')
+  
+  if (gridlineEnabled) {
+    overlay.classList.remove('hidden')
+    renderGridline()
+  } else {
+    overlay.classList.add('hidden')
+  }
+}
+
+function renderGridline() {
+  const svg = document.getElementById('gridlineOverlay')
+  const color = 'rgba(212,175,55,0.6)'
+  const props = `stroke="${color}" stroke-width="0.3"`
+  const propsSub = `stroke="${color}" stroke-width="0.15" opacity="0.4"`
+  
+  svg.innerHTML = `
+    <line x1="33.333" y1="0" x2="33.333" y2="100" ${props} />
+    <line x1="66.666" y1="0" x2="66.666" y2="100" ${props} />
+    <line x1="0" y1="33.333" x2="100" y2="33.333" ${props} />
+    <line x1="0" y1="66.666" x2="100" y2="66.666" ${props} />
+    <line x1="0" y1="0" x2="100" y2="100" ${propsSub} />
+    <line x1="100" y1="0" x2="0" y2="100" ${propsSub} />
+  `
+}
+
+// ── Queue List ───────────────────────────────────────────────────────────
+function updateQueueList() {
+  if (!currentProject?.database) return
+  
+  const list = document.getElementById('queueList')
+  const db = currentProject.database
+  const isPhotoshoot = currentProject.config?.mode?.includes('photoshoot')
+  
+  // Show students relevant to our channel
+  const relevant = db.filter(s => {
+    if (isPhotoshoot) return true // All students in photoshoot mode
+    return s.assignedChannel === myChannel || s.status === `active_${myChannel}`
+  })
+  
+  // Sort: active first, then by status priority
+  const statusPriority = { active_1: 0, active_2: 0, sent: 1, pending: 2, done: 3 }
+  relevant.sort((a, b) => {
+    const pa = statusPriority[a.status] ?? 9
+    const pb = statusPriority[b.status] ?? 9
+    return pa - pb
+  })
+  
+  list.innerHTML = relevant.slice(0, 30).map(s => {
+    const isActive = s.status === `active_${myChannel}` || s.status?.startsWith('active')
+    const isDone = s.status === 'done'
+    const statusClass = isDone ? 'done' : isActive ? 'active' : 'pending'
+    const statusText = isDone ? '✓' : isActive ? '►' : '—'
+    
+    return `<div class="queue-item ${isActive ? 'active-item' : ''}" onclick="selectQueueItem('${s.id}')">
+      <div><div class="q-nama">${s.nama || '-'}</div><div class="q-nim">${s.nim || '-'}</div></div>
+      <span class="q-status ${statusClass}">${statusText}</span>
+    </div>`
+  }).join('')
+}
+
+function selectQueueItem(studentId) {
+  if (!currentProject?.database) return
+  const isPhotoshoot = currentProject.config?.mode?.includes('photoshoot')
+  if (!isPhotoshoot) return // Only in photoshoot mode can operator select target
+  
+  const student = currentProject.database.find(s => s.id === studentId)
+  if (student && student.status !== 'done') {
+    currentTarget = student
+    capturedPhotos = []
+    capturePhase = 'ready-1'
+    updateTargetDisplay()
+    updateCaptureButton()
+  }
+}
+
+// ── Latency Ping ─────────────────────────────────────────────────────────
+function startLatencyPing() {
+  stopLatencyPing()
+  pingInterval = setInterval(() => {
+    if (socket?.connected) {
+      const start = Date.now()
+      socket.emit('saatiril-ping', start)
+      socket.once('saatiril-pong', (ts) => {
+        latencyMs = Date.now() - ts
+        document.getElementById('latencyBadge').textContent = latencyMs + 'ms'
+      })
+    }
+  }, 5000)
+}
+
+function stopLatencyPing() {
+  if (pingInterval) {
+    clearInterval(pingInterval)
+    pingInterval = null
+  }
+}
+
+// ── Keyboard Shortcuts ───────────────────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' || e.code === 'Enter') {
+    e.preventDefault()
+    handleCaptureClick()
+  } else if (e.code === 'Escape') {
+    cancelTimer()
+  }
+})
+
+// ── Initialize ───────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  // Restore saved server IP
+  const savedIp = localStorage.getItem('saatiril_server_ip')
+  if (savedIp) document.getElementById('serverIp').value = savedIp
+  
+  // Start camera enumeration for USB detection on connection screen
+  enumerateVideoDevices()
+  
+  // Auto-detect server IP from current URL
+  if (window.location.hostname && window.location.hostname !== 'localhost' && 
+      window.location.hostname !== '127.0.0.1' && !window.location.hostname.startsWith('[')) {
+    document.getElementById('serverIp').value = window.location.hostname
+  }
+  
+  // Mirror toggle default
+  document.getElementById('mirrorToggle').classList.add('active')
+})
+
+// ── Also check URL params for auto-connect ───────────────────────────────
+(function() {
+  const params = new URLSearchParams(window.location.search)
+  const roleParam = params.get('role')
+  if (roleParam === 'operator') {
+    const channel = parseInt(params.get('channel') || '1')
+    selectChannel(channel)
+    const ip = window.location.hostname
+    const port = window.location.port || '3000'
+    if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
+      document.getElementById('serverIp').value = ip
+      document.getElementById('serverPort').value = port
+      // Auto-connect
+      setTimeout(() => handleConnect(), 500)
+    }
+  }
+})()
+</script>
+
+</body>
+</html>
