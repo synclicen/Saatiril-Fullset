@@ -218,3 +218,33 @@ Stage Summary:
 - APK: /home/z/my-project/saatiril-operator-v11-socketio-fix.apk (20 MB)
 - ZIP: /home/z/my-project/saatiril-operator-v11-socketio-fix.zip (15 MB)
 - Server auto-restarted (bun --hot) with new config
+---
+Task ID: 2
+Agent: Main Agent
+Task: Fix camera switching — USB camera selected in picker but still showing HP camera
+
+Work Log:
+- Analyzed screenshot: USB Capture Card has green checkmark in picker, but status says "Aktif: Kamera HP"
+- Also: front/back camera switching doesn't work
+- Found 3 root causes:
+  1. DualCameraManager.switchCamera() did NOT update _isConnected when switching to USB.
+     updateCameraSource() checks isConnected first → returns "none" regardless of cameraType
+  2. BuiltInCameraEngine was never initialized when USB was connected at startup
+     (initBuiltinCamera skipped built-in init if USB was connected)
+  3. No pausePreview/stopPreview methods — resources not properly freed when switching
+
+Fixes applied:
+- DualCameraManager.switchCamera(): Now updates _isConnected, _cameraType, _currentCameraId
+  when switching to USB. Also delegates to builtinEngine.switchCamera() for front/back.
+- DualCameraManager.initBuiltinCamera(): ALWAYS initializes built-in engine even when
+  USB is connected, so user can switch to front/back later
+- Added BuiltInCameraEngine.pausePreview()/resumePreview() for clean switching
+- Added USBCameraEngine.stopPreview() for clean switching
+- onUSBCameraConnected(): Now pauses built-in preview when USB activates
+- onUSBCameraDisconnected(): Now resumes built-in preview when USB disconnects
+- Version bumped to 1.0.12-camera-switch-fix
+
+Stage Summary:
+- APK v12 built and pushed to GitHub
+- Camera switching should now work: USB ↔ front ↔ back
+- "Aktif:" label in picker should now correctly show "USB Capture" or "Kamera HP"
