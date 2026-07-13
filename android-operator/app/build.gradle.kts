@@ -11,8 +11,8 @@ android {
         applicationId = "com.saatiril.operator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 12
-        versionName = "1.0.12-camera-switch-fix"
+        versionCode = 13
+        versionName = "1.0.13-permanent-webview"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -84,18 +84,18 @@ dependencies {
     // If adding Coil later, use coil-compose-base (no OkHttp) or handle version conflict.
     implementation("io.socket:socket.io-client:2.1.0")
 
-    // CameraX — camera preview and capture for built-in cameras
-    // Camera2CameraInfo interop is included in camera-camera2 module
-    implementation("androidx.camera:camera-core:1.3.1")
-    implementation("androidx.camera:camera-camera2:1.3.1")
-    implementation("androidx.camera:camera-lifecycle:1.3.1")
-    implementation("androidx.camera:camera-view:1.3.1")
+    // CameraX — REMOVED in v13. Camera preview/capture now handled by
+    // permanent WebView + getUserMedia (Chromium engine has UVC support).
+    // CameraX couldn't access USB cameras; UVCCamera couldn't stream reliably.
+    // WebView's Chromium engine handles ALL cameras (USB + built-in) via getUserMedia.
+    // implementation("androidx.camera:camera-core:1.3.1")
+    // implementation("androidx.camera:camera-camera2:1.3.1")
+    // implementation("androidx.camera:camera-lifecycle:1.3.1")
+    // implementation("androidx.camera:camera-view:1.3.1")
 
-    // UVCCamera — Native USB camera support (v10)
-    // Talks directly to USB video devices via USB Host API, bypassing
-    // Android's broken Camera2 HAL. This is the ONLY approach that works
-    // with USB HDMI capture cards on Xiaomi/Redmi devices.
-    implementation("com.herohan:UVCAndroid:1.0.13")
+    // UVCCamera — REMOVED in v13. Replaced by WebView + getUserMedia.
+    // UVCCamera detected USB but couldn't reliably stream on Xiaomi/Redmi.
+    // implementation("com.herohan:UVCAndroid:1.0.13")
 
     // Image loading — using coil-base without OkHttp dependency to avoid
     // OkHttp 3.x/4.x version conflict with socket.io-client's engine.io-client

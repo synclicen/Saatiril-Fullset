@@ -2,7 +2,6 @@ package com.saatiril.operator.ui.operator
 
 import android.Manifest
 import android.util.Log
-import android.view.TextureView
 import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.activity.ComponentActivity
@@ -39,7 +38,6 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.camera.view.PreviewView
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.PermissionChecker
@@ -173,9 +171,8 @@ fun OperatorScreen(
         }
     }
 
-    // v10: Camera initialization — no WebView needed!
-    // USB detection starts in initCamera() via UVCCamera's USBMonitor.
-    // Built-in camera starts when we call initBuiltinCamera() below.
+    // v13: Camera is already initialized via permanent WebView at Activity level.
+    // No need to re-init here — camera stream is already running.
     LaunchedEffect(effectivePermission) {
         if (effectivePermission && !cameraInitDone) {
             cameraInitDone = true
@@ -297,48 +294,11 @@ fun OperatorScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     // ═══════════════════════════════════════════════════
-                    // v10: Dual Camera Preview — TextureView (USB) + PreviewView (Built-in)
-                    //
-                    // USB camera: UVCCamera renders to TextureView directly.
-                    // Built-in camera: CameraX renders to PreviewView.
-                    // Only one is visible at a time based on cameraSource.
+                    // v13: Camera preview is in the PERMANENT WebView
+                    // underneath this Compose UI. No TextureView or
+                    // PreviewView needed here. This Box is transparent
+                    // so the WebView camera preview shows through.
                     // ═══════════════════════════════════════════════════
-
-                    // TextureView for USB camera (UVCCamera)
-                    AndroidView(
-                        factory = { ctx ->
-                            TextureView(ctx).apply {
-                                layoutParams = FrameLayout.LayoutParams(
-                                    FrameLayout.LayoutParams.MATCH_PARENT,
-                                    FrameLayout.LayoutParams.MATCH_PARENT
-                                )
-                                viewModel.setTextureView(this)
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .then(
-                                if (cameraSource == "uvc") Modifier.fillMaxSize() else Modifier.size(0.dp)
-                            )
-                    )
-
-                    // PreviewView for built-in camera (CameraX)
-                    AndroidView(
-                        factory = { ctx ->
-                            PreviewView(ctx).apply {
-                                layoutParams = FrameLayout.LayoutParams(
-                                    FrameLayout.LayoutParams.MATCH_PARENT,
-                                    FrameLayout.LayoutParams.MATCH_PARENT
-                                )
-                                viewModel.initBuiltinCamera(lifecycleOwner, this)
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .then(
-                                if (cameraSource != "uvc") Modifier.fillMaxSize() else Modifier.size(0.dp)
-                            )
-                    )
 
                     // Gridline Overlay
                     if (gridlineSettings.enabled) {

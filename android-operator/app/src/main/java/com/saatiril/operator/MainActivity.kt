@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.WindowManager
+import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,46 +17,74 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
 import com.saatiril.operator.data.ConnectionState
 import com.saatiril.operator.data.OperatorViewModel
-import com.saatiril.operator.ui.connection.ConnectionScreen
 import com.saatiril.operator.ui.operator.OperatorScreen
+import com.saatiril.operator.ui.connection.ConnectionScreen
 
+/**
+ * ═════════════════════════════════════════════════════════════════════════
+ * v13: PERMANENT WebView Architecture
+ * ═════════════════════════════════════════════════════════════════════════
+ *
+ * The WebView is created ONCE and added directly to the Activity's root
+ * FrameLayout. It is NEVER removed during screen transitions.
+ *
+ * Layout structure:
+ * ┌──────────────────────────────┐
+ * │  FrameLayout (root)          │
+ * │  ┌────────────────────────┐  │
+ * │  │ WebView (camera.html)  │  │  ← Bottom layer, ALWAYS present
+ * │  │ camera preview here    │  │
+ * │  └────────────────────────┘  │
+ * │  ┌────────────────────────┐  │
+ * │  │ ComposeView (UI)       │  │  ← Top layer, transparent background
+ * │  │ ConnectionScreen /     │  │     on OperatorScreen so camera shows
+ * │  │ OperatorScreen         │  │     through
+ * │  └────────────────────────┘  │
+ * └──────────────────────────────┘
+ *
+ * This guarantees:
+ * 1. WebView NEVER detaches from window → camera stream NEVER breaks
+ * 2. getUserMedia can access USB cameras (Chromium has UVC support)
+ * 3. Compose UI overlays on top of camera preview
+ * 4. On ConnectionScreen: Compose has opaque background → camera hidden
+ * 5. On OperatorScreen: Compose has transparent areas → camera visible
+ */
 class MainActivity : ComponentActivity() {
-    
+
     companion object {
         private const val TAG = "MainActivity"
         const val ACTION_USB_PERMISSION = "com.saatiril.operator.USB_PERMISSION"
     }
-    
+
     private lateinit var viewModel: OperatorViewModel
-    
-    // CRITICAL FIX: Track camera permission state so the ViewModel/UI can react
+    private lateinit var rootFrameLayout: FrameLayout
+
     private var _cameraPermissionGranted = false
     val cameraPermissionGranted: Boolean
         get() = _cameraPermissionGranted
 
-    // Callback for when camera permission is granted
     private var onCameraPermissionGranted: (() -> Unit)? = null
 
     fun setOnCameraPermissionGrantedListener(callback: (() -> Unit)?) {
         onCameraPermissionGranted = callback
-        // If permission was already granted, fire immediately
         if (_cameraPermissionGranted && callback != null) {
             callback()
         }
     }
-    
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val cameraGranted = permissions[Manifest.permission.CAMERA] ?: false
-        
+
         if (cameraGranted) {
             Log.i(TAG, "Camera permission GRANTED")
             _cameraPermissionGranted = true
-            // Notify listener (OperatorScreen) that permission was granted
             onCameraPermissionGranted?.invoke()
+            // Initialize camera in the permanent WebView
+            viewModel.initCamera()
         }
-        
+
         val allGranted = permissions.all { it.value }
         if (allGranted) {
             Log.i(TAG, "All permissions granted")
@@ -63,49 +92,73 @@ class MainActivity : ComponentActivity() {
             Log.w(TAG, "Some permissions denied: $permissions")
         }
     }
-    
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         // Keep screen on
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        
+
         // Initialize ViewModel
         viewModel = ViewModelProvider(this)[OperatorViewModel::class.java]
-        
-        // Check if camera permission is already granted (returning user)
-        _cameraPermissionGranted = (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
-        
+
+        // Check existing camera permission
+        _cameraPermissionGranted = (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                == PackageManager.PERMISSION_GRANTED)
+
+        // ═══════════════════════════════════════════════════════════
+        // CRITICAL: Create root FrameLayout BEFORE setContent.
+        // The WebView goes in as the bottom layer, ComposeView
+        // goes in as the top layer. Both are ALWAYS in the window.
+        // ═══════════════════════════════════════════════════════════
+        rootFrameLayout = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        // Create the PERMANENT WebView and add to root as bottom layer
+        viewModel.cameraWebViewManager.createWebView(rootFrameLayout)
+
         // Request permissions
         requestPermissions()
-        
+
         // Handle USB device attachment
         handleUsbIntent(intent)
-        
-        // Set content
+
+        // Set content with the root FrameLayout containing WebView + Compose
         setContent {
-            SaatirilOperatorApp(viewModel, this)
+            // Add ComposeView on top of the WebView
+            // This is automatically added as a child of the root layout
+            SaatirilOperatorApp(viewModel, this, rootFrameLayout)
+        }
+
+        // If camera permission already granted, init camera immediately
+        if (_cameraPermissionGranted) {
+            viewModel.initCamera()
         }
     }
-    
+
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         intent?.let { handleUsbIntent(it) }
     }
 
-    // CRITICAL FIX: Re-check camera permission when returning from Settings
     override fun onResume() {
         super.onResume()
-        val nowGranted = (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+        val nowGranted = (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                == PackageManager.PERMISSION_GRANTED)
         if (nowGranted != _cameraPermissionGranted) {
-            Log.i(TAG, "Camera permission state changed on resume: $_cameraPermissionGranted → $nowGranted")
+            Log.i(TAG, "Camera permission state changed: $_cameraPermissionGranted → $nowGranted")
             _cameraPermissionGranted = nowGranted
             if (nowGranted) {
                 onCameraPermissionGranted?.invoke()
+                viewModel.initCamera()
             }
         }
     }
-    
+
     private fun handleUsbIntent(intent: Intent) {
         when (intent.action) {
             UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
@@ -118,57 +171,43 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-    
+
     private fun requestPermissions() {
         val permissions = mutableListOf<String>()
-        
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) 
-            != PackageManager.PERMISSION_GRANTED) {
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
             permissions.add(Manifest.permission.CAMERA)
         }
-        
+
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) 
-                != PackageManager.PERMISSION_GRANTED) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED
+            ) {
                 permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             }
         }
-        
+
         if (permissions.isNotEmpty()) {
             permissionLauncher.launch(permissions.toTypedArray())
         }
     }
 }
 
-/**
- * ═════════════════════════════════════════════════════════════════════════
- * v10: No more WebView! UVCCamera + CameraX handle cameras natively.
- *
- * ROOT CAUSE of USB camera reverting to built-in (v8/v9):
- * - WebView/getUserMedia couldn't see USB cameras on Android.
- * - Even when Chromium detected USB cameras, the stream would revert
- *   to built-in after screen transitions.
- *
- * v10 FIX: Replace WebView entirely with native camera engines:
- * - UVCCamera library (com.herohan:UVCAndroid) talks directly to USB
- *   hardware via USB Host API, bypassing Android's broken Camera2 HAL.
- * - CameraX handles built-in cameras (which work fine).
- * - No WebView, no JavaScript, no getUserMedia — all native Kotlin.
- *
- * initCamera() starts USB detection IMMEDIATELY when permission is granted.
- * No WebView parameter needed.
- * ═════════════════════════════════════════════════════════════════════════
- */
 @Composable
-fun SaatirilOperatorApp(viewModel: OperatorViewModel, activity: MainActivity) {
+fun SaatirilOperatorApp(
+    viewModel: OperatorViewModel,
+    activity: MainActivity,
+    rootFrameLayout: FrameLayout
+) {
     val connectionState by viewModel.connectionState.collectAsState()
     var isConnected by remember { mutableStateOf(false) }
 
-    // Track camera permission state from the Activity
+    // Track camera permission
     var hasCameraPermission by remember { mutableStateOf(activity.cameraPermissionGranted) }
 
-    // v10: Initialize USB camera detection IMMEDIATELY at app start
-    // No WebView needed — UVCCamera detects USB devices natively
+    // Initialize camera when permission is granted
     LaunchedEffect(hasCameraPermission) {
         if (hasCameraPermission) {
             viewModel.initCamera()
@@ -183,22 +222,24 @@ fun SaatirilOperatorApp(viewModel: OperatorViewModel, activity: MainActivity) {
             activity.setOnCameraPermissionGrantedListener(null)
         }
     }
-    
-    // Track when we transition to authenticated or disconnected
+
+    // Track connection state for screen transitions
     LaunchedEffect(connectionState) {
         when (connectionState) {
             ConnectionState.AUTHENTICATED, ConnectionState.WAITING_FOR_DATA -> {
                 isConnected = true
+                // Camera is already running in the permanent WebView
+                // Just show the preview by making WebView visible
+                viewModel.cameraWebViewManager.showPreview()
             }
             ConnectionState.DISCONNECTED -> {
                 isConnected = false
+                viewModel.cameraWebViewManager.hidePreview()
             }
-            // Keep current state for CONNECTING, CONNECTED, AUTHENTICATING, AUTH_FAILED
-            // These intermediate states shouldn't change the screen
             else -> {}
         }
     }
-    
+
     if (isConnected && connectionState != ConnectionState.DISCONNECTED) {
         OperatorScreen(
             viewModel = viewModel,
@@ -207,7 +248,10 @@ fun SaatirilOperatorApp(viewModel: OperatorViewModel, activity: MainActivity) {
     } else {
         ConnectionScreen(
             viewModel = viewModel,
-            onConnected = { isConnected = true }
+            onConnected = {
+                isConnected = true
+                viewModel.cameraWebViewManager.showPreview()
+            }
         )
     }
 }

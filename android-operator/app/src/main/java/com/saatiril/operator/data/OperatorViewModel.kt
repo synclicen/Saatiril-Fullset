@@ -5,11 +5,9 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
 import android.util.Log
-import androidx.camera.view.PreviewView
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewModelScope
-import com.saatiril.operator.camera.DualCameraManager
+import com.saatiril.operator.camera.WebViewCameraManager
 import com.saatiril.operator.util.FilenameUtils
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -18,7 +16,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.io.ByteArrayOutputStream
 
 /**
  * ═════════════════════════════════════════════════════════════════════════
@@ -53,9 +50,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     private val socketManager = SocketManager()
 
-    // ─── Camera Manager (v10: UVCCamera + CameraX) ──────────
+    // ─── Camera Manager (v13: Permanent WebView) ──────────
 
-    val cameraManager = DualCameraManager(application)
+    val cameraWebViewManager = WebViewCameraManager(application)
 
     // ─── Connection State ───────────────────────────────────────
 
@@ -191,8 +188,8 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private val _cameraConnected = MutableStateFlow(false)
     val cameraConnected: StateFlow<Boolean> = _cameraConnected.asStateFlow()
 
-    val availableCameras: StateFlow<List<Pair<String, String>>> = cameraManager.availableCameras
-    val currentCameraId: StateFlow<String> = cameraManager.currentCameraIdFlow
+    val availableCameras: StateFlow<List<Pair<String, String>>> = cameraWebViewManager.availableCameras
+    val currentCameraId: StateFlow<String> = cameraWebViewManager.currentCameraIdFlow
 
     // ─── Frame Overlay ──────────────────────────────────────────
 
@@ -254,21 +251,22 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private var cameraTypeCollector: Job? = null
 
     /**
-     * v10: Initialize camera — USB detection starts IMMEDIATELY.
-     * No WebView needed! UVCCamera detects USB devices natively.
+     * v13: Initialize camera via permanent WebView.
+     * The WebView was already created at Activity level.
+     * This just calls autoStart() in JavaScript.
      */
     fun initCamera() {
         Log.i(TAG, "═══════════════════════════════════════════════════")
-        Log.i(TAG, "initCamera: v10 Dual Camera Engine (UVC + CameraX)")
+        Log.i(TAG, "initCamera: v13 Permanent WebView Camera")
         Log.i(TAG, "═══════════════════════════════════════════════════")
 
-        cameraManager.init()
+        cameraWebViewManager.initCamera()
 
-        // Only set up collectors if not already set up
+        // Set up collectors if not already set up
         if (cameraConnectedCollector?.isActive != true) {
             cameraConnectedCollector?.cancel()
             cameraConnectedCollector = viewModelScope.launch {
-                cameraManager.isConnected.collect { connected ->
+                cameraWebViewManager.isConnected.collect { connected ->
                     _cameraConnected.value = connected
                     updateCameraSource()
                 }
@@ -278,96 +276,62 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         if (cameraTypeCollector?.isActive != true) {
             cameraTypeCollector?.cancel()
             cameraTypeCollector = viewModelScope.launch {
-                cameraManager.cameraType.collect {
+                cameraWebViewManager.cameraType.collect {
                     updateCameraSource()
                 }
             }
         }
 
-        // Watch USB camera specifically for auto-switch
-        viewModelScope.launch {
-            cameraManager.usbEngine.isConnected.collect { usbConnected ->
-                if (usbConnected) {
-                    cameraManager.onUSBCameraConnected()
-                } else {
-                    cameraManager.onUSBCameraDisconnected()
-                }
-            }
-        }
-
-        Log.i(TAG, "Camera initialized — USB detection active, cameraSource=${_cameraSource.value}")
-    }
-
-    /**
-     * Initialize built-in camera (requires LifecycleOwner + PreviewView).
-     * Called when OperatorScreen appears.
-     */
-    fun initBuiltinCamera(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
-        Log.i(TAG, "initBuiltinCamera: starting CameraX for built-in camera")
-        cameraManager.initBuiltinCamera(lifecycleOwner, previewView)
-    }
-
-    /**
-     * Set TextureView for USB camera preview.
-     */
-    fun setTextureView(textureView: android.view.TextureView) {
-        Log.i(TAG, "setTextureView: for USB camera")
-        cameraManager.setTextureView(textureView)
+        Log.i(TAG, "Camera initialized — WebView camera active, cameraSource=${_cameraSource.value}")
     }
 
     private fun updateCameraSource() {
-        val connected = cameraManager.isConnected.value
-        val cameraType = cameraManager.cameraType.value
+        val connected = cameraWebViewManager.isConnected.value
+        val cameraType = cameraWebViewManager.cameraType.value
+        val isUSB = cameraWebViewManager.isUSBCamera.value
 
         if (!connected) {
             _cameraSource.value = "none"
             return
         }
 
-        _cameraSource.value = when (cameraType) {
-            "external" -> "uvc"
-            "back" -> "builtin"
-            "front" -> "builtin"
-            else -> "none"
-        }
+        _cameraSource.value = if (isUSB || cameraType == "external") "uvc" else "builtin"
     }
 
     fun switchCamera() {
-        val cameras = cameraManager.availableCameras.value
-        val currentId = cameraManager.currentCameraIdFlow.value
+        val cameras = cameraWebViewManager.availableCameras.value
+        val currentId = cameraWebViewManager.currentCameraIdFlow.value
         val currentIndex = cameras.indexOfFirst { it.first == currentId }
         val nextIndex = (currentIndex + 1) % cameras.size
         if (cameras.isNotEmpty()) {
-            cameraManager.switchToCamera(cameras[nextIndex].first)
+            cameraWebViewManager.switchCamera(cameras[nextIndex].first)
         }
     }
 
     fun getAvailableCameras(): List<Pair<String, String>> {
-        cameraManager.refreshCameraList()
-        return cameraManager.availableCameras.value
+        cameraWebViewManager.refreshCameraList()
+        return cameraWebViewManager.availableCameras.value
     }
 
     fun switchToCameraById(cameraId: String) {
-        cameraManager.switchToCamera(cameraId)
+        cameraWebViewManager.switchCamera(cameraId)
     }
 
     /**
      * Force rescan for USB cameras. Called when user taps "Pindai Ulang USB".
-     * v10: UVCCamera's USBMonitor handles USB detection natively.
+     * v13: WebView's devicechange + forceRescan() handles this.
      */
     fun forceRescanUsbCamera() {
         Log.i(TAG, "forceRescanUsbCamera: User requested USB camera rescan")
-        cameraManager.forceRescan()
+        cameraWebViewManager.forceRescan()
     }
 
     fun setUvcDeviceAttached(attached: Boolean) {
         _uvcDeviceAttached.value = attached
         if (attached) {
-            // v10: UVCCamera's USBMonitor detects USB devices natively.
-            // We still trigger a rescan as a safety net.
             viewModelScope.launch {
                 delay(1000)
-                cameraManager.forceRescan()
+                cameraWebViewManager.forceRescan()
             }
         }
     }
@@ -411,18 +375,18 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         val config = _project.value?.config
         if (config != null) {
             val aspectRatio = config.parseAspectRatio().toDouble()
-            cameraManager.updateConfig(aspectRatio, config.preset ?: "original")
+            cameraWebViewManager.updateConfig(aspectRatio, config.preset ?: "original")
         }
 
         // Send frame overlay to JS if available
         val frameBase64 = _project.value?.config?.frame
         if (frameBase64 != null && frameBase64 != "__FRAME_SAVED__" && frameBase64.isNotEmpty()) {
-            cameraManager.setFrameOverlay("data:image/png;base64,${if (frameBase64.contains(",")) frameBase64.substringAfter(",") else frameBase64}")
+            cameraWebViewManager.setFrameOverlay("data:image/png;base64,${if (frameBase64.contains(",")) frameBase64.substringAfter(",") else frameBase64}")
         } else {
-            cameraManager.setFrameOverlay(null)
+            cameraWebViewManager.setFrameOverlay(null)
         }
 
-        cameraManager.capturePhoto { base64DataUrl ->
+        cameraWebViewManager.capturePhoto { base64DataUrl ->
             if (base64DataUrl == null) {
                 Log.e(TAG, "Capture returned null from camera engine")
                 return@capturePhoto
@@ -1033,6 +997,6 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         cameraConnectedCollector?.cancel()
         cameraTypeCollector?.cancel()
         socketManager.destroy()
-        cameraManager.destroy()
+        cameraWebViewManager.destroy()
     }
 }
