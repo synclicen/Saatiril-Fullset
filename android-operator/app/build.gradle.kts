@@ -11,8 +11,8 @@ android {
         applicationId = "com.saatiril.operator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 11
-        versionName = "1.0.11-socketio-fix"
+        versionCode = 12
+        versionName = "1.0.12-camera-switch-fix"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

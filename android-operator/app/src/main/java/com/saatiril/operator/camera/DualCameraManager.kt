@@ -68,15 +68,19 @@ class DualCameraManager(private val context: Context) {
 
     /**
      * Initialize built-in camera engine (requires LifecycleOwner + PreviewView).
+     * ALWAYS initializes the built-in engine even if USB is connected,
+     * so the user can switch between cameras later.
      */
     fun initBuiltinCamera(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
-        Log.i(TAG, "initBuiltinCamera: starting CameraX")
+        Log.i(TAG, "initBuiltinCamera: starting CameraX (USB connected: ${usbEngine.isConnected.value})")
         this.lifecycleOwner = lifecycleOwner
         this.previewView = previewView
 
-        // Only init built-in if USB is NOT connected
+        // ALWAYS init built-in camera — user may switch to it later
+        builtinEngine.init(lifecycleOwner, previewView)
+
         if (!usbEngine.isConnected.value) {
-            builtinEngine.init(lifecycleOwner, previewView)
+            // USB not connected → use built-in as active
             _cameraType.value = builtinEngine.cameraType.value
             _isConnected.value = builtinEngine.isConnected.value
             _currentCameraId.value = builtinEngine.currentCameraIdFlow.value
@@ -107,6 +111,9 @@ class DualCameraManager(private val context: Context) {
         _cameraType.value = "external"
         _currentCameraId.value = usbEngine.currentCameraIdFlow.value
 
+        // Pause built-in camera (free camera hardware resources for USB)
+        builtinEngine.pausePreview()
+
         // Start USB preview on TextureView
         textureView?.let { usbEngine.setTextureView(it) }
 
@@ -121,11 +128,11 @@ class DualCameraManager(private val context: Context) {
         Log.i(TAG, "USB CAMERA DISCONNECTED — falling back to built-in")
         usingUSB = false
 
-        // Start built-in camera if not already running
+        // Resume built-in camera
         val owner = lifecycleOwner
         val pv = previewView
-        if (owner != null && pv != null && !builtinEngine.isConnected.value) {
-            builtinEngine.init(owner, pv)
+        if (owner != null && pv != null) {
+            builtinEngine.resumePreview(owner, pv)
         }
 
         _cameraType.value = builtinEngine.cameraType.value
@@ -159,18 +166,53 @@ class DualCameraManager(private val context: Context) {
 
     // ─── Camera switching ──────────────────────────────────────────
     fun switchCamera(deviceId: String) {
+        Log.i(TAG, "switchCamera: deviceId=$deviceId, usbConnected=${usbEngine.isConnected.value}, builtinConnected=${builtinEngine.isConnected.value}")
+
         if (deviceId.contains("usb", ignoreCase = true) || deviceId.contains("capture", ignoreCase = true)) {
             // Switch to USB
             if (usbEngine.isConnected.value) {
+                Log.i(TAG, "Switching to USB camera")
                 usingUSB = true
+                _isConnected.value = true
                 _cameraType.value = "external"
+                _currentCameraId.value = usbEngine.currentCameraIdFlow.value
+
+                // Pause built-in preview (unbind use cases but keep provider alive)
+                builtinEngine.pausePreview()
+
+                // Start USB preview on TextureView
                 textureView?.let { usbEngine.setTextureView(it) }
+            } else {
+                Log.w(TAG, "USB camera not connected, cannot switch to it")
             }
         } else {
-            // Switch to built-in
+            // Switch to built-in (front or back)
+            Log.i(TAG, "Switching to built-in camera: $deviceId")
             usingUSB = false
+
+            // Stop USB preview
+            usbEngine.stopPreview()
+
+            // Tell built-in engine to switch camera (and resume preview)
+            builtinEngine.switchCamera(deviceId)
+
+            // Update combined state from built-in engine
+            _isConnected.value = builtinEngine.isConnected.value
             _cameraType.value = builtinEngine.cameraType.value
+            _currentCameraId.value = builtinEngine.currentCameraIdFlow.value
+
+            // Re-initialize built-in camera if needed (e.g. after pause)
+            val owner = lifecycleOwner
+            val pv = previewView
+            if (owner != null && pv != null && !builtinEngine.isConnected.value) {
+                builtinEngine.resumePreview(owner, pv)
+                _isConnected.value = builtinEngine.isConnected.value
+                _cameraType.value = builtinEngine.cameraType.value
+                _currentCameraId.value = builtinEngine.currentCameraIdFlow.value
+            }
         }
+
+        updateCombinedCameraList()
     }
 
     fun forceRescan() {

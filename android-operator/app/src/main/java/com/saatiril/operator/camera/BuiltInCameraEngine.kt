@@ -144,6 +144,29 @@ class BuiltInCameraEngine(private val context: Context) {
         startCamera()
     }
 
+    /**
+     * Pause preview — unbind use cases but keep provider alive.
+     * Called when switching to USB camera.
+     */
+    fun pausePreview() {
+        Log.i(TAG, "pausePreview: unbinding use cases")
+        cameraProvider?.unbindAll()
+        camera = null
+        _isConnected.value = false
+        // Don't reset _cameraType — we want to remember front/back
+    }
+
+    /**
+     * Resume preview — re-bind use cases with current cameraSelector.
+     * Called when switching back from USB camera.
+     */
+    fun resumePreview(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
+        Log.i(TAG, "resumePreview: re-binding use cases for ${if (cameraSelector == CameraSelector.DEFAULT_BACK_CAMERA) "back" else "front"}")
+        this.lifecycleOwner = lifecycleOwner
+        this.previewView = previewView
+        startCamera()
+    }
+
     // ─── Photo Capture ─────────────────────────────────────────────
     fun capturePhoto(onResult: (String?) -> Unit) {
         val capture = imageCapture ?: run {

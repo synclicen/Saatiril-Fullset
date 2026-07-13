@@ -365,6 +365,16 @@ class USBCameraEngine(private val context: Context) {
         }
     }
 
+    // ─── Stop preview (called when switching away from USB) ────────
+    fun stopPreview() {
+        try {
+            uvcCamera?.stopPreview()
+            Log.i(TAG, "USB camera preview stopped")
+        } catch (e: Exception) {
+            Log.w(TAG, "Error stopping USB preview: ${e.message}")
+        }
+    }
+
     // ─── Close camera ──────────────────────────────────────────────
     private fun closeCamera() {
         try { uvcCamera?.stopPreview() } catch (_: Exception) {}
