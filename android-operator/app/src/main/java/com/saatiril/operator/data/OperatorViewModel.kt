@@ -5,10 +5,11 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
 import android.util.Log
-import android.webkit.WebView
+import androidx.camera.view.PreviewView
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewModelScope
-import com.saatiril.operator.camera.WebViewCameraManager
+import com.saatiril.operator.camera.DualCameraManager
 import com.saatiril.operator.util.FilenameUtils
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -21,26 +22,27 @@ import java.io.ByteArrayOutputStream
 
 /**
  * ═════════════════════════════════════════════════════════════════════════
- * Central ViewModel — v8 WebView Camera Engine
+ * Central ViewModel — v10 Dual Camera Engine (UVCCamera + CameraX)
  * ═════════════════════════════════════════════════════════════════════════
  *
- * v8 CHANGES (fundamental architectural shift):
- * - Camera: WebViewCameraManager (getUserMedia via Chromium) replaces
- *   UnifiedCameraManager (Camera2 API). Camera2/CameraX FAILED 3 times
- *   for USB capture cards on Xiaomi/Redmi devices.
- * - USB Detection: Chromium's getUserMedia handles USB camera detection
- *   automatically. No more UVCCameraManager scanning.
- * - Photo Capture: Done in JavaScript (canvas.toDataURL), returns base64
- *   string directly. No more CameraCapture Kotlin processing.
+ * v10 CHANGES (fundamental architectural shift — NATIVE USB camera):
+ * - Camera: DualCameraManager replaces WebViewCameraManager.
+ *   UVCCamera (com.herohan:UVCAndroid) talks DIRECTLY to USB hardware
+ *   via USB Host API, bypassing Android's broken Camera2 HAL entirely.
+ *   CameraX handles built-in cameras (which work fine).
+ * - USB Detection: UVCCamera's USBMonitor detects USB devices natively.
+ *   No more WebView/getUserMedia (which couldn't see USB cameras on Android).
+ * - Photo Capture: UVCCamera IFrameCallback → NV21 → JPEG → base64.
+ *   CameraX ImageCapture → JPEG → base64. No JavaScript involved.
  * - Photo Saving: REMOVED. Photos are NOT saved on the operator device.
  *   They are sent via socket.io to the admin who saves them (matching
  *   the Electron browser-mode behavior exactly).
- * - Frame Overlay: Sent to JavaScript for rendering (not applied in Kotlin).
+ * - Frame Overlay: TODO: apply in Kotlin (not JavaScript).
  *
- * Camera priority (matching Electron behavior):
- * 1. USB/External camera — auto-selected if present
- * 2. Built-in back camera — fallback
- * 3. Built-in front camera — last resort
+ * Camera priority:
+ * 1. USB/External camera (UVCCamera) — auto-selected if present
+ * 2. Built-in back camera (CameraX) — fallback
+ * 3. Built-in front camera (CameraX) — last resort
  */
 class OperatorViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -51,9 +53,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     private val socketManager = SocketManager()
 
-    // ─── Camera Manager (v8: WebView + getUserMedia) ────────────
+    // ─── Camera Manager (v10: UVCCamera + CameraX) ──────────
 
-    val cameraManager = WebViewCameraManager(application)
+    val cameraManager = DualCameraManager(application)
 
     // ─── Connection State ───────────────────────────────────────
 
@@ -252,20 +254,15 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private var cameraTypeCollector: Job? = null
 
     /**
-     * v9: Initialize camera with a WebView.
-     * WebView uses Chromium's getUserMedia — same engine as Electron/Chrome.
-     * This is the ONLY approach that reliably works with USB capture cards.
-     *
-     * v9 KEY FIX: Can be called MULTIPLE TIMES safely (from app level AND
-     * from OperatorScreen). The WebViewCameraManager guards against double init.
+     * v10: Initialize camera — USB detection starts IMMEDIATELY.
+     * No WebView needed! UVCCamera detects USB devices natively.
      */
-    fun initCamera(webView: WebView) {
+    fun initCamera() {
         Log.i(TAG, "═══════════════════════════════════════════════════")
-        Log.i(TAG, "initCamera: v9 WebView Camera Engine")
+        Log.i(TAG, "initCamera: v10 Dual Camera Engine (UVC + CameraX)")
         Log.i(TAG, "═══════════════════════════════════════════════════")
 
-        // Initialize WebView camera manager (has guard against double init)
-        cameraManager.init(webView)
+        cameraManager.init()
 
         // Only set up collectors if not already set up
         if (cameraConnectedCollector?.isActive != true) {
@@ -287,7 +284,35 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             }
         }
 
-        Log.i(TAG, "Camera initialized — cameraSource=${_cameraSource.value}")
+        // Watch USB camera specifically for auto-switch
+        viewModelScope.launch {
+            cameraManager.usbEngine.isConnected.collect { usbConnected ->
+                if (usbConnected) {
+                    cameraManager.onUSBCameraConnected()
+                } else {
+                    cameraManager.onUSBCameraDisconnected()
+                }
+            }
+        }
+
+        Log.i(TAG, "Camera initialized — USB detection active, cameraSource=${_cameraSource.value}")
+    }
+
+    /**
+     * Initialize built-in camera (requires LifecycleOwner + PreviewView).
+     * Called when OperatorScreen appears.
+     */
+    fun initBuiltinCamera(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
+        Log.i(TAG, "initBuiltinCamera: starting CameraX for built-in camera")
+        cameraManager.initBuiltinCamera(lifecycleOwner, previewView)
+    }
+
+    /**
+     * Set TextureView for USB camera preview.
+     */
+    fun setTextureView(textureView: android.view.TextureView) {
+        Log.i(TAG, "setTextureView: for USB camera")
+        cameraManager.setTextureView(textureView)
     }
 
     private fun updateCameraSource() {
@@ -328,7 +353,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     /**
      * Force rescan for USB cameras. Called when user taps "Pindai Ulang USB".
-     * v8: WebView handles USB detection via devicechange event + autoStart.
+     * v10: UVCCamera's USBMonitor handles USB detection natively.
      */
     fun forceRescanUsbCamera() {
         Log.i(TAG, "forceRescanUsbCamera: User requested USB camera rescan")
@@ -338,8 +363,8 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     fun setUvcDeviceAttached(attached: Boolean) {
         _uvcDeviceAttached.value = attached
         if (attached) {
-            // WebView will detect USB camera via devicechange event automatically
-            // But we can also trigger a rescan
+            // v10: UVCCamera's USBMonitor detects USB devices natively.
+            // We still trigger a rescan as a safety net.
             viewModelScope.launch {
                 delay(1000)
                 cameraManager.forceRescan()
@@ -351,8 +376,8 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     /**
      * Trigger a photo capture. Supports timer mode.
-     * v8: WebView captures via canvas.toDataURL, returns base64 string directly.
-     * No CameraCapture processing needed — JS handles crop, filter, frame overlay.
+     * v10: Capture via DualCameraManager (UVCCamera or CameraX).
+     * Native capture — no JavaScript involved.
      */
     fun triggerCapture() {
         val phase = _capturePhase.value
@@ -372,12 +397,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * v8: Capture via WebView. The JS engine handles:
-     * - Canvas capture from video element
-     * - Center-crop to aspect ratio
-     * - Filter preset application
-     * - Frame overlay
-     * - JPEG base64 conversion
+     * v10: Capture via DualCameraManager (UVCCamera or CameraX).
+     * USB: IFrameCallback → NV21 → JPEG → base64
+     * Built-in: ImageCapture → JPEG → base64
      *
      * The result is a base64 data URL string, ready to send via socket.
      * Photos are NOT saved locally — only sent to admin via socket.
@@ -402,19 +424,19 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
         cameraManager.capturePhoto { base64DataUrl ->
             if (base64DataUrl == null) {
-                Log.e(TAG, "Capture returned null from WebView")
+                Log.e(TAG, "Capture returned null from camera engine")
                 return@capturePhoto
             }
 
-            Log.i(TAG, "doCapture: Photo captured from WebView (${base64DataUrl.length} chars)")
+            Log.i(TAG, "doCapture: Photo captured (${base64DataUrl.length} chars)")
             handleCapturedPhoto(base64DataUrl)
         }
     }
 
     /**
-     * Handle a captured photo (base64 data URL from WebView).
-     * v8: No CameraCapture processing needed — JS already did crop/filter/frame.
-     * v8: Photos NOT saved on operator device — only sent via socket.
+     * Handle a captured photo (base64 data URL from camera engine).
+     * v10: No WebView/JS processing — native capture returns base64 directly.
+     * v10: Photos NOT saved on operator device — only sent via socket.
      */
     private fun handleCapturedPhoto(base64DataUrl: String) {
         val mode = _project.value?.config?.mode
@@ -807,7 +829,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     /**
      * Complete the capture pipeline.
      *
-     * v8: Photos NOT saved on operator device (matching Electron browser mode).
+     * v10: Photos NOT saved on operator device (matching Electron browser mode).
      * Only sent via socket to admin who saves them.
      *
      * Priority order:
@@ -890,7 +912,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
                     // Send OP_PROGRESS
                     socketManager.sendOpProgress("Selesai — Menunggu target...")
 
-                    // v8: NO local photo save — photos only sent via socket
+                    // v10: NO local photo save — photos only sent via socket
                     // Admin (Electron) saves photos via PHOTOS_SAVED event
                     Log.i(TAG, "finalizeCapture: Photos sent via socket (NOT saved locally — matching Electron browser mode)")
 

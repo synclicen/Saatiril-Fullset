@@ -2,6 +2,8 @@ package com.saatiril.operator.ui.operator
 
 import android.Manifest
 import android.util.Log
+import android.view.TextureView
+import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.BorderStroke
@@ -37,7 +39,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import android.webkit.WebView
+import androidx.camera.view.PreviewView
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.PermissionChecker
@@ -100,8 +102,7 @@ object Panels {
 @Composable
 fun OperatorScreen(
     viewModel: OperatorViewModel,
-    hasCameraPermission: Boolean = false,
-    webView: WebView? = null  // v9: WebView passed from top level — survives screen transitions
+    hasCameraPermission: Boolean = false
 ) {
     val context = LocalContext.current
     val lifecycleOwner: LifecycleOwner = when (context) {
@@ -153,26 +154,13 @@ fun OperatorScreen(
     val minPanelHeight = (screenHeight * 0.15f)
     val maxPanelHeight = (screenHeight * 0.65f)
 
-    // ─── Camera permission + initialization (v6: Camera2 ONLY) ──
+    // ─── Camera permission + initialization (v10: DualCamera) ──
     var localPermissionState by remember {
         mutableStateOf(
             (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PermissionChecker.PERMISSION_GRANTED)
         )
     }
     val effectivePermission = hasCameraPermission || localPermissionState
-
-    // v9: WebView is passed from top level — created at app level to survive
-    // screen transitions. This is the KEY fix for USB camera reverting to
-    // built-in after login: the WebView (and its USB camera stream) persists
-    // across the ConnectionScreen → OperatorScreen transition.
-    val webViewRef = webView ?: remember {
-        WebView(context).apply {
-            layoutParams = android.widget.FrameLayout.LayoutParams(
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        }
-    }
     var cameraInitDone by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -185,28 +173,14 @@ fun OperatorScreen(
         }
     }
 
-    // v9: Camera is initialized at the APP LEVEL (in SaatirilOperatorApp),
-    // BEFORE the screen transition. This ensures USB camera is already
-    // streaming when OperatorScreen appears. We only call initCamera here
-    // as a FALLBACK if it wasn't initialized at the app level.
+    // v10: Camera initialization — no WebView needed!
+    // USB detection starts in initCamera() via UVCCamera's USBMonitor.
+    // Built-in camera starts when we call initBuiltinCamera() below.
     LaunchedEffect(effectivePermission) {
-        if (effectivePermission && !cameraInitDone && webView != null) {
-            // WebView was passed but camera not yet initialized (fallback)
+        if (effectivePermission && !cameraInitDone) {
             cameraInitDone = true
             try {
-                viewModel.initCamera(webViewRef)
-            } catch (e: SecurityException) {
-                localPermissionState = false
-                cameraInitDone = false
-            } catch (e: Exception) {
-                Log.e("OperatorScreen", "initCamera failed: ${e.message}")
-                cameraInitDone = false
-            }
-        } else if (effectivePermission && !cameraInitDone && webView == null) {
-            // No WebView passed — create our own (legacy fallback)
-            cameraInitDone = true
-            try {
-                viewModel.initCamera(webViewRef)
+                viewModel.initCamera()
             } catch (e: SecurityException) {
                 localPermissionState = false
                 cameraInitDone = false
@@ -323,19 +297,47 @@ fun OperatorScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     // ═══════════════════════════════════════════════════
-                    // v9: WebView for camera preview (getUserMedia)
+                    // v10: Dual Camera Preview — TextureView (USB) + PreviewView (Built-in)
                     //
-                    // WebView uses Chromium's built-in UVC driver that
-                    // BYPASSES Android's broken Camera2 HAL. This is the
-                    // same engine Chrome/Electron uses for USB cameras.
-                    //
-                    // KEY FIX: WebView is created in remember() above,
-                    // NOT in the factory. This prevents recreation on
-                    // recomposition which would lose USB camera state.
+                    // USB camera: UVCCamera renders to TextureView directly.
+                    // Built-in camera: CameraX renders to PreviewView.
+                    // Only one is visible at a time based on cameraSource.
                     // ═══════════════════════════════════════════════════
+
+                    // TextureView for USB camera (UVCCamera)
                     AndroidView(
-                        factory = { _ -> webViewRef },
-                        modifier = Modifier.fillMaxSize()
+                        factory = { ctx ->
+                            TextureView(ctx).apply {
+                                layoutParams = FrameLayout.LayoutParams(
+                                    FrameLayout.LayoutParams.MATCH_PARENT,
+                                    FrameLayout.LayoutParams.MATCH_PARENT
+                                )
+                                viewModel.setTextureView(this)
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .then(
+                                if (cameraSource == "uvc") Modifier.fillMaxSize() else Modifier.size(0.dp)
+                            )
+                    )
+
+                    // PreviewView for built-in camera (CameraX)
+                    AndroidView(
+                        factory = { ctx ->
+                            PreviewView(ctx).apply {
+                                layoutParams = FrameLayout.LayoutParams(
+                                    FrameLayout.LayoutParams.MATCH_PARENT,
+                                    FrameLayout.LayoutParams.MATCH_PARENT
+                                )
+                                viewModel.initBuiltinCamera(lifecycleOwner, this)
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .then(
+                                if (cameraSource != "uvc") Modifier.fillMaxSize() else Modifier.size(0.dp)
+                            )
                     )
 
                     // Gridline Overlay

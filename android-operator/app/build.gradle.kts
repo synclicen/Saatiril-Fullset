@@ -11,8 +11,8 @@ android {
         applicationId = "com.saatiril.operator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 9
-        versionName = "1.0.9-usb-fix"
+        versionCode = 10
+        versionName = "1.0.10-uvc-native"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -84,12 +84,18 @@ dependencies {
     // If adding Coil later, use coil-compose-base (no OkHttp) or handle version conflict.
     implementation("io.socket:socket.io-client:2.1.0")
 
-    // CameraX — camera preview and capture (supports built-in + external cameras)
+    // CameraX — camera preview and capture for built-in cameras
     // Camera2CameraInfo interop is included in camera-camera2 module
     implementation("androidx.camera:camera-core:1.3.1")
     implementation("androidx.camera:camera-camera2:1.3.1")
     implementation("androidx.camera:camera-lifecycle:1.3.1")
     implementation("androidx.camera:camera-view:1.3.1")
+
+    // UVCCamera — Native USB camera support (v10)
+    // Talks directly to USB video devices via USB Host API, bypassing
+    // Android's broken Camera2 HAL. This is the ONLY approach that works
+    // with USB HDMI capture cards on Xiaomi/Redmi devices.
+    implementation("com.herohan:UVCAndroid:1.0.13")
 
     // Image loading — using coil-base without OkHttp dependency to avoid
     // OkHttp 3.x/4.x version conflict with socket.io-client's engine.io-client
