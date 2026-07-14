@@ -181,6 +181,24 @@
     }
     .rescan-btn:active { background: var(--border); }
     .latency-badge { font-size: 10px; color: var(--muted); font-weight: 600; }
+    .next-cam-btn {
+      padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700;
+      background: linear-gradient(135deg, var(--gold), #c49b2e); color: var(--bg);
+      border: none; cursor: pointer; white-space: nowrap;
+    }
+    .next-cam-btn:active { opacity: 0.7; }
+    
+    /* Auto-detect status */
+    .auto-detect-status {
+      position: absolute; top: 50px; left: 50%; transform: translateX(-50%);
+      padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 600;
+      z-index: 10; pointer-events: none; transition: all 0.3s;
+      max-width: 90%; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .auto-detect-status.pending { background: rgba(234,179,8,0.2); color: #facc15; border: 1px solid rgba(234,179,8,0.4); }
+    .auto-detect-status.ok { background: rgba(34,197,94,0.2); color: #4ade80; border: 1px solid rgba(34,197,94,0.4); }
+    .auto-detect-status.warn { background: rgba(234,179,8,0.2); color: #facc15; border: 1px solid rgba(234,179,8,0.4); }
+    .auto-detect-status.err { background: rgba(239,68,68,0.2); color: #f87171; border: 1px solid rgba(239,68,68,0.4); }
     .disconnect-btn {
       padding: 4px 8px; border-radius: 6px; font-size: 10px; font-weight: 700;
       background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3);
@@ -497,8 +515,8 @@
       <select id="cameraSelect" class="camera-select" onchange="handleCameraChange()">
         <option value="">Memuat kamera...</option>
       </select>
-      <button class="rescan-btn" onclick="rescanCameras()">🔄 Pindai</button>
-      <button class="rescan-btn" onclick="cycleAllCameras()" style="background:#d4af37;color:#1a0b2e;font-weight:700;" title="Coba buka semua kamera satu per satu">🔌 Coba Semua</button>
+      <button class="next-cam-btn" onclick="switchToNextCamera()">▶ Ganti</button>
+      <button class="rescan-btn" onclick="autoDetectBestCamera()">🔄 Cari</button>
     </div>
     <span id="latencyBadge" class="latency-badge">--ms</span>
     <button class="disconnect-btn" onclick="handleDisconnect()">✕</button>
@@ -508,6 +526,9 @@
   <div class="camera-area">
     <video id="videoPreview" autoplay playsinline muted></video>
     <canvas id="captureCanvas"></canvas>
+    
+    <!-- Auto-detect status badge -->
+    <div id="autoDetectStatus" class="auto-detect-status" style="display:none;"></div>
     
     <div id="noCameraMsg" class="no-camera-msg">
       <div class="no-camera-icon">📷</div>
@@ -603,6 +624,11 @@ let isMirrored = true // Mirror by default for selfie view
 let probedCameras = [] // { deviceId, label, kind, capabilities, isLikelyUsb }
 let isCyclingCameras = false // flag for camera cycling
 let cycleAbortController = null // to abort cycling
+let isAutoDetecting = false // flag for auto-detect process
+let autoDetectAborted = false // to abort auto-detect
+let cameraTestCanvas = null // offscreen canvas for black frame detection
+let currentCameraIndex = 0 // which camera index is currently active
+let workingCameras = [] // cameras that produce non-black frames
 
 // Capture
 let capturePhase = 'standby' // standby | ready-1 | ready-2 | sending
@@ -750,21 +776,21 @@ async function requestCameraPermission() {
 }
 
 // ── Lightweight Camera Enumeration (NO probing/opening cameras) ──────────
-// This is the safe way to list cameras without locking any of them.
-// On Android, opening a camera can lock it and prevent it from being
-// opened again later. So we only enumerate, never open during this step.
+// Lists cameras and scores them by label for USB likelihood.
 async function enumerateCameras() {
-  console.log('[OP] Enumerating cameras (lightweight, no probing)...')
+  console.log('[OP] Enumerating cameras...')
   
   try {
     const devices = await navigator.mediaDevices.enumerateDevices()
     videoDevices = devices.filter(d => d.kind === 'videoinput')
     
-    console.log('[OP] enumerateDevices found', videoDevices.length, 'video devices')
+    console.log('[OP] Found', videoDevices.length, 'video devices')
+    videoDevices.forEach((d, i) => {
+      console.log(`[OP]   Camera ${i}: id=${d.deviceId?.slice(0,8)} label="${d.label}" groupId=${d.groupId?.slice(0,8)}`)
+    })
     
     // Build probe info WITHOUT opening cameras
     probedCameras = []
-    const groupIds = new Map() // track groupId frequency for USB detection
     
     for (let i = 0; i < videoDevices.length; i++) {
       const device = videoDevices[i]
@@ -779,12 +805,8 @@ async function enumerateCameras() {
         height: null,
         frameRate: null,
         probed: false,
+        isBlack: null, // null = not tested, true = black, false = has content
         index: i,
-      }
-      
-      // Track groupId for USB detection
-      if (device.groupId) {
-        groupIds.set(device.groupId, (groupIds.get(device.groupId) || 0) + 1)
       }
       
       // Check label for USB indicators
@@ -796,40 +818,9 @@ async function enumerateCameras() {
       if (label.includes('video capture')) probeInfo.usbScore += 5
       if (label.includes('hdmi')) probeInfo.usbScore += 5
       if (label.includes('webcam')) probeInfo.usbScore += 3
-      if (label.includes('cam link')) probeInfo.usbScore += 5
-      if (label.includes('elgato')) probeInfo.usbScore += 5
-      if (label.includes('avermedia')) probeInfo.usbScore += 5
-      if (label.includes('magewell')) probeInfo.usbScore += 5
-      if (label.includes('obs')) probeInfo.usbScore += 3
       
-      // On Android, USB capture cards sometimes show up with generic names
-      // like "Camera 2" or "Camera 1" or just a number
-      // If there are 2+ cameras and this one has a generic name, it might be USB
-      const genericLabelMatch = label.match(/camera\s*(\d+)/)
-      if (genericLabelMatch) {
-        const camNum = parseInt(genericLabelMatch[1])
-        if (camNum >= 2) probeInfo.usbScore += 3 // Camera 2+ is often USB
-      }
-      
-      // On some Android devices, USB cameras appear with NO label at all
-      // If a device has an empty label but we have permission, it might be USB
-      if (!device.label && cameraPermissionGranted) {
-        probeInfo.usbScore += 2
-      }
-      
-      // Determine if likely USB (lower threshold since we're not probing)
-      probeInfo.isLikelyUsb = probeInfo.usbScore >= 3
+      probeInfo.isLikelyUsb = probeInfo.usbScore >= 4
       probedCameras.push(probeInfo)
-    }
-    
-    // Post-processing: If we have 2+ cameras and none detected as USB,
-    // mark the LAST camera as potentially USB (Android often lists USB cameras last)
-    const usbCount = probedCameras.filter(c => c.isLikelyUsb).length
-    if (probedCameras.length >= 2 && usbCount === 0) {
-      const lastCam = probedCameras[probedCameras.length - 1]
-      lastCam.usbScore += 2
-      lastCam.isLikelyUsb = lastCam.usbScore >= 3
-      console.log(`[OP] No USB camera detected by label — marking last camera "${lastCam.label}" as potential USB`)
     }
     
     // Update USB detection status
@@ -839,20 +830,366 @@ async function enumerateCameras() {
     renderProbeResults()
     updateUsbStatus()
     
-    // Auto-select USB camera if found and none selected
-    if (usbCameraDetected && !selectedDeviceId) {
-      const usbCam = probedCameras.find(c => c.isLikelyUsb)
-      if (usbCam) {
-        selectedDeviceId = usbCam.deviceId
-      }
-    }
-    
     return probedCameras
     
   } catch(err) {
     console.error('[OP] enumerateCameras failed:', err)
     return []
   }
+}
+
+// ── Black Frame Detection ────────────────────────────────────────────────
+// Captures a frame from the video element and checks if it's all black.
+// Returns true if the frame appears to be completely black.
+function isFrameBlack(videoEl) {
+  if (!videoEl || videoEl.readyState < 2) return true // not ready = treat as black
+  
+  try {
+    if (!cameraTestCanvas) {
+      cameraTestCanvas = document.createElement('canvas')
+    }
+    const canvas = cameraTestCanvas
+    const testW = 160 // small size for fast analysis
+    const testH = 120
+    canvas.width = testW
+    canvas.height = testH
+    
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    ctx.drawImage(videoEl, 0, 0, testW, testH)
+    
+    const imageData = ctx.getImageData(0, 0, testW, testH)
+    const data = imageData.data
+    
+    // Sample pixels instead of checking every one (performance)
+    let totalBrightness = 0
+    let sampleCount = 0
+    const step = 16 // sample every 16th pixel
+    
+    for (let i = 0; i < data.length; i += 4 * step) {
+      const r = data[i]
+      const g = data[i + 1]
+      const b = data[i + 2]
+      totalBrightness += (r + g + b) / 3
+      sampleCount++
+    }
+    
+    const avgBrightness = totalBrightness / sampleCount
+    const isBlack = avgBrightness < 5 // threshold: average brightness < 5 out of 255
+    
+    console.log(`[OP] Frame analysis: avg brightness=${avgBrightness.toFixed(1)}, samples=${sampleCount}, isBlack=${isBlack}`)
+    return isBlack
+  } catch(err) {
+    console.warn('[OP] Frame analysis failed:', err)
+    return true // assume black on error
+  }
+}
+
+// ── Auto-Detect Best Camera ──────────────────────────────────────────────
+// THE KEY FUNCTION: Tries each camera one by one, checks for black frames,
+// and auto-selects the first camera with actual video content.
+// This works regardless of device labels or USB detection heuristics.
+async function autoDetectBestCamera() {
+  if (isAutoDetecting) {
+    console.log('[OP] Auto-detect already in progress, aborting previous...')
+    autoDetectAborted = true
+    await new Promise(r => setTimeout(r, 300))
+  }
+  
+  isAutoDetecting = true
+  autoDetectAborted = false
+  workingCameras = []
+  
+  console.log('[OP] ═══ AUTO-DETECT: Starting camera scan ═══')
+  
+  // Stop current stream
+  if (currentStream) {
+    currentStream.getTracks().forEach(t => t.stop())
+    currentStream = null
+  }
+  
+  // Ensure we have fresh device list
+  await enumerateCameras()
+  
+  if (videoDevices.length === 0) {
+    console.warn('[OP] No video devices found at all')
+    isAutoDetecting = false
+    showAutoDetectStatus('❌ Tidak ada kamera ditemukan', 'err')
+    return null
+  }
+  
+  const video = document.getElementById('videoPreview')
+  document.getElementById('noCameraMsg').classList.add('hidden')
+  
+  // Show auto-detect status
+  showAutoDetectStatus('🔍 Mencari kamera yang aktif...', 'pending')
+  
+  // Try cameras in REVERSE order on Android (USB capture cards are often listed last)
+  // But also try forward order as fallback
+  const order = []
+  for (let i = videoDevices.length - 1; i >= 0; i--) order.push(i)
+  // Also add forward order in case USB is listed first
+  for (let i = 0; i < videoDevices.length; i++) {
+    if (!order.includes(i)) order.push(i)
+  }
+  
+  let bestCamera = null
+  let bestDeviceId = null
+  
+  for (const camIdx of order) {
+    if (autoDetectAborted) break
+    
+    const device = videoDevices[camIdx]
+    if (!device) continue
+    
+    const label = device.label || `Kamera ${camIdx + 1}`
+    showAutoDetectStatus(`🔍 Mencoba ${label}...`, 'pending')
+    console.log(`[OP] Auto-detect: trying camera ${camIdx} "${label}" (id: ${device.deviceId?.slice(0,8)})`)
+    
+    // Try to open this camera
+    let stream = null
+    
+    // Strategy 1: exact deviceId with high res
+    const strategies = [
+      { name: 'exact+1080p', c: { video: { deviceId: { exact: device.deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false } },
+      { name: 'exact+720p', c: { video: { deviceId: { exact: device.deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false } },
+      { name: 'exact+480p', c: { video: { deviceId: { exact: device.deviceId }, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false } },
+      { name: 'exact+nores', c: { video: { deviceId: { exact: device.deviceId } }, audio: false } },
+    ]
+    
+    for (const strategy of strategies) {
+      if (autoDetectAborted) break
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(strategy.c)
+        console.log(`[OP]   Opened with strategy: ${strategy.name}`)
+        break
+      } catch(e) {
+        // try next strategy
+      }
+    }
+    
+    if (!stream) {
+      console.log(`[OP]   Failed to open camera ${camIdx} "${label}"`)
+      // Update probedCameras
+      const probed = probedCameras.find(c => c.deviceId === device.deviceId)
+      if (probed) { probed.probed = true; probed.isBlack = true }
+      continue
+    }
+    
+    // We got a stream! Stop previous stream and attach this one
+    if (currentStream) {
+      currentStream.getTracks().forEach(t => t.stop())
+    }
+    currentStream = stream
+    video.srcObject = stream
+    video.style.transform = isMirrored ? 'scaleX(-1)' : 'none'
+    
+    // Wait for video to actually start playing
+    try {
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('video play timeout')), 5000)
+        video.onloadeddata = () => { clearTimeout(timeout); resolve() }
+        video.play().then(() => {}).catch(() => {})
+        // Also resolve on playing event
+        video.onplaying = () => { clearTimeout(timeout); resolve() }
+      })
+    } catch(e) {
+      console.warn(`[OP]   Video play timeout for camera ${camIdx}`)
+    }
+    
+    // Wait a bit more for the camera to stabilize (important for USB capture cards)
+    await new Promise(r => setTimeout(r, 1500))
+    
+    if (autoDetectAborted) {
+      stream.getTracks().forEach(t => t.stop())
+      break
+    }
+    
+    // Get track info
+    const track = stream.getVideoTracks()[0]
+    const settings = track?.getSettings()
+    const trackLabel = track?.label || ''
+    console.log(`[OP]   Track: "${trackLabel}" ${settings?.width}x${settings?.height} facing=${settings?.facingMode}`)
+    
+    // Check if frame is black
+    const black = isFrameBlack(video)
+    
+    // Update probedCameras
+    const probed = probedCameras.find(c => c.deviceId === device.deviceId)
+    if (probed) {
+      probed.probed = true
+      probed.isBlack = black
+      probed.facingMode = settings?.facingMode || null
+      probed.width = settings?.width || null
+      probed.height = settings?.height || null
+      probed.frameRate = settings?.frameRate || null
+    }
+    
+    if (!black) {
+      // This camera has actual content!
+      console.log(`[OP]   ✅ Camera ${camIdx} "${label}" has VIDEO CONTENT!`)
+      workingCameras.push({
+        deviceId: device.deviceId,
+        label: trackLabel || label,
+        index: camIdx,
+        width: settings?.width,
+        height: settings?.height,
+        facingMode: settings?.facingMode,
+      })
+      
+      if (!bestCamera) {
+        // First working camera found — use it!
+        bestCamera = stream
+        bestDeviceId = device.deviceId
+        selectedDeviceId = device.deviceId
+        currentCameraIndex = camIdx
+        cameraAvailable = true
+        
+        showAutoDetectStatus(`✅ Kamera aktif: ${trackLabel || label}`, 'ok')
+        
+        // Don't stop this stream — it's our active camera!
+        // But continue checking other cameras in background
+        // Actually, let's stop here — we found a working camera
+        break
+      }
+    } else {
+      console.log(`[OP]   ⬛ Camera ${camIdx} "${label}" shows BLACK frame — skipping`)
+      stream.getTracks().forEach(t => t.stop())
+    }
+    
+    // Delay before trying next camera (Android camera release)
+    await new Promise(r => setTimeout(r, 500))
+  }
+  
+  // Clean up
+  isAutoDetecting = false
+  
+  if (bestCamera) {
+    // Ensure stream is attached
+    if (currentStream !== bestCamera) {
+      if (currentStream) currentStream.getTracks().forEach(t => t.stop())
+      currentStream = bestCamera
+      video.srcObject = bestCamera
+      video.style.transform = isMirrored ? 'scaleX(-1)' : 'none'
+      try { await video.play() } catch(e) {}
+    }
+    
+    document.getElementById('noCameraMsg').classList.add('hidden')
+    updateCameraSelector()
+    renderProbeResults()
+    
+    const track = bestCamera.getVideoTracks()[0]
+    const label = track?.label || 'Kamera'
+    console.log(`[OP] ═══ AUTO-DETECT COMPLETE: Using "${label}" ═══`)
+    
+    return bestDeviceId
+  }
+  
+  // No working camera found — keep the last one we tried
+  console.warn('[OP] Auto-detect: No camera with content found. Trying to use any available camera.')
+  
+  // Last resort: just try the first camera without black frame check
+  if (videoDevices.length > 0) {
+    const fallbackDevice = videoDevices[videoDevices.length - 1] // last one = often USB on Android
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: fallbackDevice.deviceId } },
+        audio: false
+      })
+      if (currentStream) currentStream.getTracks().forEach(t => t.stop())
+      currentStream = stream
+      selectedDeviceId = fallbackDevice.deviceId
+      video.srcObject = stream
+      video.style.transform = isMirrored ? 'scaleX(-1)' : 'none'
+      try { await video.play() } catch(e) {}
+      cameraAvailable = true
+      document.getElementById('noCameraMsg').classList.add('hidden')
+      updateCameraSelector()
+      showAutoDetectStatus('⚠️ Kamera aktif (mungkin hitam — coba ganti)', 'warn')
+      return fallbackDevice.deviceId
+    } catch(e) {
+      console.error('[OP] Fallback camera also failed:', e)
+    }
+  }
+  
+  showAutoDetectStatus('❌ Tidak ada kamera yang bisa dibuka', 'err')
+  document.getElementById('noCameraMsg').classList.remove('hidden')
+  return null
+}
+
+// ── Show auto-detect status in the operator screen ──────────────────────
+function showAutoDetectStatus(text, type) {
+  let el = document.getElementById('autoDetectStatus')
+  if (!el) return
+  el.textContent = text
+  el.className = 'auto-detect-status ' + (type || '')
+  el.style.display = text ? 'flex' : 'none'
+}
+
+// ── Switch to Next Camera ────────────────────────────────────────────────
+// Quick switch to the next camera in the list
+async function switchToNextCamera() {
+  if (isAutoDetecting) return
+  
+  // Stop current stream
+  if (currentStream) {
+    currentStream.getTracks().forEach(t => t.stop())
+    currentStream = null
+  }
+  
+  await enumerateCameras()
+  
+  if (videoDevices.length === 0) return
+  
+  // Move to next camera index
+  currentCameraIndex = (currentCameraIndex + 1) % videoDevices.length
+  const nextDevice = videoDevices[currentCameraIndex]
+  
+  console.log(`[OP] Switching to camera ${currentCameraIndex}: "${nextDevice.label || 'Kamera ' + (currentCameraIndex+1)}"`)
+  
+  selectedDeviceId = nextDevice.deviceId
+  
+  // Try to open this camera
+  const video = document.getElementById('videoPreview')
+  let stream = null
+  
+  const strategies = [
+    { video: { deviceId: { exact: nextDevice.deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
+    { video: { deviceId: { exact: nextDevice.deviceId }, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false },
+    { video: { deviceId: { exact: nextDevice.deviceId } }, audio: false },
+  ]
+  
+  for (const c of strategies) {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(c)
+      break
+    } catch(e) {}
+  }
+  
+  if (stream) {
+    currentStream = stream
+    video.srcObject = stream
+    video.style.transform = isMirrored ? 'scaleX(-1)' : 'none'
+    try { await video.play() } catch(e) {}
+    cameraAvailable = true
+    document.getElementById('noCameraMsg').classList.add('hidden')
+    
+    // Check if black after a brief delay
+    setTimeout(() => {
+      const black = isFrameBlack(video)
+      const track = stream.getVideoTracks()[0]
+      const label = track?.label || nextDevice.label || `Kamera ${currentCameraIndex+1}`
+      if (black) {
+        showAutoDetectStatus(`⬛ ${label} — layar hitam, coba ganti`, 'warn')
+      } else {
+        showAutoDetectStatus(`✅ ${label} — kamera aktif`, 'ok')
+      }
+    }, 2000)
+  } else {
+    cameraAvailable = false
+    showAutoDetectStatus('❌ Gagal membuka kamera ini', 'err')
+  }
+  
+  updateCameraSelector()
 }
 
 // ── Deep Probe — Open each camera briefly to get detailed info ──────────
@@ -1224,8 +1561,14 @@ function renderProbeResults() {
   section.style.display = 'block'
   list.innerHTML = ''
   
-  // Sort: USB cameras first, then by score
-  const sorted = [...probedCameras].sort((a, b) => b.usbScore - a.usbScore)
+  // Sort: working cameras first, then by USB score
+  const sorted = [...probedCameras].sort((a, b) => {
+    // Working (non-black) cameras first
+    const aWork = a.isBlack === false ? 0 : 1
+    const bWork = b.isBlack === false ? 0 : 1
+    if (aWork !== bWork) return aWork - bWork
+    return b.usbScore - a.usbScore
+  })
   
   sorted.forEach(cam => {
     const item = document.createElement('div')
@@ -1234,14 +1577,34 @@ function renderProbeResults() {
       item.style.borderColor = 'var(--gold)'
     }
     
-    const icon = cam.isLikelyUsb ? '🔌' : '📱'
-    const badgeClass = cam.isLikelyUsb ? 'usb' : (cam.facingMode ? 'phone' : 'unknown')
-    const badgeText = cam.isLikelyUsb ? 'USB' : (cam.facingMode === 'user' ? 'Depan' : cam.facingMode === 'environment' ? 'Belakang' : '?')
+    // Better icon logic based on black frame detection
+    let icon = '📱' // phone camera by default
+    let badgeClass = 'phone'
+    let badgeText = '?'
+    
+    if (cam.isBlack === false) {
+      // Has actual content!
+      icon = cam.isLikelyUsb ? '🔌' : '📹'
+      badgeClass = 'usb'
+      badgeText = cam.isLikelyUsb ? 'USB ✅' : 'AKTIF'
+    } else if (cam.isBlack === true) {
+      // Shows black
+      icon = '⬛'
+      badgeClass = 'unknown'
+      badgeText = 'HITAM'
+    } else {
+      // Not tested yet
+      icon = cam.isLikelyUsb ? '🔌' : '📱'
+      badgeClass = cam.isLikelyUsb ? 'usb' : (cam.facingMode ? 'phone' : 'unknown')
+      badgeText = cam.isLikelyUsb ? 'USB' : (cam.facingMode === 'user' ? 'Depan' : cam.facingMode === 'environment' ? 'Belakang' : '?')
+    }
     
     let detail = ''
     if (cam.probed) {
       detail = `${cam.width || '?'}×${cam.height || '?'}`
       if (cam.frameRate) detail += ` @${Math.round(cam.frameRate)}fps`
+      if (cam.isBlack === true) detail += ' ⬛ HITAM'
+      if (cam.isBlack === false) detail += ' ✅'
     } else {
       detail = 'Belum diperiksa'
     }
@@ -1257,6 +1620,7 @@ function renderProbeResults() {
     
     item.onclick = () => {
       selectedDeviceId = cam.deviceId
+      startCamera(cam.deviceId)
       renderProbeResults()
     }
     
@@ -1273,12 +1637,19 @@ function updateUsbStatus() {
     return
   }
   
-  if (usbCameraDetected) {
+  const workingCount = probedCameras.filter(c => c.isBlack === false).length
+  const blackCount = probedCameras.filter(c => c.isBlack === true).length
+  const untestedCount = probedCameras.filter(c => c.isBlack === null).length
+  
+  if (workingCount > 0) {
+    usbVal.textContent = `✅ ${workingCount} kamera aktif, ${blackCount} hitam`
+    usbVal.className = 'usb-value ok'
+  } else if (usbCameraDetected) {
     const usbCams = probedCameras.filter(c => c.isLikelyUsb)
-    usbVal.textContent = `✅ ${usbCams.length} terdeteksi`
+    usbVal.textContent = `🔌 ${usbCams.length} USB (belum diperiksa)`
     usbVal.className = 'usb-value ok'
   } else {
-    usbVal.textContent = `${probedCameras.length} kamera — gunakan "Coba Semua" untuk mencari`
+    usbVal.textContent = `${probedCameras.length} kamera — gunakan "🔄 Cari" untuk mencari`
     usbVal.className = 'usb-value warn'
   }
 }
@@ -1290,7 +1661,6 @@ async function startCamera(deviceId) {
   if (currentStream) {
     currentStream.getTracks().forEach(t => t.stop())
     currentStream = null
-    // IMPORTANT: Add delay to let Android release the camera hardware
     await new Promise(resolve => setTimeout(resolve, 300))
   }
   
@@ -1300,49 +1670,30 @@ async function startCamera(deviceId) {
   const strategies = []
   
   if (deviceId) {
-    // Strategy 1: exact deviceId with high resolution
     strategies.push({
-      name: 'exact+highres',
+      name: 'exact+1080p',
       constraints: { video: { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }
     })
-    // Strategy 2: exact deviceId with 720p (some USB cards only support 720p)
     strategies.push({
       name: 'exact+720p',
       constraints: { video: { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false }
     })
-    // Strategy 3: exact deviceId with NO resolution constraints
+    strategies.push({
+      name: 'exact+480p',
+      constraints: { video: { deviceId: { exact: deviceId }, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false }
+    })
     strategies.push({
       name: 'exact+nores',
       constraints: { video: { deviceId: { exact: deviceId } }, audio: false }
     })
-    // Strategy 4: ideal deviceId (preferred but not required)
     strategies.push({
       name: 'ideal',
-      constraints: { video: { deviceId: { ideal: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }
+      constraints: { video: { deviceId: { ideal: deviceId } }, audio: false }
     })
   } else {
-    // No specific device — try USB camera first
-    const usbCam = probedCameras.find(c => c.isLikelyUsb)
-    if (usbCam) {
-      strategies.push({
-        name: 'usb-exact',
-        constraints: { video: { deviceId: { exact: usbCam.deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }
-      })
-      strategies.push({
-        name: 'usb-nores',
-        constraints: { video: { deviceId: { exact: usbCam.deviceId } }, audio: false }
-      })
-    }
-    // Fallback: environment camera
-    strategies.push({
-      name: 'environment',
-      constraints: { video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }
-    })
-    // Last resort: any camera
-    strategies.push({
-      name: 'any',
-      constraints: { video: true, audio: false }
-    })
+    // No specific device — trigger auto-detect instead
+    console.log('[OP] No deviceId specified — triggering auto-detect')
+    return autoDetectBestCamera()
   }
   
   // Try each strategy until one works
@@ -1356,6 +1707,11 @@ async function startCamera(deviceId) {
       
       video.style.transform = isMirrored ? 'scaleX(-1)' : 'none'
       video.srcObject = stream
+      
+      // IMPORTANT: Explicitly play the video (some browsers require it)
+      try { await video.play() } catch(playErr) {
+        console.warn('[OP] video.play() failed, will auto-play:', playErr.message)
+      }
       
       const track = stream.getVideoTracks()[0]
       const trackSettings = track.getSettings()
@@ -1378,6 +1734,34 @@ async function startCamera(deviceId) {
       
       document.getElementById('noCameraMsg').classList.add('hidden')
       updateCameraSelector()
+      
+      // Check if black frame after a brief delay (camera needs time to warm up)
+      setTimeout(() => {
+        const black = isFrameBlack(video)
+        const label = track?.label || 'Kamera'
+        if (black) {
+          showAutoDetectStatus(`⬛ ${label} — layar hitam, coba "▶ Ganti"`, 'warn')
+        } else {
+          showAutoDetectStatus(`✅ ${label}`, 'ok')
+          // Auto-hide after 3 seconds
+          setTimeout(() => {
+            const el = document.getElementById('autoDetectStatus')
+            if (el && el.classList.contains('ok')) el.style.display = 'none'
+          }, 3000)
+        }
+        
+        // Update probedCameras
+        const probed = probedCameras.find(c => c.deviceId === (deviceId || selectedDeviceId))
+        if (probed) {
+          probed.probed = true
+          probed.isBlack = black
+          probed.facingMode = trackSettings?.facingMode || null
+          probed.width = trackSettings?.width || null
+          probed.height = trackSettings?.height || null
+          renderProbeResults()
+        }
+      }, 2000)
+      
       return
       
     } catch(err) {
@@ -1389,6 +1773,7 @@ async function startCamera(deviceId) {
   console.error('[OP] All camera start strategies failed')
   cameraAvailable = false
   document.getElementById('noCameraMsg').classList.remove('hidden')
+  showAutoDetectStatus('❌ Gagal membuka kamera', 'err')
 }
 
 function updateCameraSelector() {
@@ -1405,12 +1790,24 @@ function updateCameraSelector() {
     opt.value = d.deviceId
     const label = d.label || `Kamera ${i+1}`
     
-    // Check probed info for USB detection
+    // Check probed info
     const probed = probedCameras.find(c => c.deviceId === d.deviceId)
     const isUSB = probed?.isLikelyUsb || false
     
-    // Show camera type and resolution if probed
-    let displayLabel = isUSB ? `🔌 ${label}` : `📱 ${label}`
+    // Show camera type, status, and resolution
+    let prefix = '📱'
+    let suffix = ''
+    if (probed?.isBlack === false) {
+      prefix = isUSB ? '🔌' : '📹'
+      suffix = ' ✅'
+    } else if (probed?.isBlack === true) {
+      prefix = '⬛'
+      suffix = ' (hitam)'
+    } else if (isUSB) {
+      prefix = '🔌'
+    }
+    
+    let displayLabel = `${prefix} ${label}${suffix}`
     if (probed?.probed && probed?.width) {
       displayLabel += ` (${probed.width}×${probed.height})`
     }
@@ -1431,20 +1828,8 @@ function handleCameraChange() {
 }
 
 async function rescanCameras() {
-  console.log('[OP] Rescanning cameras...')
-  // Use deep probe for manual rescan — user explicitly wants detailed info
-  await deepProbeCameras()
-  if (selectedDeviceId) {
-    startCamera(selectedDeviceId)
-  } else if (videoDevices.length > 0) {
-    // Auto-select USB camera or first camera
-    const usbCam = probedCameras.find(c => c.isLikelyUsb)
-    const device = usbCam || probedCameras[0]
-    if (device) {
-      selectedDeviceId = device.deviceId
-      startCamera(device.deviceId)
-    }
-  }
+  console.log('[OP] Rescanning cameras with auto-detect...')
+  await autoDetectBestCamera()
 }
 
 function toggleMirror() {
@@ -1456,16 +1841,8 @@ function toggleMirror() {
 
 // ── Device change listener (USB hot-plug) ────────────────────────────────
 navigator.mediaDevices?.addEventListener('devicechange', async () => {
-  console.log('[OP] Device change detected — rescanning...')
-  await enumerateCameras()
-  
-  // Auto-switch to newly connected USB camera
-  const usbCam = probedCameras.find(c => c.isLikelyUsb && c.deviceId !== selectedDeviceId)
-  if (usbCam) {
-    console.log('[OP] USB camera detected — auto-switching to:', usbCam.label)
-    selectedDeviceId = usbCam.deviceId
-    startCamera(usbCam.deviceId)
-  }
+  console.log('[OP] Device change detected — running auto-detect...')
+  await autoDetectBestCamera()
 })
 
 // ── Troubleshooting toggle ───────────────────────────────────────────────
@@ -1826,23 +2203,9 @@ function showOperatorScreen() {
   document.getElementById('connectionScreen').classList.add('hidden')
   document.getElementById('operatorScreen').classList.add('active')
   
-  // Start camera if not already
+  // Start camera with AUTO-DETECT (tries all cameras, picks the one with actual content)
   if (!cameraAvailable) {
-    enumerateCameras().then(() => {
-      if (probedCameras.length > 0) {
-        // Prefer USB camera, then first available
-        const usbCam = probedCameras.find(c => c.isLikelyUsb)
-        const device = usbCam || probedCameras[0]
-        if (device && !selectedDeviceId) {
-          selectedDeviceId = device.deviceId
-        }
-        if (selectedDeviceId) {
-          startCamera(selectedDeviceId)
-        } else {
-          startCamera(device.deviceId)
-        }
-      }
-    })
+    autoDetectBestCamera()
   }
 }
 
@@ -1855,6 +2218,11 @@ function handleLanMessage(payload) {
       const data = payload.data
       console.log('[OP] MC_CALL received:', data)
       if (data.channel === myChannel) {
+        // If camera is not available, try auto-detect
+        if (!cameraAvailable || !currentStream) {
+          console.log('[OP] Camera not ready when MC_CALL received — triggering auto-detect')
+          autoDetectBestCamera()
+        }
         currentTarget = data.student || data
         capturedPhotos = []
         capturePhase = 'ready-1'
@@ -2004,8 +2372,25 @@ function doCapture() {
   const video = document.getElementById('videoPreview')
   
   if (!video || video.readyState < 2) {
-    console.warn('[OP] Video not ready for capture')
+    console.warn('[OP] Video not ready for capture — trying to re-initialize camera')
+    // Try to reinitialize camera
+    if (currentStream) {
+      video.srcObject = currentStream
+      video.play().catch(() => {})
+    }
     return
+  }
+  
+  // Check if frame is black — warn but still capture (user might have lens cap on)
+  const black = isFrameBlack(video)
+  if (black) {
+    console.warn('[OP] WARNING: Video frame appears black — capture may produce black image')
+    showAutoDetectStatus('⚠️ Kamera hitam — coba ganti kamera!', 'warn')
+    // Auto-hide after 3 seconds
+    setTimeout(() => {
+      const el = document.getElementById('autoDetectStatus')
+      if (el && el.textContent.includes('hitam')) el.style.display = 'none'
+    }, 3000)
   }
   
   const ratioMap = { '4:3': 4/3, '16:9': 16/9, '3:4': 3/4, '2:3': 2/3, '1:1': 1 }
@@ -2304,7 +2689,7 @@ async function checkExistingPermission() {
         document.getElementById('permStatus').textContent = 'Izin kamera sudah diberikan'
         document.getElementById('permStatus').style.color = '#4ade80'
         
-        // Use lightweight enumeration (no probing)
+        // Just enumerate to show camera list — auto-detect will happen when entering operator screen
         await enumerateCameras()
       }
       
