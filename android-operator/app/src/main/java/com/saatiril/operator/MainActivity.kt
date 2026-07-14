@@ -3,6 +3,7 @@ package com.saatiril.operator
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
@@ -16,6 +17,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
+import com.saatiril.operator.camera.UVCCameraManager
 import com.saatiril.operator.data.ConnectionState
 import com.saatiril.operator.data.OperatorViewModel
 import com.saatiril.operator.ui.operator.OperatorScreen
@@ -23,18 +25,19 @@ import com.saatiril.operator.ui.connection.ConnectionScreen
 
 /**
  * ═════════════════════════════════════════════════════════════════════════
- * v14: Camera2 Direct Architecture (USB Capture Card Support)
+ * v15: UVCCamera Direct Architecture (USB Capture Card Support)
  * ═════════════════════════════════════════════════════════════════════════
  *
- * Replaced WebView+getUserMedia with Camera2 API + TextureView.
- * WebView/getUserMedia CANNOT access USB capture cards on Android.
- * Camera2 API with LENS_FACING_EXTERNAL is the correct way to access them.
+ * Replaced Camera2 API with UVCCamera library + TextureView.
+ * Camera2/CameraX API CANNOT access USB HDMI video capture cards on Android.
+ * USB capture cards are UVC (USB Video Class) devices and require a dedicated
+ * UVC library (saki4510t/UVCCamera) to access them directly via USB Host API.
  *
- * Layout structure:
+ * Layout structure (same as v14 but with UVC instead of Camera2):
  * ┌──────────────────────────────┐
  * │  FrameLayout (root)          │
  * │  ┌────────────────────────┐  │
- * │  │ TextureView (preview)  │  │  ← Bottom layer, camera preview
+ * │  │ TextureView (preview)  │  │  ← Bottom layer, UVC camera preview
  * │  └────────────────────────┘  │
  * │  ┌────────────────────────┐  │
  * │  │ ComposeView (UI)       │  │  ← Top layer, transparent background
@@ -44,8 +47,8 @@ import com.saatiril.operator.ui.connection.ConnectionScreen
  * └──────────────────────────────┘
  *
  * This guarantees:
- * 1. Camera2 API directly accesses USB capture cards via LENS_FACING_EXTERNAL
- * 2. TextureView renders camera preview in real-time
+ * 1. UVCCamera directly accesses USB capture cards via USB Host API
+ * 2. TextureView renders UVC camera preview in real-time
  * 3. Compose UI overlays on top of camera preview
  * 4. On ConnectionScreen: Compose has opaque background → camera hidden
  * 5. On OperatorScreen: Compose has transparent areas → camera visible
@@ -82,7 +85,7 @@ class MainActivity : ComponentActivity() {
             Log.i(TAG, "Camera permission GRANTED")
             _cameraPermissionGranted = true
             onCameraPermissionGranted?.invoke()
-            // Initialize camera via Camera2 API
+            // Initialize camera via UVCCamera
             viewModel.initCamera()
         }
 
@@ -119,7 +122,7 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        // Create the TextureView for Camera2 preview and add to root as bottom layer
+        // Create the TextureView for UVC camera preview and add to root as bottom layer
         val textureView = TextureView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -176,6 +179,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        // UVCCameraManager handles its own cleanup via destroy()
+        // which is called from ViewModel.onCleared()
+    }
+
     private fun handleUsbIntent(intent: Intent) {
         when (intent.action) {
             UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
@@ -189,6 +198,23 @@ class MainActivity : ComponentActivity() {
             UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                 Log.i(TAG, "USB device detached")
                 viewModel.setUvcDeviceAttached(false)
+            }
+            ACTION_USB_PERMISSION -> {
+                synchronized(this) {
+                    val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                    }
+                    val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+
+                    Log.i(TAG, "USB permission result: device=${device?.deviceName}, granted=$granted")
+
+                    if (device != null) {
+                        (viewModel.cameraManager as? UVCCameraManager)?.onUsbPermissionResult(device, granted)
+                    }
+                }
             }
         }
     }

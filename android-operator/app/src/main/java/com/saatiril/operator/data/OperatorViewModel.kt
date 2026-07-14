@@ -7,7 +7,7 @@ import android.util.Base64
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.saatiril.operator.camera.Camera2Manager
+import com.saatiril.operator.camera.UVCCameraManager
 import com.saatiril.operator.util.FilenameUtils
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -19,21 +19,21 @@ import kotlinx.coroutines.launch
 
 /**
  * ═════════════════════════════════════════════════════════════════════════
- * Central ViewModel — v14 Camera2 Direct Engine
+ * Central ViewModel — v15 UVCCamera Direct Engine
  * ═════════════════════════════════════════════════════════════════════════
  *
- * v14 CHANGES (Camera2 API replacing WebView+getUserMedia):
- * - Camera: Camera2Manager replaces WebViewCameraManager.
- *   Camera2 API with LENS_FACING_EXTERNAL directly accesses USB capture cards.
- *   WebView/getUserMedia CANNOT access USB capture cards on Android.
- * - USB Detection: Camera2 LENS_FACING_EXTERNAL + camera ID >= "2" heuristic.
- * - Photo Capture: ImageReader → JPEG → base64. No JavaScript involved.
- * - Preview: TextureView (replaces WebView). Camera preview renders directly.
+ * v15 CHANGES (UVCCamera replacing Camera2 API):
+ * - Camera: UVCCameraManager replaces Camera2Manager.
+ *   UVCCamera library directly communicates with USB Video Class devices.
+ *   Camera2/CameraX API CANNOT access USB HDMI capture cards on Android.
+ *   USB capture cards are UVC devices and require a dedicated UVC library.
+ * - USB Detection: USBMonitor detects UVC devices via USB Host API.
+ * - Photo Capture: captureStill() → JPEG file → base64. No Camera2 involved.
+ * - Preview: TextureView (same as v14). UVC camera preview renders directly.
  *
  * Camera priority:
- * 1. USB/External camera (LENS_FACING_EXTERNAL) — auto-selected if present
- * 2. Built-in back camera — fallback
- * 3. Built-in front camera — last resort
+ * 1. USB UVC camera (USBMonitor auto-detect) — auto-selected if present
+ * 2. No fallback — UVC only (Camera2 cannot access capture cards)
  */
 class OperatorViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -44,9 +44,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     private val socketManager = SocketManager()
 
-    // ─── Camera Manager (v14: Camera2 Direct) ──────────
+    // ─── Camera Manager (v15: UVCCamera Direct) ──────────
 
-    val cameraManager = Camera2Manager(application)
+    val cameraManager = UVCCameraManager(application)
 
     // ─── Connection State ───────────────────────────────────────
 
@@ -245,12 +245,12 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private var cameraTypeCollector: Job? = null
 
     /**
-     * v14: Initialize camera via Camera2 API.
-     * Camera2 opens the camera directly via Android Camera2 API.
+     * v15: Initialize camera via UVCCamera library.
+     * UVCCamera opens the USB device directly via USB Host API.
      */
     fun initCamera() {
         Log.i(TAG, "═══════════════════════════════════════════════════")
-        Log.i(TAG, "initCamera: v14 Camera2 Direct")
+        Log.i(TAG, "initCamera: v15 UVCCamera Direct")
         Log.i(TAG, "═══════════════════════════════════════════════════")
 
         cameraManager.initCamera()
@@ -275,7 +275,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             }
         }
 
-        Log.i(TAG, "Camera initialized — Camera2 active, cameraSource=${_cameraSource.value}")
+        Log.i(TAG, "Camera initialized — UVCCamera active, cameraSource=${_cameraSource.value}")
     }
 
     private fun updateCameraSource() {
@@ -312,7 +312,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     /**
      * Force rescan for USB cameras. Called when user taps "Pindai Ulang USB".
-     * v14: Camera2 enumerates cameras directly, no WebView needed.
+     * v15: UVCCamera enumerates USB devices directly, no Camera2 needed.
      */
     fun forceRescanUsbCamera() {
         Log.i(TAG, "forceRescanUsbCamera: User requested USB camera rescan")
@@ -333,8 +333,8 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     /**
      * Trigger a photo capture. Supports timer mode.
-     * v10: Capture via DualCameraManager (UVCCamera or CameraX).
-     * Native capture — no JavaScript involved.
+     * v15: Capture via UVCCameraManager (UVC capture card).
+     * Native capture — no JavaScript or Camera2 involved.
      */
     fun triggerCapture() {
         val phase = _capturePhase.value
@@ -354,9 +354,8 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * v10: Capture via DualCameraManager (UVCCamera or CameraX).
-     * USB: IFrameCallback → NV21 → JPEG → base64
-     * Built-in: ImageCapture → JPEG → base64
+     * v15: Capture via UVCCameraManager (UVC capture card).
+     * UVC: captureStill() → JPEG file → base64
      *
      * The result is a base64 data URL string, ready to send via socket.
      * Photos are NOT saved locally — only sent to admin via socket.
@@ -391,9 +390,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * Handle a captured photo (base64 data URL from camera engine).
-     * v10: No WebView/JS processing — native capture returns base64 directly.
-     * v10: Photos NOT saved on operator device — only sent via socket.
+     * Handle a captured photo (base64 data URL from UVCCamera engine).
+     * v15: No WebView/JS or Camera2 — native UVC capture returns base64 directly.
+     * v15: Photos NOT saved on operator device — only sent via socket.
      */
     private fun handleCapturedPhoto(base64DataUrl: String) {
         val mode = _project.value?.config?.mode

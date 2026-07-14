@@ -11,8 +11,8 @@ android {
         applicationId = "com.saatiril.operator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 14
-        versionName = "1.0.14-camera2-usb"
+        versionCode = 15
+        versionName = "1.0.15-uvc-camera"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -84,19 +84,13 @@ dependencies {
     // If adding Coil later, use coil-compose-base (no OkHttp) or handle version conflict.
     implementation("io.socket:socket.io-client:2.1.0")
 
-    // Camera2 — direct camera access including USB capture cards
-    // v14: Replaced WebView+getUserMedia with Camera2 API.
-    // Camera2 API with LENS_FACING_EXTERNAL is the correct way to access
-    // USB capture cards on Android. WebView/getUserMedia cannot access them.
-    implementation("androidx.camera:camera-core:1.3.1")
-    implementation("androidx.camera:camera-camera2:1.3.1")
-    implementation("androidx.camera:camera-lifecycle:1.3.1")
-
-    // Image loading — using coil-base without OkHttp dependency to avoid
-    // OkHttp 3.x/4.x version conflict with socket.io-client's engine.io-client
-    // If image loading is needed later, use AsyncImage with a custom fetcher
-    // or switch to a library that doesn't depend on OkHttp (e.g., Glance)
-    // For now, Coil is NOT used in the codebase — removed to prevent runtime conflicts
+    // UVCCamera — direct USB Video Class access for HDMI capture cards
+    // v15: Replaced Camera2 API with UVCCamera library.
+    // Camera2 API CANNOT access USB HDMI video capture cards on Android.
+    // USB capture cards are UVC (USB Video Class) devices and require
+    // a dedicated UVC library to access. Camera2/CameraX only sees
+    // built-in phone cameras, not UVC devices.
+    implementation("com.github.saki4510t:UVCCamera:v3.1.0")
 
     // JSON parsing
     implementation("com.google.code.gson:gson:2.10.1")

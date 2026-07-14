@@ -6,9 +6,10 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     
-    <!-- USB Host for UVC capture card -->
-    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <!-- USB Host for UVC capture card — REQUIRED for UVCCamera library -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="true" />
     
     <!-- Network permissions for LAN Socket.io -->
     <uses-permission android:name="android.permission.INTERNET" />
