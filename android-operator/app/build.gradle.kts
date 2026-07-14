@@ -11,8 +11,8 @@ android {
         applicationId = "com.saatiril.operator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 15
-        versionName = "1.0.15-uvc-camera"
+        versionCode = 16
+        versionName = "1.0.16-uvc-mavencentral"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -90,7 +90,12 @@ dependencies {
     // USB capture cards are UVC (USB Video Class) devices and require
     // a dedicated UVC library to access. Camera2/CameraX only sees
     // built-in phone cameras, not UVC devices.
-    implementation("com.github.saki4510t:UVCCamera:v3.1.0")
+    //
+    // Using alexey-pelykh/UVCCamera fork (org.uvccamera:lib) on Maven Central.
+    // This is a maintained hard fork of the original saki4510t/UVCCamera.
+    // Same com.serenegiant.usb.* package namespace — no code changes needed.
+    // The original saki4510t repo does NOT have proper JitPack builds.
+    implementation("org.uvccamera:lib:0.0.13")
 
     // JSON parsing
     implementation("com.google.code.gson:gson:2.10.1")
