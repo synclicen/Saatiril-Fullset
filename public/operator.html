@@ -391,8 +391,8 @@
   <div id="probeSection" class="probe-section" style="display:none;">
     <div class="probe-title">📷 Kamera Terdeteksi</div>
     <div id="probeList" class="probe-list"></div>
-    <button onclick="probeAllCameras()" style="width:100%;padding:8px;border-radius:8px;font-weight:600;font-size:11px;background:var(--card);border:1px solid var(--border);color:var(--muted);cursor:pointer;margin-top:6px;">
-      🔍 Pindai Ulang Kamera
+    <button onclick="deepProbeCameras()" style="width:100%;padding:8px;border-radius:8px;font-weight:600;font-size:11px;background:var(--card);border:1px solid var(--border);color:var(--muted);cursor:pointer;margin-top:6px;">
+      🔍 Pindai Ulang Kamera (Detail)
     </button>
   </div>
 
@@ -498,6 +498,7 @@
         <option value="">Memuat kamera...</option>
       </select>
       <button class="rescan-btn" onclick="rescanCameras()">🔄 Pindai</button>
+      <button class="rescan-btn" onclick="cycleAllCameras()" style="background:#d4af37;color:#1a0b2e;font-weight:700;" title="Coba buka semua kamera satu per satu">🔌 Coba Semua</button>
     </div>
     <span id="latencyBadge" class="latency-badge">--ms</span>
     <button class="disconnect-btn" onclick="handleDisconnect()">✕</button>
@@ -600,6 +601,8 @@ let videoDevices = []
 let cameraAvailable = false
 let isMirrored = true // Mirror by default for selfie view
 let probedCameras = [] // { deviceId, label, kind, capabilities, isLikelyUsb }
+let isCyclingCameras = false // flag for camera cycling
+let cycleAbortController = null // to abort cycling
 
 // Capture
 let capturePhase = 'standby' // standby | ready-1 | ready-2 | sending
@@ -725,8 +728,8 @@ async function requestCameraPermission() {
     status.textContent = 'Izin kamera diberikan. Memindai kamera...'
     status.style.color = '#4ade80'
     
-    // Now enumerate cameras
-    await probeAllCameras()
+    // Now enumerate cameras (lightweight — no probing/opening)
+    await enumerateCameras()
     
   } catch(err) {
     console.error('[OP] Camera permission denied:', err)
@@ -746,9 +749,12 @@ async function requestCameraPermission() {
   }
 }
 
-// ── Camera Probe — Open each camera and get detailed info ────────────────
-async function probeAllCameras() {
-  console.log('[OP] Probing all cameras...')
+// ── Lightweight Camera Enumeration (NO probing/opening cameras) ──────────
+// This is the safe way to list cameras without locking any of them.
+// On Android, opening a camera can lock it and prevent it from being
+// opened again later. So we only enumerate, never open during this step.
+async function enumerateCameras() {
+  console.log('[OP] Enumerating cameras (lightweight, no probing)...')
   
   try {
     const devices = await navigator.mediaDevices.enumerateDevices()
@@ -756,13 +762,15 @@ async function probeAllCameras() {
     
     console.log('[OP] enumerateDevices found', videoDevices.length, 'video devices')
     
-    // Probe each camera by opening it briefly
+    // Build probe info WITHOUT opening cameras
     probedCameras = []
+    const groupIds = new Map() // track groupId frequency for USB detection
+    
     for (let i = 0; i < videoDevices.length; i++) {
       const device = videoDevices[i]
       const probeInfo = {
         deviceId: device.deviceId,
-        label: device.label || `Kamera ${i}`,
+        label: device.label || `Kamera ${i+1}`,
         groupId: device.groupId || '',
         isLikelyUsb: false,
         usbScore: 0,
@@ -771,6 +779,12 @@ async function probeAllCameras() {
         height: null,
         frameRate: null,
         probed: false,
+        index: i,
+      }
+      
+      // Track groupId for USB detection
+      if (device.groupId) {
+        groupIds.set(device.groupId, (groupIds.get(device.groupId) || 0) + 1)
       }
       
       // Check label for USB indicators
@@ -781,74 +795,41 @@ async function probeAllCameras() {
       if (label.includes('external')) probeInfo.usbScore += 3
       if (label.includes('video capture')) probeInfo.usbScore += 5
       if (label.includes('hdmi')) probeInfo.usbScore += 5
-      // On Android, USB capture cards sometimes show up without these labels
-      // but may have "camera" followed by a number > 1
-      if (label.match(/camera\s*[2-9]/)) probeInfo.usbScore += 2
-      // On some Android devices, USB cameras are labeled differently
       if (label.includes('webcam')) probeInfo.usbScore += 3
+      if (label.includes('cam link')) probeInfo.usbScore += 5
+      if (label.includes('elgato')) probeInfo.usbScore += 5
+      if (label.includes('avermedia')) probeInfo.usbScore += 5
+      if (label.includes('magewell')) probeInfo.usbScore += 5
+      if (label.includes('obs')) probeInfo.usbScore += 3
       
-      // Try to probe the camera for actual stream info
-      try {
-        const probeStream = await navigator.mediaDevices.getUserMedia({
-          video: { 
-            deviceId: { exact: device.deviceId },
-            width: { ideal: 1920 }, height: { ideal: 1080 }
-          },
-          audio: false
-        })
-        
-        const track = probeStream.getVideoTracks()[0]
-        if (track) {
-          const settings = track.getSettings()
-          probeInfo.facingMode = settings.facingMode || null
-          probeInfo.width = settings.width || null
-          probeInfo.height = settings.height || null
-          probeInfo.frameRate = settings.frameRate || null
-          probeInfo.probed = true
-          
-          // Use actual track label for USB detection
-          const trackLabel = (track.label || '').toLowerCase()
-          if (trackLabel.includes('usb')) probeInfo.usbScore += 5
-          if (trackLabel.includes('capture')) probeInfo.usbScore += 5
-          if (trackLabel.includes('uvc')) probeInfo.usbScore += 5
-          if (trackLabel.includes('hdmi')) probeInfo.usbScore += 5
-          
-          // USB capture cards often have NO facingMode (null)
-          // Phone cameras always have 'user' or 'environment'
-          if (!settings.facingMode) probeInfo.usbScore += 4
-          
-          // USB capture cards typically output specific resolutions
-          if (settings.width === 1920 && settings.height === 1080) probeInfo.usbScore += 1
-          
-          console.log(`[OP] Probed camera ${i}: "${device.label}" → ${settings.width}x${settings.height} facing=${settings.facingMode} score=${probeInfo.usbScore}`)
-        }
-        
-        // Stop the probe stream
-        probeStream.getTracks().forEach(t => t.stop())
-      } catch(probeErr) {
-        console.warn(`[OP] Cannot probe camera ${i} "${device.label}":`, probeErr.message)
-        // If we can't open it, try without exact constraint
-        try {
-          const fallbackStream = await navigator.mediaDevices.getUserMedia({
-            video: true, audio: false
-          })
-          const track = fallbackStream.getVideoTracks()[0]
-          if (track) {
-            const settings = track.getSettings()
-            probeInfo.facingMode = settings.facingMode || null
-            probeInfo.width = settings.width || null
-            probeInfo.height = settings.height || null
-            probeInfo.probed = true
-          }
-          fallbackStream.getTracks().forEach(t => t.stop())
-        } catch(e2) {
-          // Can't open this camera at all
-        }
+      // On Android, USB capture cards sometimes show up with generic names
+      // like "Camera 2" or "Camera 1" or just a number
+      // If there are 2+ cameras and this one has a generic name, it might be USB
+      const genericLabelMatch = label.match(/camera\s*(\d+)/)
+      if (genericLabelMatch) {
+        const camNum = parseInt(genericLabelMatch[1])
+        if (camNum >= 2) probeInfo.usbScore += 3 // Camera 2+ is often USB
       }
       
-      // Determine if likely USB
-      probeInfo.isLikelyUsb = probeInfo.usbScore >= 4
+      // On some Android devices, USB cameras appear with NO label at all
+      // If a device has an empty label but we have permission, it might be USB
+      if (!device.label && cameraPermissionGranted) {
+        probeInfo.usbScore += 2
+      }
+      
+      // Determine if likely USB (lower threshold since we're not probing)
+      probeInfo.isLikelyUsb = probeInfo.usbScore >= 3
       probedCameras.push(probeInfo)
+    }
+    
+    // Post-processing: If we have 2+ cameras and none detected as USB,
+    // mark the LAST camera as potentially USB (Android often lists USB cameras last)
+    const usbCount = probedCameras.filter(c => c.isLikelyUsb).length
+    if (probedCameras.length >= 2 && usbCount === 0) {
+      const lastCam = probedCameras[probedCameras.length - 1]
+      lastCam.usbScore += 2
+      lastCam.isLikelyUsb = lastCam.usbScore >= 3
+      console.log(`[OP] No USB camera detected by label — marking last camera "${lastCam.label}" as potential USB`)
     }
     
     // Update USB detection status
@@ -869,8 +850,365 @@ async function probeAllCameras() {
     return probedCameras
     
   } catch(err) {
-    console.error('[OP] probeAllCameras failed:', err)
+    console.error('[OP] enumerateCameras failed:', err)
     return []
+  }
+}
+
+// ── Deep Probe — Open each camera briefly to get detailed info ──────────
+// Use this ONLY when the user explicitly requests it.
+// Adds delays between probes to avoid locking cameras on Android.
+async function deepProbeCameras() {
+  console.log('[OP] Deep probing cameras (opening each one)...')
+  
+  // Stop current stream first
+  if (currentStream) {
+    currentStream.getTracks().forEach(t => t.stop())
+    currentStream = null
+  }
+  
+  try {
+    // Re-enumerate to get fresh device list
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    videoDevices = devices.filter(d => d.kind === 'videoinput')
+    
+    probedCameras = []
+    
+    for (let i = 0; i < videoDevices.length; i++) {
+      const device = videoDevices[i]
+      const probeInfo = {
+        deviceId: device.deviceId,
+        label: device.label || `Kamera ${i+1}`,
+        groupId: device.groupId || '',
+        isLikelyUsb: false,
+        usbScore: 0,
+        facingMode: null,
+        width: null,
+        height: null,
+        frameRate: null,
+        probed: false,
+        index: i,
+      }
+      
+      // Label-based USB detection (same as enumerateCameras)
+      const label = (device.label || '').toLowerCase()
+      if (label.includes('usb')) probeInfo.usbScore += 5
+      if (label.includes('capture')) probeInfo.usbScore += 5
+      if (label.includes('uvc')) probeInfo.usbScore += 5
+      if (label.includes('external')) probeInfo.usbScore += 3
+      if (label.includes('video capture')) probeInfo.usbScore += 5
+      if (label.includes('hdmi')) probeInfo.usbScore += 5
+      if (label.includes('webcam')) probeInfo.usbScore += 3
+      if (label.includes('cam link')) probeInfo.usbScore += 5
+      if (label.includes('elgato')) probeInfo.usbScore += 5
+      if (label.includes('avermedia')) probeInfo.usbScore += 5
+      if (label.includes('magewell')) probeInfo.usbScore += 5
+      if (label.includes('obs')) probeInfo.usbScore += 3
+      if (label.match(/camera\s*[2-9]/)) probeInfo.usbScore += 3
+      
+      // Try to open this specific camera with MULTIPLE constraint strategies
+      let probeSuccess = false
+      
+      // Strategy 1: exact deviceId with high resolution
+      try {
+        const probeStream = await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: { exact: device.deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false
+        })
+        const track = probeStream.getVideoTracks()[0]
+        if (track) {
+          const settings = track.getSettings()
+          probeInfo.facingMode = settings.facingMode || null
+          probeInfo.width = settings.width || null
+          probeInfo.height = settings.height || null
+          probeInfo.frameRate = settings.frameRate || null
+          probeInfo.probed = true
+          probeSuccess = true
+          
+          const trackLabel = (track.label || '').toLowerCase()
+          if (trackLabel.includes('usb')) probeInfo.usbScore += 5
+          if (trackLabel.includes('capture')) probeInfo.usbScore += 5
+          if (trackLabel.includes('uvc')) probeInfo.usbScore += 5
+          if (trackLabel.includes('hdmi')) probeInfo.usbScore += 5
+          
+          // USB capture cards often have NO facingMode
+          if (!settings.facingMode) probeInfo.usbScore += 4
+          
+          console.log(`[OP] Deep probed camera ${i}: "${device.label}" → ${settings.width}x${settings.height} facing=${settings.facingMode} score=${probeInfo.usbScore}`)
+        }
+        probeStream.getTracks().forEach(t => t.stop())
+      } catch(e1) {
+        console.warn(`[OP] Deep probe strategy 1 failed for camera ${i}: ${e1.message}`)
+      }
+      
+      // Strategy 2: exact deviceId with lower resolution (some USB cards only support lower res)
+      if (!probeSuccess) {
+        try {
+          const probeStream = await navigator.mediaDevices.getUserMedia({
+            video: { deviceId: { exact: device.deviceId }, width: { ideal: 640 }, height: { ideal: 480 } },
+            audio: false
+          })
+          const track = probeStream.getVideoTracks()[0]
+          if (track) {
+            const settings = track.getSettings()
+            probeInfo.facingMode = settings.facingMode || null
+            probeInfo.width = settings.width || null
+            probeInfo.height = settings.height || null
+            probeInfo.frameRate = settings.frameRate || null
+            probeInfo.probed = true
+            probeSuccess = true
+            
+            if (!settings.facingMode) probeInfo.usbScore += 4
+            console.log(`[OP] Deep probe strategy 2 for camera ${i}: "${device.label}" → ${settings.width}x${settings.height}`)
+          }
+          probeStream.getTracks().forEach(t => t.stop())
+        } catch(e2) {
+          console.warn(`[OP] Deep probe strategy 2 failed for camera ${i}: ${e2.message}`)
+        }
+      }
+      
+      // Strategy 3: exact deviceId with NO resolution constraints
+      if (!probeSuccess) {
+        try {
+          const probeStream = await navigator.mediaDevices.getUserMedia({
+            video: { deviceId: { exact: device.deviceId } },
+            audio: false
+          })
+          const track = probeStream.getVideoTracks()[0]
+          if (track) {
+            const settings = track.getSettings()
+            probeInfo.facingMode = settings.facingMode || null
+            probeInfo.width = settings.width || null
+            probeInfo.height = settings.height || null
+            probeInfo.frameRate = settings.frameRate || null
+            probeInfo.probed = true
+            probeSuccess = true
+            
+            if (!settings.facingMode) probeInfo.usbScore += 4
+            console.log(`[OP] Deep probe strategy 3 for camera ${i}: "${device.label}" → ${settings.width}x${settings.height}`)
+          }
+          probeStream.getTracks().forEach(t => t.stop())
+        } catch(e3) {
+          console.warn(`[OP] Deep probe strategy 3 failed for camera ${i}: ${e3.message}`)
+        }
+      }
+      
+      if (!probeSuccess) {
+        console.warn(`[OP] All probe strategies failed for camera ${i} "${device.label}" — may be inaccessible`)
+      }
+      
+      // IMPORTANT: Add delay between probes to let Android release the camera
+      if (i < videoDevices.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+      
+      // Determine if likely USB
+      probeInfo.isLikelyUsb = probeInfo.usbScore >= 4
+      probedCameras.push(probeInfo)
+    }
+    
+    // Post-processing: mark last camera as potential USB if none found
+    const usbCount = probedCameras.filter(c => c.isLikelyUsb).length
+    if (probedCameras.length >= 2 && usbCount === 0) {
+      const lastCam = probedCameras[probedCameras.length - 1]
+      lastCam.isLikelyUsb = true
+      console.log(`[OP] No USB detected — marking last camera "${lastCam.label}" as potential USB`)
+    }
+    
+    // Update USB detection status
+    usbCameraDetected = probedCameras.some(c => c.isLikelyUsb)
+    
+    // Show probe results
+    renderProbeResults()
+    updateUsbStatus()
+    
+    // Auto-select USB camera if found and none selected
+    if (usbCameraDetected && !selectedDeviceId) {
+      const usbCam = probedCameras.find(c => c.isLikelyUsb)
+      if (usbCam) {
+        selectedDeviceId = usbCam.deviceId
+      }
+    }
+    
+    return probedCameras
+    
+  } catch(err) {
+    console.error('[OP] deepProbeCameras failed:', err)
+    return []
+  }
+}
+
+// ── Cycle All Cameras — Try each camera one by one so user can pick ─────
+// This is the MOST RELIABLE way to find the USB capture card on Android.
+// It opens each camera for 3 seconds, letting the user see the feed,
+// and they can tap "Pilih Kamera Ini" to select the current one.
+async function cycleAllCameras() {
+  if (isCyclingCameras) {
+    // Abort cycling
+    isCyclingCameras = false
+    if (cycleAbortController) cycleAbortController.abort()
+    return
+  }
+  
+  // Stop current stream
+  if (currentStream) {
+    currentStream.getTracks().forEach(t => t.stop())
+    currentStream = null
+  }
+  
+  // Enumerate fresh
+  const devices = await navigator.mediaDevices.enumerateDevices()
+  videoDevices = devices.filter(d => d.kind === 'videoinput')
+  
+  if (videoDevices.length === 0) {
+    alert('Tidak ada kamera ditemukan. Pastikan izin kamera sudah diberikan.')
+    return
+  }
+  
+  isCyclingCameras = true
+  cycleAbortController = new AbortController()
+  const signal = cycleAbortController.signal
+  
+  const video = document.getElementById('videoPreview')
+  document.getElementById('noCameraMsg').classList.add('hidden')
+  
+  // Show cycling UI
+  showCycleUI(true)
+  
+  for (let i = 0; i < videoDevices.length; i++) {
+    if (!isCyclingCameras || signal.aborted) break
+    
+    const device = videoDevices[i]
+    const label = device.label || `Kamera ${i+1}`
+    
+    updateCycleUI(i + 1, videoDevices.length, label, device.deviceId)
+    
+    // Try to open this camera with multiple strategies
+    let stream = null
+    
+    // Strategy 1: exact deviceId, high res
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: device.deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false
+      })
+    } catch(e) {
+      // Strategy 2: exact deviceId, low res
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: { exact: device.deviceId }, width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false
+        })
+      } catch(e2) {
+        // Strategy 3: exact deviceId, no res constraint
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { deviceId: { exact: device.deviceId } },
+            audio: false
+          })
+        } catch(e3) {
+          // Strategy 4: ideal deviceId
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { deviceId: { ideal: device.deviceId } },
+              audio: false
+            })
+          } catch(e4) {
+            console.warn(`[OP] Cannot open camera ${i} "${label}": all strategies failed`)
+            updateCycleUI(i + 1, videoDevices.length, label + ' (GAGAL)', device.deviceId)
+            await new Promise(resolve => setTimeout(resolve, 1500))
+            continue
+          }
+        }
+      }
+    }
+    
+    if (stream) {
+      // Stop previous stream
+      if (currentStream) {
+        currentStream.getTracks().forEach(t => t.stop())
+      }
+      currentStream = stream
+      video.srcObject = stream
+      
+      // Log camera info
+      const track = stream.getVideoTracks()[0]
+      const settings = track?.getSettings()
+      console.log(`[OP] Cycling camera ${i}: "${track?.label || label}" → ${settings?.width}x${settings?.height} facing=${settings?.facingMode}`)
+      
+      // Wait 4 seconds for user to see the feed (or until they select)
+      await new Promise(resolve => setTimeout(resolve, 4000))
+      
+      // If user selected this camera, stop cycling
+      if (selectedDeviceId === device.deviceId && !isCyclingCameras) {
+        break
+      }
+    }
+  }
+  
+  // Done cycling
+  isCyclingCameras = false
+  showCycleUI(false)
+  
+  // If no camera was selected during cycling, keep the last one
+  if (!selectedDeviceId && currentStream) {
+    const track = currentStream.getVideoTracks()[0]
+    selectedDeviceId = track?.getSettings()?.deviceId
+  }
+  
+  updateCameraSelector()
+}
+
+function selectCycledCamera(deviceId) {
+  console.log('[OP] User selected camera during cycling:', deviceId?.slice(0,8))
+  selectedDeviceId = deviceId
+  isCyclingCameras = false
+  if (cycleAbortController) cycleAbortController.abort()
+  showCycleUI(false)
+  updateCameraSelector()
+}
+
+function showCycleUI(show) {
+  let overlay = document.getElementById('cycleOverlay')
+  if (!overlay) {
+    // Create the overlay
+    overlay = document.createElement('div')
+    overlay.id = 'cycleOverlay'
+    overlay.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.7); z-index: 9999;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 20px; gap: 12px;
+    `
+    overlay.innerHTML = `
+      <div style="font-size:18px;font-weight:700;color:#d4af37;text-align:center;">🔌 Mencoba Semua Kamera</div>
+      <div id="cycleProgress" style="font-size:14px;color:#c4b5fd;text-align:center;">Mempersiapkan...</div>
+      <div id="cycleCameraName" style="font-size:12px;color:#fff;text-align:center;padding:8px 16px;background:rgba(59,34,99,0.8);border-radius:8px;border:1px solid #533485;max-width:90%;word-break:break-all;"></div>
+      <button id="cycleSelectBtn" onclick="selectCycledCamera(document.getElementById('cycleCameraName').dataset.deviceId)" style="
+        padding: 14px 32px; border-radius: 12px; font-weight: 700; font-size: 16px;
+        background: linear-gradient(135deg, #d4af37, #f5e6a3); color: #1a0b2e;
+        border: none; cursor: pointer; box-shadow: 0 4px 20px rgba(212,175,55,0.4);
+      ">✅ Pilih Kamera Ini</button>
+      <button onclick="cycleAllCameras()" style="
+        padding: 8px 20px; border-radius: 8px; font-size: 12px;
+        background: #3b2263; color: #c4b5fd; border: 1px solid #533485; cursor: pointer;
+      ">⏹️ Berhenti Mencari</button>
+      <div style="font-size:10px;color:rgba(196,181,253,0.5);text-align:center;max-width:300px;">
+        Setiap kamera akan ditampilkan selama 4 detik. Tekan "Pilih Kamera Ini" saat kamera USB capture card muncul.
+      </div>
+    `
+    document.body.appendChild(overlay)
+  }
+  overlay.style.display = show ? 'flex' : 'none'
+}
+
+function updateCycleUI(current, total, cameraName, deviceId) {
+  const progress = document.getElementById('cycleProgress')
+  const nameEl = document.getElementById('cycleCameraName')
+  if (progress) progress.textContent = `Kamera ${current} dari ${total}`
+  if (nameEl) {
+    nameEl.textContent = cameraName
+    nameEl.dataset.deviceId = deviceId || ''
   }
 }
 
@@ -905,7 +1243,7 @@ function renderProbeResults() {
       detail = `${cam.width || '?'}×${cam.height || '?'}`
       if (cam.frameRate) detail += ` @${Math.round(cam.frameRate)}fps`
     } else {
-      detail = 'Tidak dapat diakses'
+      detail = 'Belum diperiksa'
     }
     
     item.innerHTML = `
@@ -940,145 +1278,117 @@ function updateUsbStatus() {
     usbVal.textContent = `✅ ${usbCams.length} terdeteksi`
     usbVal.className = 'usb-value ok'
   } else {
-    usbVal.textContent = `${probedCameras.length} kamera (tanpa USB)`
+    usbVal.textContent = `${probedCameras.length} kamera — gunakan "Coba Semua" untuk mencari`
     usbVal.className = 'usb-value warn'
   }
 }
 
-// ── Start Camera (improved — no facingMode constraint) ───────────────────
 async function startCamera(deviceId) {
   console.log('[OP] Starting camera, deviceId:', deviceId?.slice(0,8) || 'none')
   
-  // Stop existing stream
+  // Stop existing stream and add delay for Android to release the camera
   if (currentStream) {
     currentStream.getTracks().forEach(t => t.stop())
     currentStream = null
+    // IMPORTANT: Add delay to let Android release the camera hardware
+    await new Promise(resolve => setTimeout(resolve, 300))
   }
   
   const video = document.getElementById('videoPreview')
   
-  try {
-    let constraints
-    
-    if (deviceId) {
-      // Specific device — use ONLY deviceId, NO facingMode constraint
-      // CRITICAL: facingMode constraint can cause Chrome to ignore USB cameras
-      // and select the phone's built-in camera instead
-      constraints = {
-        video: { 
-          deviceId: { exact: deviceId }, 
-          width: { ideal: 1920 }, height: { ideal: 1080 } 
-        },
-        audio: false
-      }
-    } else {
-      // No specific device — try to find USB camera first
-      // Then fall back to environment camera
-      const usbCam = probedCameras.find(c => c.isLikelyUsb)
-      if (usbCam) {
-        constraints = {
-          video: { 
-            deviceId: { exact: usbCam.deviceId },
-            width: { ideal: 1920 }, height: { ideal: 1080 }
-          },
-          audio: false
-        }
-      } else {
-        // Last resort — use facingMode (this prefers phone's back camera)
-        constraints = {
-          video: { 
-            facingMode: 'environment',
-            width: { ideal: 1920 }, height: { ideal: 1080 }
-          },
-          audio: false
-        }
-      }
-    }
-    
-    console.log('[OP] getUserMedia constraints:', JSON.stringify(constraints))
-    const stream = await navigator.mediaDevices.getUserMedia(constraints)
-    currentStream = stream
-    selectedDeviceId = deviceId || stream.getVideoTracks()[0]?.getSettings()?.deviceId
-    cameraAvailable = true
-    
-    // Apply mirror if needed
-    video.style.transform = isMirrored ? 'scaleX(-1)' : 'none'
-    video.srcObject = stream
-    
-    // Log which camera we actually got
-    const track = stream.getVideoTracks()[0]
-    const trackSettings = track.getSettings()
-    console.log('[OP] Camera stream active:', {
-      label: track.label,
-      deviceId: trackSettings?.deviceId?.slice(0,8),
-      width: trackSettings?.width,
-      height: trackSettings?.height,
-      facingMode: trackSettings?.facingMode
+  // Define multiple constraint strategies to try
+  const strategies = []
+  
+  if (deviceId) {
+    // Strategy 1: exact deviceId with high resolution
+    strategies.push({
+      name: 'exact+highres',
+      constraints: { video: { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }
     })
-    
-    // Check if this looks like a USB camera
-    const trackLabel = (track.label || '').toLowerCase()
-    const isUsbStream = trackLabel.includes('usb') || trackLabel.includes('capture') || 
-                        trackLabel.includes('uvc') || trackLabel.includes('hdmi') ||
-                        trackLabel.includes('video capture') || !trackSettings?.facingMode
-    
-    if (isUsbStream && deviceId) {
-      console.log('[OP] ✅ USB capture card camera is active!')
+    // Strategy 2: exact deviceId with 720p (some USB cards only support 720p)
+    strategies.push({
+      name: 'exact+720p',
+      constraints: { video: { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false }
+    })
+    // Strategy 3: exact deviceId with NO resolution constraints
+    strategies.push({
+      name: 'exact+nores',
+      constraints: { video: { deviceId: { exact: deviceId } }, audio: false }
+    })
+    // Strategy 4: ideal deviceId (preferred but not required)
+    strategies.push({
+      name: 'ideal',
+      constraints: { video: { deviceId: { ideal: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }
+    })
+  } else {
+    // No specific device — try USB camera first
+    const usbCam = probedCameras.find(c => c.isLikelyUsb)
+    if (usbCam) {
+      strategies.push({
+        name: 'usb-exact',
+        constraints: { video: { deviceId: { exact: usbCam.deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }
+      })
+      strategies.push({
+        name: 'usb-nores',
+        constraints: { video: { deviceId: { exact: usbCam.deviceId } }, audio: false }
+      })
     }
-    
-    // Hide no-camera message
-    document.getElementById('noCameraMsg').classList.add('hidden')
-    
-    // Update selector
-    updateCameraSelector()
-    
-  } catch(err) {
-    console.error('[OP] Camera start failed:', err)
-    cameraAvailable = false
-    document.getElementById('noCameraMsg').classList.remove('hidden')
-    
-    // If exact deviceId failed, try different approaches
-    if (deviceId) {
-      console.log('[OP] Exact deviceId failed, trying alternatives...')
+    // Fallback: environment camera
+    strategies.push({
+      name: 'environment',
+      constraints: { video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }
+    })
+    // Last resort: any camera
+    strategies.push({
+      name: 'any',
+      constraints: { video: true, audio: false }
+    })
+  }
+  
+  // Try each strategy until one works
+  for (const strategy of strategies) {
+    try {
+      console.log(`[OP] Trying camera strategy: ${strategy.name}`)
+      const stream = await navigator.mediaDevices.getUserMedia(strategy.constraints)
+      currentStream = stream
+      selectedDeviceId = deviceId || stream.getVideoTracks()[0]?.getSettings()?.deviceId
+      cameraAvailable = true
       
-      // Try 1: Without exact (use preferred)
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { 
-            deviceId: { ideal: deviceId },
-            width: { ideal: 1920 }, height: { ideal: 1080 }
-          }, 
-          audio: false 
-        })
-        currentStream = stream
-        cameraAvailable = true
-        video.srcObject = stream
-        selectedDeviceId = stream.getVideoTracks()[0]?.getSettings()?.deviceId
-        document.getElementById('noCameraMsg').classList.add('hidden')
-        updateCameraSelector()
-        console.log('[OP] Camera started with ideal deviceId')
-        return
-      } catch(e1) {
-        console.warn('[OP] ideal deviceId also failed:', e1.message)
+      video.style.transform = isMirrored ? 'scaleX(-1)' : 'none'
+      video.srcObject = stream
+      
+      const track = stream.getVideoTracks()[0]
+      const trackSettings = track.getSettings()
+      console.log('[OP] Camera stream active (via ' + strategy.name + '):', {
+        label: track.label,
+        deviceId: trackSettings?.deviceId?.slice(0,8),
+        width: trackSettings?.width,
+        height: trackSettings?.height,
+        facingMode: trackSettings?.facingMode
+      })
+      
+      const trackLabel = (track.label || '').toLowerCase()
+      const isUsbStream = trackLabel.includes('usb') || trackLabel.includes('capture') || 
+                          trackLabel.includes('uvc') || trackLabel.includes('hdmi') ||
+                          trackLabel.includes('video capture') || !trackSettings?.facingMode
+      
+      if (isUsbStream) {
+        console.log('[OP] ✅ USB capture card camera is active!')
       }
       
-      // Try 2: Generic video with no constraints
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: true, audio: false 
-        })
-        currentStream = stream
-        cameraAvailable = true
-        video.srcObject = stream
-        selectedDeviceId = stream.getVideoTracks()[0]?.getSettings()?.deviceId
-        document.getElementById('noCameraMsg').classList.add('hidden')
-        updateCameraSelector()
-        console.log('[OP] Camera started with generic constraints')
-      } catch(err2) {
-        console.error('[OP] All camera start attempts failed:', err2)
-      }
+      document.getElementById('noCameraMsg').classList.add('hidden')
+      updateCameraSelector()
+      return
+      
+    } catch(err) {
+      console.warn(`[OP] Strategy "${strategy.name}" failed: ${err.message}`)
     }
   }
+  
+  // ALL strategies failed
+  console.error('[OP] All camera start strategies failed')
+  cameraAvailable = false
+  document.getElementById('noCameraMsg').classList.remove('hidden')
 }
 
 function updateCameraSelector() {
@@ -1122,7 +1432,8 @@ function handleCameraChange() {
 
 async function rescanCameras() {
   console.log('[OP] Rescanning cameras...')
-  await probeAllCameras()
+  // Use deep probe for manual rescan — user explicitly wants detailed info
+  await deepProbeCameras()
   if (selectedDeviceId) {
     startCamera(selectedDeviceId)
   } else if (videoDevices.length > 0) {
@@ -1146,7 +1457,7 @@ function toggleMirror() {
 // ── Device change listener (USB hot-plug) ────────────────────────────────
 navigator.mediaDevices?.addEventListener('devicechange', async () => {
   console.log('[OP] Device change detected — rescanning...')
-  await probeAllCameras()
+  await enumerateCameras()
   
   // Auto-switch to newly connected USB camera
   const usbCam = probedCameras.find(c => c.isLikelyUsb && c.deviceId !== selectedDeviceId)
@@ -1274,7 +1585,10 @@ async function testConnection() {
   results.push('ℹ️ Kamera ditemukan: ' + probedCameras.length)
   results.push('ℹ️ USB capture card: ' + (usbCameraDetected ? '✅ Terdeteksi' : '❌ Tidak terdeteksi'))
   if (!usbCameraDetected && probedCameras.length > 0) {
-    results.push('⚠️ Kamera USB tidak muncul. Pastikan: (1) Izin kamera sudah diberikan, (2) USB OTG aktif, (3) Chrome Flag diaktifkan')
+    results.push('⚠️ Kamera USB tidak terdeteksi otomatis. Gunakan tombol "🔌 Coba Semua" di halaman kamera untuk mencari manual.')
+  }
+  if (probedCameras.length >= 2) {
+    results.push('ℹ️ Ditemukan ' + probedCameras.length + ' kamera — salah satunya mungkin USB capture card')
   }
   
   // Show results
@@ -1290,7 +1604,7 @@ async function testConnection() {
 
 async function handleConnect() {
   const ip = document.getElementById('serverIp').value.trim()
-  const password = document.getElementById('sessionPassword').value
+  const password = document.getElementById('sessionPassword').value.trim()
   
   if (!ip) {
     document.getElementById('errorCard').textContent = 'Masukkan alamat IP server'
@@ -1463,7 +1777,7 @@ function connectToServer(ip) {
 }
 
 async function handleAuthSubmit() {
-  const password = document.getElementById('authPassword').value
+  const password = document.getElementById('authPassword').value.trim()
   if (!password) return
   
   const btn = document.getElementById('authSubmitBtn')
@@ -1514,7 +1828,7 @@ function showOperatorScreen() {
   
   // Start camera if not already
   if (!cameraAvailable) {
-    probeAllCameras().then(() => {
+    enumerateCameras().then(() => {
       if (probedCameras.length > 0) {
         // Prefer USB camera, then first available
         const usbCam = probedCameras.find(c => c.isLikelyUsb)
@@ -1990,8 +2304,8 @@ async function checkExistingPermission() {
         document.getElementById('permStatus').textContent = 'Izin kamera sudah diberikan'
         document.getElementById('permStatus').style.color = '#4ade80'
         
-        // Auto-probe cameras
-        await probeAllCameras()
+        // Use lightweight enumeration (no probing)
+        await enumerateCameras()
       }
       
       // Listen for permission changes
@@ -2001,7 +2315,7 @@ async function checkExistingPermission() {
           const btn = document.getElementById('permBtn')
           btn.textContent = '✅ Izin Kamera Diberikan'
           btn.classList.add('granted')
-          await probeAllCameras()
+          await enumerateCameras()
         }
       })
     }
