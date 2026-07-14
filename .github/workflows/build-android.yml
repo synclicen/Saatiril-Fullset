@@ -6,6 +6,7 @@ on:
     tags: ['v*']
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 env:
   NODE_VERSION: '20'
@@ -57,10 +58,25 @@ jobs:
           
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: 12266719
+          accept-android-sdk-licenses: true
+          packages: 'tools platform-tools'
+
+      # Force accept all Android SDK licenses — prevents interactive prompt hang
+      # Some SDK packages (e.g., android-googletv-license) require explicit
+      # acceptance even with accept-android-sdk-licenses: true
+      - name: Accept Android SDK Licenses Manually
+        run: |
+          mkdir -p -m 0775 "$ANDROID_HOME/licenses"
+          echo "y" | yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          # Alternative: try the versioned cmdline-tools path if latest doesn't exist
+          if [ -d "$ANDROID_HOME/cmdline-tools/16.0" ]; then
+            echo "y" | yes | $ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager --licenses || true
+          fi
         
       - name: Install Android SDK components
         run: |
-          yes | sdkmanager --licenses || true
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
         
       - name: Cache Gradle packages
