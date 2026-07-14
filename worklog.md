@@ -53,3 +53,32 @@ Stage Summary:
 - Auth flow improved with error display and loading states
 - Admin dashboard instructions updated with comprehensive USB setup guide
 - Both operator-web (port 3005) and saatiril-socket (port 3003) running
+---
+Task ID: 1
+Agent: main
+Task: Fix USB video capture card detection on camera page in Chrome on Android + auth fix + push/commit
+
+Work Log:
+- Analyzed root cause: probeAllCameras() was opening each camera sequentially, which could lock the USB camera on Android
+- Identified dangerous fallback: getUserMedia({video:true}) opened the default phone camera instead of the USB one, corrupting probe data
+- Identified double-probe issue: probeAllCameras() called both on permission grant AND on operator screen entry
+- Replaced probeAllCameras() with lightweight enumerateCameras() that only lists devices without opening them
+- Added deepProbeCameras() for manual rescan with multiple constraint strategies (exact+highres, exact+720p, exact+nores)
+- Added cycleAllCameras() feature — cycles through ALL cameras one by one so user can visually identify the USB capture card
+- Added "🔌 Coba Semua" button on operator screen for camera cycling with "Pilih Kamera Ini" selection
+- Rewrote startCamera() with multi-strategy approach: tries exact+highres, exact+720p, exact+nores, ideal, environment, any
+- Added 300ms delay after stopping stream to let Android release camera hardware
+- Fixed double-probe: operator screen now uses enumerateCameras() (lightweight) instead of probeAllCameras()
+- Smart USB detection: when no USB camera found by label, marks last camera as potential USB (Android often lists USB cameras last)
+- Fixed password trimming: added .trim() to both sessionPassword and authPassword inputs
+- Updated USB status message to guide user to "Coba Semua" button
+- Removed dangerous fallback getUserMedia({video:true}) that opened wrong camera during probing
+- Added 500ms delay between deep probes to let Android release cameras
+- Committed and pushed to origin/main
+
+Stage Summary:
+- operator.html camera system completely rewritten for Android Chrome + USB capture card reliability
+- Key new features: enumerateCameras(), deepProbeCameras(), cycleAllCameras(), multi-strategy startCamera()
+- "🔌 Coba Semua" button added to operator screen top bar
+- Password .trim() fix for auth flow
+- Commit: ed07bf4 — pushed to origin/main
