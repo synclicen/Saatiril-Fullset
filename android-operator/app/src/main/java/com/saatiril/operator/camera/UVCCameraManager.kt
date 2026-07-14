@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
 
 /**
  * ═════════════════════════════════════════════════════════════════════════
@@ -307,6 +308,8 @@ class UVCCameraManager(private val context: Context) {
                             Log.i(TAG, "USB permission GRANTED for ${device.deviceName}")
                         } else if (device != null) {
                             Log.w(TAG, "USB permission DENIED for ${device.deviceName}")
+                        } else {
+                            // No device in intent
                         }
                     }
                 }
@@ -742,9 +745,9 @@ class UVCCameraManager(private val context: Context) {
         // Last resort: Use IFrameCallback for one frame
         try {
             camera.setFrameCallback(object : IFrameCallback {
-                override fun onFrame(frame: ByteArray?) {
-                    if (frame == null) {
-                        Log.e(TAG, "IFrameCallback: null frame")
+                override fun onFrame(frame: ByteBuffer) {
+                    if (!frame.hasRemaining()) {
+                        Log.e(TAG, "IFrameCallback: empty frame")
                         val cb = captureCallback
                         captureCallback = null
                         cb?.invoke(null)
@@ -752,9 +755,13 @@ class UVCCameraManager(private val context: Context) {
                     }
 
                     try {
+                        // Convert ByteBuffer to ByteArray for YuvImage processing
+                        val frameBytes = ByteArray(frame.remaining())
+                        frame.get(frameBytes)
+
                         // The frame data from UVCCamera is typically NV21 or YUYV
                         // Try to decode it as NV21 (most common for Android)
-                        val yuvImage = YuvImage(frame, ImageFormat.NV21, PREVIEW_WIDTH, PREVIEW_HEIGHT, null)
+                        val yuvImage = YuvImage(frameBytes, ImageFormat.NV21, PREVIEW_WIDTH, PREVIEW_HEIGHT, null)
                         val outputStream = ByteArrayOutputStream()
                         yuvImage.compressToJpeg(Rect(0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT), 95, outputStream)
                         val bytes = outputStream.toByteArray()
