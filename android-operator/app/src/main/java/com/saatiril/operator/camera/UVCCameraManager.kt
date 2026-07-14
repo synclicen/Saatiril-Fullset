@@ -28,15 +28,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.ByteArrayOutputStream
-import java.io.File
-import java.io.FileInputStream
 
 /**
  * ═════════════════════════════════════════════════════════════════════════
  * UVCCamera Manager — v15 USB Video Class Direct Access
  * ═════════════════════════════════════════════════════════════════════════
  *
- * CRITICAL: Uses UVCCamera library (saki4510t/UVCCamera) instead of Camera2 API.
+ * CRITICAL: Uses UVCCamera library (alexey-pelykh/UVCCamera fork, org.uvccamera:lib on Maven Central)
+ * instead of Camera2 API. The original saki4510t/UVCCamera does not have proper JitPack builds.
  * Camera2/CameraX API CANNOT access USB HDMI video capture cards on Android.
  * USB capture cards are UVC (USB Video Class) devices and require a dedicated
  * UVC library to access them directly via USB Host API.
@@ -49,7 +48,7 @@ import java.io.FileInputStream
  * 1. Uses USBMonitor to detect USB device attach/detach events
  * 2. Requests USB permission via PendingIntent
  * 3. Opens the UVC camera device and starts preview on a TextureView
- * 4. Captures still images (JPEG) via captureStill() → file → base64
+ * 4. Captures still images (JPEG) via TextureView.bitmap → JPEG → base64
  * 5. Provides the same StateFlow interface as the old Camera2Manager
  *
  * Layout structure (same as v14 but with UVC instead of Camera2):
@@ -244,7 +243,7 @@ class UVCCameraManager(private val context: Context) {
                         }
                     }
 
-                    override fun onDetach(device: UsbDevice) {
+                    override fun onDettach(device: UsbDevice) {
                         Log.i(TAG, "USB device DETACHED: ${device.deviceName}")
                         discoveredDevices.remove(device.deviceName)
                         updateAvailableCameras()
@@ -635,10 +634,9 @@ class UVCCameraManager(private val context: Context) {
      * Capture a photo. The result is returned as a data URL (base64-encoded JPEG)
      * via the callback, matching the Camera2Manager interface.
      *
-     * The UVCCamera library supports captureStill(imagePath) which saves to a file.
-     * We then read the file, encode as base64, and delete the temp file.
-     *
-     * Alternative approach: Use IFrameCallback to get raw frame data and convert to JPEG.
+     * The org.uvccamera:lib module does NOT have captureStill() method.
+     * Instead, we use TextureView.bitmap to grab the current preview frame.
+     * Fallback: IFrameCallback to get raw frame data and convert to JPEG.
      */
     fun capturePhoto(callback: (String?) -> Unit) {
         val camera = uvcCamera
@@ -650,12 +648,12 @@ class UVCCameraManager(private val context: Context) {
 
         captureCallback = callback
 
-        // Strategy 1: Use captureStill() to save JPEG to a temp file
+        // Strategy 1: Grab current TextureView bitmap (fastest, most reliable)
         try {
-            captureStillToFile(camera, callback)
+            captureFromTextureView(callback)
         } catch (e: Exception) {
-            Log.e(TAG, "captureStill failed, trying frame callback: ${e.message}")
-            // Strategy 2: Fallback to frame callback
+            Log.e(TAG, "TextureView capture failed, trying frame callback: ${e.message}")
+            // Strategy 2: Fallback to IFrameCallback
             try {
                 captureFromFrameCallback(camera, callback)
             } catch (e2: Exception) {
@@ -667,57 +665,49 @@ class UVCCameraManager(private val context: Context) {
     }
 
     /**
-     * Capture a still image by saving to a temp file, then reading and encoding.
-     * This is the preferred method for UVCCamera.
+     * Capture from the TextureView's current bitmap.
+     * This is the primary capture method — fast and reliable.
+     *
+     * The org.uvccamera:lib module does NOT have captureStill(),
+     * so TextureView.bitmap is the best approach for still capture.
      */
-    private fun captureStillToFile(camera: UVCCamera, callback: (String?) -> Unit) {
-        val tempFile = File(context.cacheDir, "uvc_capture_${System.currentTimeMillis()}.jpg")
+    private fun captureFromTextureView(callback: (String?) -> Unit) {
+        val tv = textureView
+        if (tv == null || !tv.isAvailable) {
+            Log.e(TAG, "captureFromTextureView: TextureView not available")
+            throw IllegalStateException("TextureView not available")
+        }
+
+        val bitmap = tv.bitmap
+        if (bitmap == null) {
+            Log.e(TAG, "captureFromTextureView: bitmap is null")
+            throw IllegalStateException("TextureView bitmap is null")
+        }
 
         try {
-            // UVCCamera.captureStill() saves a JPEG to the specified path
-            camera.captureStill(tempFile.absolutePath)
+            val outputStream = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, outputStream)
+            val bytes = outputStream.toByteArray()
+            val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+            val dataUrl = "data:image/jpeg;base64,$base64"
 
-            // Wait for the file to be written (captureStill is asynchronous)
-            backgroundHandler?.postDelayed({
-                try {
-                    if (tempFile.exists() && tempFile.length() > 0) {
-                        val bytes = FileInputStream(tempFile).use { fis ->
-                            fis.readBytes()
-                        }
-                        val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                        val dataUrl = "data:image/jpeg;base64,$base64"
+            Log.i(TAG, "Photo captured via TextureView.bitmap (${dataUrl.length} chars, ${bytes.size} bytes)")
 
-                        Log.i(TAG, "Photo captured via captureStill (${dataUrl.length} chars, ${bytes.size} bytes)")
+            bitmap.recycle()
+            outputStream.close()
 
-                        val cb = captureCallback
-                        captureCallback = null
-                        cb?.invoke(dataUrl)
-                    } else {
-                        Log.e(TAG, "captureStill: temp file not created or empty")
-                        val cb = captureCallback
-                        captureCallback = null
-                        cb?.invoke(null)
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error reading captured still file: ${e.message}")
-                    val cb = captureCallback
-                    captureCallback = null
-                    cb?.invoke(null)
-                } finally {
-                    try { tempFile.delete() } catch (_: Exception) {}
-                }
-            }, 500) // 500ms delay for file write
-
+            val cb = captureCallback
+            captureCallback = null
+            cb?.invoke(dataUrl)
         } catch (e: Exception) {
-            Log.e(TAG, "captureStill exception: ${e.message}")
-            try { tempFile.delete() } catch (_: Exception) {}
+            bitmap.recycle()
             throw e
         }
     }
 
     /**
      * Capture from the current preview frame using IFrameCallback.
-     * Fallback method when captureStill doesn't work.
+     * Fallback method when TextureView bitmap capture fails.
      *
      * This captures raw frame data and converts it to JPEG.
      */

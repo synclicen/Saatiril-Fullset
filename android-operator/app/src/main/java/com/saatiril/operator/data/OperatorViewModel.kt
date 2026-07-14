@@ -28,7 +28,7 @@ import kotlinx.coroutines.launch
  *   Camera2/CameraX API CANNOT access USB HDMI capture cards on Android.
  *   USB capture cards are UVC devices and require a dedicated UVC library.
  * - USB Detection: USBMonitor detects UVC devices via USB Host API.
- * - Photo Capture: captureStill() → JPEG file → base64. No Camera2 involved.
+ * - Photo Capture: TextureView.bitmap → JPEG → base64. No Camera2 involved.
  * - Preview: TextureView (same as v14). UVC camera preview renders directly.
  *
  * Camera priority:
@@ -355,7 +355,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     /**
      * v15: Capture via UVCCameraManager (UVC capture card).
-     * UVC: captureStill() → JPEG file → base64
+     * UVC: TextureView.bitmap → JPEG → base64
      *
      * The result is a base64 data URL string, ready to send via socket.
      * Photos are NOT saved locally — only sent to admin via socket.
