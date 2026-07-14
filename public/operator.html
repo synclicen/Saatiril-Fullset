@@ -319,6 +319,7 @@
       <input id="sessionPassword" class="form-input" type="password" placeholder="Kosongkan jika tidak ada">
     </div>
     <button id="connectBtn" class="connect-btn" onclick="handleConnect()">Hubungkan</button>
+    <button id="testBtn" style="width:100%;padding:10px;border-radius:10px;font-weight:600;font-size:13px;background:var(--card);border:1px solid var(--border);color:var(--muted);cursor:pointer;margin-top:6px;" onclick="testConnection()">🔍 Test Koneksi Server</button>
     <div style="font-size:10px; color:rgba(196,181,253,0.5); text-align:center; margin-top:8px;">
       Otomatis terhubung ke Socket.io port 3003 di IP server
     </div>
@@ -439,8 +440,15 @@
   </div>
 </div>
 
-<!-- Socket.io client -->
-<script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
+<!-- Socket.io client — load locally first, fallback to CDN -->
+<script src="/js/socket.io.min.js"></script>
+<script>
+// Verify Socket.io loaded correctly
+if (typeof io === 'undefined') {
+  console.warn('[OP] Local Socket.io failed, trying CDN...');
+  document.write('<script src="https://cdn.socket.io/4.8.3/socket.io.min.js"><\/script>');
+}
+</script>
 
 <script>
 // ═══════════════════════════════════════════════════════════════════════════
@@ -772,6 +780,85 @@ function setConnectionState(state, errorMsg) {
   }
 }
 
+// ── Connection Test (diagnostics) ────────────────────────────────────────
+async function testConnection() {
+  const ip = document.getElementById('serverIp').value.trim()
+  const errorCard = document.getElementById('errorCard')
+  const testBtn = document.getElementById('testBtn')
+  
+  if (!ip) {
+    errorCard.textContent = 'Masukkan alamat IP server terlebih dahulu'
+    errorCard.style.display = 'block'
+    return
+  }
+  
+  testBtn.disabled = true
+  testBtn.textContent = '🔍 Menguji koneksi...'
+  errorCard.style.display = 'none'
+  
+  const SOCKET_PORT = 3003
+  const results = []
+  
+  // Test 1: Check if Socket.io library is loaded
+  if (typeof io === 'undefined') {
+    results.push('❌ Socket.io library TIDAK termuat — halaman perlu internet saat pertama kali dibuka')
+  } else {
+    results.push('✅ Socket.io library termuat (v' + io.version + ')')
+  }
+  
+  // Test 2: HTTP connectivity test to port 3003
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 8000)
+    
+    const testUrl = window.location.port === '81' 
+      ? `${window.location.origin}/socket.io/?XTransformPort=${SOCKET_PORT}&EIO=4&transport=polling`
+      : `http://${ip}:${SOCKET_PORT}/socket.io/?EIO=4&transport=polling`
+    
+    results.push('📡 Menguji HTTP ke: ' + testUrl)
+    
+    const resp = await fetch(testUrl, { 
+      signal: controller.signal,
+      mode: 'cors',
+    })
+    clearTimeout(timeoutId)
+    
+    if (resp.ok) {
+      const text = await resp.text()
+      if (text.includes('"sid"')) {
+        results.push('✅ Socket.io server BERJALAN di ' + ip + ':' + SOCKET_PORT)
+      } else {
+        results.push('⚠️ Server merespons HTTP tapi BUKAN Socket.io (response: ' + text.substring(0, 60) + ')')
+      }
+    } else {
+      results.push('❌ Server merespons dengan HTTP ' + resp.status)
+    }
+  } catch(err) {
+    if (err.name === 'AbortError') {
+      results.push('❌ Koneksi TIMEOUT ke ' + ip + ':' + SOCKET_PORT + ' — server tidak merespons dalam 8 detik')
+    } else if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
+      results.push('❌ TIDAK DAPAT terhubung ke ' + ip + ':' + SOCKET_PORT)
+      results.push('   Kemungkinan: (1) Server tidak berjalan, (2) IP salah, (3) Bukan di WiFi yang sama, (4) Firewall blokir')
+    } else {
+      results.push('❌ Error: ' + err.message)
+    }
+  }
+  
+  // Test 3: Check current page origin info
+  results.push('ℹ️ Halaman diakses dari: ' + window.location.origin)
+  results.push('ℹ️ Port halaman: ' + (window.location.port || 'default(80/443)'))
+  
+  // Show results
+  errorCard.innerHTML = results.join('<br>')
+  errorCard.style.display = 'block'
+  errorCard.style.textAlign = 'left'
+  errorCard.style.fontSize = '11px'
+  errorCard.style.lineHeight = '1.6'
+  
+  testBtn.disabled = false
+  testBtn.textContent = '🔍 Test Koneksi Server'
+}
+
 async function handleConnect() {
   const ip = document.getElementById('serverIp').value.trim()
   const password = document.getElementById('sessionPassword').value
@@ -818,46 +905,57 @@ function connectToServer(ip) {
   
   let serverUrl, socketOptions
   
+  // Check if we're accessing via Caddy gateway (sandbox environment)
+  // In sandbox: only port 81 is exposed, must use XTransformPort for routing
+  // In real LAN: direct connection to port 3003 works
+  const isCaddyGateway = window.location.port === '81'
+  const isNoPort = window.location.port === '' // e.g., file:// or default port 80
+  
   if (explicitSocketPort) {
     // Explicit socket port specified in URL
     serverUrl = `http://${ip}:${explicitSocketPort}`
     socketOptions = {
-      path: '/',
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
       upgrade: true,
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 2000,
-      timeout: 10000,
+      timeout: 15000,
     }
-  } else if (window.location.port === '81' || window.location.port === '') {
-    // Accessing via Caddy gateway (port 81) or no port
-    // Use the current origin with XTransformPort query parameter
-    serverUrl = `http://${ip}:${SOCKET_PORT}`
+  } else if (isCaddyGateway) {
+    // Accessing via Caddy gateway — MUST use XTransformPort for routing
+    // The Caddy gateway only exposes port 81 and routes to backend ports
+    // using the XTransformPort query parameter
+    serverUrl = window.location.origin
     socketOptions = {
-      path: '/',
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
       upgrade: true,
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 2000,
-      timeout: 10000,
+      timeout: 15000,
+      query: { XTransformPort: String(SOCKET_PORT) },
     }
   } else {
     // Direct LAN connection — connect to Socket.io port 3003
     serverUrl = `http://${ip}:${SOCKET_PORT}`
     socketOptions = {
-      path: '/',
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
       upgrade: true,
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 2000,
-      timeout: 10000,
+      timeout: 15000,
     }
   }
   
-  console.log('[OP] Connecting to Socket.io server:', serverUrl)
+  console.log('[OP] Connecting to Socket.io server:', serverUrl, 'options:', JSON.stringify(socketOptions))
+  
+  // Verify Socket.io is loaded
+  if (typeof io === 'undefined') {
+    setConnectionState('disconnected', 'GAGAL: Library Socket.io tidak dapat dimuat. Pastikan HP terhubung internet saat pertama kali membuka halaman ini, atau buka ulang halaman.')
+    return
+  }
   
   socket = io(serverUrl, socketOptions)
   
@@ -916,20 +1014,29 @@ function connectToServer(ip) {
   })
   
   socket.on('connect_error', (err) => {
-    console.error('[OP] Connection error:', err.message)
+    console.error('[OP] Connection error:', err.message, 'description:', err.description?.message)
     stopLatencyPing()
-    // Provide more helpful error messages
+    // Provide more helpful error messages in Indonesian
     let errorMsg = 'Gagal terhubung ke server'
-    if (err.message.includes('websocket error') || err.message.includes('WebSocket')) {
-      errorMsg = 'Gagal terhubung: Server Socket.io tidak ditemukan. Pastikan server SAATIRIL berjalan di IP ini (port 3003).'
-    } else if (err.message.includes('timeout')) {
-      errorMsg = 'Koneksi timeout. Periksa IP server dan pastikan server berjalan.'
-    } else if (err.message.includes('refused')) {
-      errorMsg = 'Koneksi ditolak. Server tidak berjalan di IP ini atau port 3003 tertutup.'
-    } else if (err.message.includes('CORS') || err.message.includes('cors')) {
-      errorMsg = 'Koneksi diblokir (CORS). Hubungi administrator.'
+    const msg = (err.message || '').toLowerCase()
+    const desc = (err.description?.message || '').toLowerCase()
+    
+    if (msg.includes('websocket error') || msg.includes('websocket') || desc.includes('websocket')) {
+      errorMsg = 'Gagal terhubung via WebSocket. Mencoba polling... (Ini normal, koneksi akan otomatis beralih ke polling)'
+      // Don't set disconnected — let Socket.io try polling transport
+      // The polling transport should kick in automatically
+      console.log('[OP] WebSocket failed, waiting for polling fallback...')
+      return // Don't show error yet — polling might succeed
+    } else if (msg.includes('timeout') || desc.includes('timeout')) {
+      errorMsg = 'Koneksi timeout (15 detik). Pastikan: (1) Server SAATIRIL berjalan, (2) IP benar, (3) HP dan server di jaringan WiFi yang sama, (4) Port 3003 tidak diblokir firewall.'
+    } else if (msg.includes('refused') || desc.includes('refused') || msg.includes('econnrefused')) {
+      errorMsg = 'Koneksi ditolak (port 3003). Server SAATIRIL tidak berjalan di IP ini. Pastikan aplikasi admin sudah dibuka dan server aktif.'
+    } else if (msg.includes('cors') || desc.includes('cors')) {
+      errorMsg = 'Koneksi diblokir oleh kebijakan CORS. Coba akses langsung via http://' + ip + ':3003'
+    } else if (msg.includes('transport unknown') || msg.includes('transport not')) {
+      errorMsg = 'Versi Socket.io tidak cocok. Coba buka ulang halaman (hard refresh: Ctrl+Shift+R).'
     } else {
-      errorMsg = 'Gagal terhubung: ' + err.message
+      errorMsg = 'Gagal terhubung: ' + err.message + '. Pastikan server SAATIRIL berjalan di ' + ip + ':3003'
     }
     setConnectionState('disconnected', errorMsg)
   })

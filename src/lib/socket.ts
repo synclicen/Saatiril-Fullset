@@ -350,9 +350,8 @@ export function connectSocket(): Socket {
   const socketUrl = getSocketUrl()
   const isElectron = !!(window as any).saatirilAPI?.isElectron
 
-  // All modes use the same options — Socket.io server is always path '/'
+  // Socket.io default path is '/socket.io/' — same as server config
   const socketOptions = {
-    path: '/',
     transports: ['websocket', 'polling'],
     forceNew: true,
     reconnection: true,

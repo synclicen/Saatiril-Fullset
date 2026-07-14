@@ -41,11 +41,8 @@ function getUptime(): string {
 }
 
 // ─── HTTP server + Socket.io ───────────────────────────────────────────────
-const httpServer = createServer()
-
-// Health check endpoint for monitoring
-httpServer.on('request', (req, res) => {
-  // Only handle GET /health — everything else goes to Socket.io
+const httpServer = createServer((req, res) => {
+  // Health check endpoint
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({
@@ -59,11 +56,12 @@ httpServer.on('request', (req, res) => {
     }))
     return
   }
-  // Let Socket.io handle everything else
 })
 
 const io = new Server(httpServer, {
-  path: '/',
+  // Use default Socket.io path '/socket.io/' instead of '/'
+  // The '/' path caused Socket.io to intercept ALL HTTP requests,
+  // breaking the /health endpoint and potentially causing WebSocket issues
   cors: {
     origin: '*',
     methods: ['GET', 'POST'],
