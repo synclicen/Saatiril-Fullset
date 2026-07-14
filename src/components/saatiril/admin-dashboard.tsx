@@ -398,6 +398,66 @@ export default function AdminDashboard() {
     [lanInfo],
   )
 
+  // ── Generate operator.html link (for Chrome on Android with USB capture card) ──
+  // This generates a direct link to /operator.html which works in Chrome
+  // and supports USB HDMI video capture cards natively via getUserMedia.
+  const generateOperatorHtmlLink = useCallback(
+    async (channel: number): Promise<string> => {
+      const api = window.saatirilAPI
+      const isElectron = api?.isElectron
+
+      if (isElectron) {
+        try {
+          const info = lanInfo || (await api.getLanInfo())
+          const ips = info.ips
+          const lanIP = ips.length > 0 ? ips[0].address : 'localhost'
+          return `http://${lanIP}:${info.httpPort}/operator.html?role=operator&channel=${channel}&socketPort=${info.socketPort}`
+        } catch {
+          const hostname = window.location.hostname
+          const socketPort = new URLSearchParams(window.location.search).get('socketPort') || '3003'
+          return `http://${hostname}:3000/operator.html?role=operator&channel=${channel}&socketPort=${socketPort}`
+        }
+      } else {
+        const socketPort = new URLSearchParams(window.location.search).get('socketPort') || '3003'
+        let origin = window.location.origin
+
+        const hostname = window.location.hostname
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+          try {
+            const pc = new RTCPeerConnection({ iceServers: [] })
+            pc.createDataChannel('')
+            const offer = await pc.createOffer()
+            await pc.setLocalDescription(offer)
+
+            const lanIP = await new Promise<string | null>((resolve) => {
+              const timeout = setTimeout(() => { pc.close(); resolve(null) }, 3000)
+              pc.onicecandidate = (e) => {
+                if (!e.candidate) return
+                const parts = e.candidate.candidate.split(' ')
+                const ip = parts[4]
+                if (ip && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip) && !ip.startsWith('0.') && ip !== '0.0.0.0') {
+                  clearTimeout(timeout)
+                  pc.close()
+                  resolve(ip)
+                }
+              }
+            })
+
+            if (lanIP) {
+              const port = window.location.port || '3000'
+              origin = `http://${lanIP}:${port}`
+            }
+          } catch {
+            // WebRTC not available — keep localhost URL
+          }
+        }
+
+        return `${origin}/operator.html?role=operator&channel=${channel}&socketPort=${socketPort}`
+      }
+    },
+    [lanInfo],
+  )
+
   // ── Show QR code dialog ─────────────────────────────────────────────
   const showQrCode = useCallback(
     async (role: string, channel: number) => {
@@ -408,6 +468,47 @@ export default function AdminDashboard() {
       setQrDialogOpen(true)
     },
     [generateLink],
+  )
+
+  // ── Show operator.html QR code (Chrome + USB capture card) ─────────
+  const showOperatorHtmlQrCode = useCallback(
+    async (channel: number) => {
+      const url = await generateOperatorHtmlLink(channel)
+      setQrLink(url)
+      setQrLabel(`Operator ${channel} (Chrome + USB)`)
+      setQrDialogOpen(true)
+    },
+    [generateOperatorHtmlLink],
+  )
+
+  // ── Copy operator.html link ────────────────────────────────────────
+  const copyOperatorHtmlLink = useCallback(
+    async (channel: number) => {
+      const url = await generateOperatorHtmlLink(channel)
+      try {
+        if (navigator.clipboard) {
+          await navigator.clipboard.writeText(url)
+        } else {
+          const textarea = document.createElement('textarea')
+          textarea.value = url
+          document.body.appendChild(textarea)
+          textarea.select()
+          document.execCommand('copy')
+          document.body.removeChild(textarea)
+        }
+        toast({
+          title: 'Link Chrome Operator disalin!',
+          description: `Operator ${channel} (Chrome + USB) — ${url}`,
+        })
+      } catch {
+        toast({
+          title: 'Gagal menyalin',
+          description: 'Tidak dapat menyalin link. Silakan salin manual.',
+          variant: 'destructive',
+        })
+      }
+    },
+    [toast, generateOperatorHtmlLink],
   )
 
   // ── Copy link handler ────────────────────────────────────────────
@@ -759,7 +860,6 @@ export default function AdminDashboard() {
 
   // ── Render: LAN Access Distribution ──────────────────────────────
   const renderLanAccess = () => {
-    const isElectron = !!(window as any).saatirilAPI?.isElectron
     const lanIP = lanInfo?.ips?.[0]?.address ?? ''
 
     return (
@@ -771,22 +871,22 @@ export default function AdminDashboard() {
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        {/* Chrome Flag instruction for Operator */}
-        {isElectron && (
-          <div className="rounded-md p-3 text-xs" style={{ backgroundColor: '#f59e0b15', border: '1px solid #f59e0b33', color: '#fde68a' }}>
-            <p className="font-semibold mb-1.5" style={{ color: GOLD }}>⚠️ Instruksi untuk Operator Kamera:</p>
-            <p className="mb-1.5">Browser memblokir kamera pada koneksi HTTP. Operator harus mengaktifkan Chrome Flag:</p>
-            <ol className="space-y-0.5 pl-1">
-              <li>1. Buka tab baru, ketik: <code className="px-1.5 py-0.5 rounded font-mono" style={{ backgroundColor: '#00000044' }}>chrome://flags</code></li>
-              <li>2. Cari: <code className="px-1.5 py-0.5 rounded font-mono" style={{ backgroundColor: '#00000044' }}>insecure origin</code></li>
-              <li>3. Pada "Insecure origins treated as secure", masukkan:</li>
-              <li className="pl-4"><code className="px-1.5 py-0.5 rounded font-mono" style={{ backgroundColor: '#00000044', color: GOLD }}>http://{lanIP || '192.168.x.x'}:{lanInfo?.httpPort ?? 3000}</code></li>
-              <li>4. Pilih "Enabled" → Klik "Relaunch"</li>
-              <li>5. Buka kembali link operator — kamera akan aktif!</li>
-            </ol>
-            <p className="mt-1.5 opacity-70">MC tidak perlu Chrome Flag (tidak butuh kamera).</p>
-          </div>
-        )}
+        {/* Chrome Flag instruction for Operator — ALWAYS shown (not just Electron) */}
+        <div className="rounded-md p-3 text-xs" style={{ backgroundColor: '#f59e0b15', border: '1px solid #f59e0b33', color: '#fde68a' }}>
+          <p className="font-semibold mb-1.5" style={{ color: GOLD }}>📱 Instruksi untuk Operator Kamera (HP + USB Capture Card):</p>
+          <p className="mb-1.5">Untuk menggunakan kamera USB HDMI capture card di HP Android via Chrome:</p>
+          <ol className="space-y-0.5 pl-1">
+            <li>1. Hubungkan USB capture card ke HP menggunakan kabel OTG</li>
+            <li>2. Buka Google Chrome di HP</li>
+            <li>3. Buka tab baru, ketik: <code className="px-1.5 py-0.5 rounded font-mono" style={{ backgroundColor: '#00000044' }}>chrome://flags</code></li>
+            <li>4. Cari: <code className="px-1.5 py-0.5 rounded font-mono" style={{ backgroundColor: '#00000044' }}>insecure origin</code></li>
+            <li>5. Pada "Insecure origins treated as secure", masukkan:</li>
+            <li className="pl-4"><code className="px-1.5 py-0.5 rounded font-mono" style={{ backgroundColor: '#00000044', color: GOLD }}>http://{lanIP || window.location.hostname || '192.168.x.x'}:{lanInfo?.httpPort ?? 3000}</code></li>
+            <li>6. Pilih "Enabled" → Klik "Relaunch"</li>
+            <li>7. Scan QR Code di bawah atau buka link operator — kamera USB akan aktif!</li>
+          </ol>
+          <p className="mt-1.5 opacity-70">MC tidak perlu Chrome Flag (tidak butuh kamera). Hanya Operator yang perlu.</p>
+        </div>
         {/* Session Password Display */}
         {currentProject?.config?.sessionPassword && currentProject.config.sessionPassword !== '__PASSWORD_SET__' && (
           <div className="rounded-md p-3 text-xs" style={{ backgroundColor: '#22c55e15', border: '1px solid #22c55e33', color: '#86efac' }}>
@@ -835,6 +935,25 @@ export default function AdminDashboard() {
                 <QrCode className="size-3.5" />
               </Button>
             </div>
+            {/* Chrome + USB Capture Card operator link */}
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1 justify-start gap-2 border-[#d4af37]/40 bg-[#2a164a]/80 text-[#d4af37] hover:bg-[#3b2263] hover:text-[#fbbf24]"
+                onClick={() => copyOperatorHtmlLink(1)}
+              >
+                <Camera className="size-3.5" />
+                🔌 Chrome + USB
+              </Button>
+              <Button
+                variant="outline"
+                className="shrink-0 gap-1.5 border-[#d4af37]/40 bg-[#2a164a]/80 text-[#d4af37] hover:bg-[#3b2263] hover:text-[#fbbf24]"
+                onClick={() => showOperatorHtmlQrCode(1)}
+                title="QR Code Operator (Chrome + USB Capture Card)"
+              >
+                <QrCode className="size-3.5" />
+              </Button>
+            </div>
           </div>
         ) : mode === 'dual-photoshoot' ? (
           /* Dual Photoshoot: 1 MC + 2 Operators */
@@ -869,23 +988,43 @@ export default function AdminDashboard() {
               <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: GOLD }}>
                 Operator Kamera 1
               </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  className="flex-1 justify-start gap-2 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
-                  onClick={() => copyLink('operator', 1)}
-                >
-                  <Copy className="size-3.5" />
-                  Operator 1
-                </Button>
-                <Button
-                  variant="outline"
-                  className="shrink-0 gap-1.5 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
-                  onClick={() => showQrCode('operator', 1)}
-                  title="QR Code Operator 1"
-                >
-                  <QrCode className="size-3.5" />
-                </Button>
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1 justify-start gap-2 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
+                    onClick={() => copyLink('operator', 1)}
+                  >
+                    <Copy className="size-3.5" />
+                    Operator 1
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="shrink-0 gap-1.5 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
+                    onClick={() => showQrCode('operator', 1)}
+                    title="QR Code Operator 1"
+                  >
+                    <QrCode className="size-3.5" />
+                  </Button>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1 justify-start gap-2 border-[#d4af37]/40 bg-[#2a164a]/80 text-[#d4af37] hover:bg-[#3b2263] hover:text-[#fbbf24]"
+                    onClick={() => copyOperatorHtmlLink(1)}
+                  >
+                    <Camera className="size-3.5" />
+                    🔌 Chrome + USB
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="shrink-0 gap-1.5 border-[#d4af37]/40 bg-[#2a164a]/80 text-[#d4af37] hover:bg-[#3b2263] hover:text-[#fbbf24]"
+                    onClick={() => showOperatorHtmlQrCode(1)}
+                    title="QR Code Operator 1 (Chrome + USB)"
+                  >
+                    <QrCode className="size-3.5" />
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -893,23 +1032,43 @@ export default function AdminDashboard() {
               <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: CYAN }}>
                 Operator Kamera 2
               </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  className="flex-1 justify-start gap-2 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
-                  onClick={() => copyLink('operator', 2)}
-                >
-                  <Copy className="size-3.5" />
-                  Operator 2
-                </Button>
-                <Button
-                  variant="outline"
-                  className="shrink-0 gap-1.5 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
-                  onClick={() => showQrCode('operator', 2)}
-                  title="QR Code Operator 2"
-                >
-                  <QrCode className="size-3.5" />
-                </Button>
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1 justify-start gap-2 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
+                    onClick={() => copyLink('operator', 2)}
+                  >
+                    <Copy className="size-3.5" />
+                    Operator 2
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="shrink-0 gap-1.5 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
+                    onClick={() => showQrCode('operator', 2)}
+                    title="QR Code Operator 2"
+                  >
+                    <QrCode className="size-3.5" />
+                  </Button>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1 justify-start gap-2 border-[#06b6d4]/40 bg-[#2a164a]/80 text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#22d3ee]"
+                    onClick={() => copyOperatorHtmlLink(2)}
+                  >
+                    <Camera className="size-3.5" />
+                    🔌 Chrome + USB
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="shrink-0 gap-1.5 border-[#06b6d4]/40 bg-[#2a164a]/80 text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#22d3ee]"
+                    onClick={() => showOperatorHtmlQrCode(2)}
+                    title="QR Code Operator 2 (Chrome + USB)"
+                  >
+                    <QrCode className="size-3.5" />
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
@@ -957,6 +1116,24 @@ export default function AdminDashboard() {
                     <QrCode className="size-3.5" />
                   </Button>
                 </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1 justify-start gap-2 border-[#d4af37]/40 bg-[#2a164a]/80 text-[#d4af37] hover:bg-[#3b2263] hover:text-[#fbbf24]"
+                    onClick={() => copyOperatorHtmlLink(1)}
+                  >
+                    <Camera className="size-3.5" />
+                    🔌 Chrome + USB
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="shrink-0 gap-1.5 border-[#d4af37]/40 bg-[#2a164a]/80 text-[#d4af37] hover:bg-[#3b2263] hover:text-[#fbbf24]"
+                    onClick={() => showOperatorHtmlQrCode(1)}
+                    title="QR Code Operator 1 (Chrome + USB)"
+                  >
+                    <QrCode className="size-3.5" />
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -1000,6 +1177,24 @@ export default function AdminDashboard() {
                     className="shrink-0 gap-1.5 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
                     onClick={() => showQrCode('operator', 2)}
                     title="QR Code Operator 2"
+                  >
+                    <QrCode className="size-3.5" />
+                  </Button>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1 justify-start gap-2 border-[#06b6d4]/40 bg-[#2a164a]/80 text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#22d3ee]"
+                    onClick={() => copyOperatorHtmlLink(2)}
+                  >
+                    <Camera className="size-3.5" />
+                    🔌 Chrome + USB
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="shrink-0 gap-1.5 border-[#06b6d4]/40 bg-[#2a164a]/80 text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#22d3ee]"
+                    onClick={() => showOperatorHtmlQrCode(2)}
+                    title="QR Code Operator 2 (Chrome + USB)"
                   >
                     <QrCode className="size-3.5" />
                   </Button>
