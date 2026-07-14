@@ -7,7 +7,7 @@ import android.util.Base64
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.saatiril.operator.camera.WebViewCameraManager
+import com.saatiril.operator.camera.Camera2Manager
 import com.saatiril.operator.util.FilenameUtils
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -19,27 +19,21 @@ import kotlinx.coroutines.launch
 
 /**
  * ═════════════════════════════════════════════════════════════════════════
- * Central ViewModel — v10 Dual Camera Engine (UVCCamera + CameraX)
+ * Central ViewModel — v14 Camera2 Direct Engine
  * ═════════════════════════════════════════════════════════════════════════
  *
- * v10 CHANGES (fundamental architectural shift — NATIVE USB camera):
- * - Camera: DualCameraManager replaces WebViewCameraManager.
- *   UVCCamera (com.herohan:UVCAndroid) talks DIRECTLY to USB hardware
- *   via USB Host API, bypassing Android's broken Camera2 HAL entirely.
- *   CameraX handles built-in cameras (which work fine).
- * - USB Detection: UVCCamera's USBMonitor detects USB devices natively.
- *   No more WebView/getUserMedia (which couldn't see USB cameras on Android).
- * - Photo Capture: UVCCamera IFrameCallback → NV21 → JPEG → base64.
- *   CameraX ImageCapture → JPEG → base64. No JavaScript involved.
- * - Photo Saving: REMOVED. Photos are NOT saved on the operator device.
- *   They are sent via socket.io to the admin who saves them (matching
- *   the Electron browser-mode behavior exactly).
- * - Frame Overlay: TODO: apply in Kotlin (not JavaScript).
+ * v14 CHANGES (Camera2 API replacing WebView+getUserMedia):
+ * - Camera: Camera2Manager replaces WebViewCameraManager.
+ *   Camera2 API with LENS_FACING_EXTERNAL directly accesses USB capture cards.
+ *   WebView/getUserMedia CANNOT access USB capture cards on Android.
+ * - USB Detection: Camera2 LENS_FACING_EXTERNAL + camera ID >= "2" heuristic.
+ * - Photo Capture: ImageReader → JPEG → base64. No JavaScript involved.
+ * - Preview: TextureView (replaces WebView). Camera preview renders directly.
  *
  * Camera priority:
- * 1. USB/External camera (UVCCamera) — auto-selected if present
- * 2. Built-in back camera (CameraX) — fallback
- * 3. Built-in front camera (CameraX) — last resort
+ * 1. USB/External camera (LENS_FACING_EXTERNAL) — auto-selected if present
+ * 2. Built-in back camera — fallback
+ * 3. Built-in front camera — last resort
  */
 class OperatorViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -50,9 +44,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     private val socketManager = SocketManager()
 
-    // ─── Camera Manager (v13: Permanent WebView) ──────────
+    // ─── Camera Manager (v14: Camera2 Direct) ──────────
 
-    val cameraWebViewManager = WebViewCameraManager(application)
+    val cameraManager = Camera2Manager(application)
 
     // ─── Connection State ───────────────────────────────────────
 
@@ -188,8 +182,8 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private val _cameraConnected = MutableStateFlow(false)
     val cameraConnected: StateFlow<Boolean> = _cameraConnected.asStateFlow()
 
-    val availableCameras: StateFlow<List<Pair<String, String>>> = cameraWebViewManager.availableCameras
-    val currentCameraId: StateFlow<String> = cameraWebViewManager.currentCameraIdFlow
+    val availableCameras: StateFlow<List<Pair<String, String>>> = cameraManager.availableCameras
+    val currentCameraId: StateFlow<String> = cameraManager.currentCameraIdFlow
 
     // ─── Frame Overlay ──────────────────────────────────────────
 
@@ -251,22 +245,21 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private var cameraTypeCollector: Job? = null
 
     /**
-     * v13: Initialize camera via permanent WebView.
-     * The WebView was already created at Activity level.
-     * This just calls autoStart() in JavaScript.
+     * v14: Initialize camera via Camera2 API.
+     * Camera2 opens the camera directly via Android Camera2 API.
      */
     fun initCamera() {
         Log.i(TAG, "═══════════════════════════════════════════════════")
-        Log.i(TAG, "initCamera: v13 Permanent WebView Camera")
+        Log.i(TAG, "initCamera: v14 Camera2 Direct")
         Log.i(TAG, "═══════════════════════════════════════════════════")
 
-        cameraWebViewManager.initCamera()
+        cameraManager.initCamera()
 
         // Set up collectors if not already set up
         if (cameraConnectedCollector?.isActive != true) {
             cameraConnectedCollector?.cancel()
             cameraConnectedCollector = viewModelScope.launch {
-                cameraWebViewManager.isConnected.collect { connected ->
+                cameraManager.isConnected.collect { connected ->
                     _cameraConnected.value = connected
                     updateCameraSource()
                 }
@@ -276,19 +269,19 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         if (cameraTypeCollector?.isActive != true) {
             cameraTypeCollector?.cancel()
             cameraTypeCollector = viewModelScope.launch {
-                cameraWebViewManager.cameraType.collect {
+                cameraManager.cameraType.collect {
                     updateCameraSource()
                 }
             }
         }
 
-        Log.i(TAG, "Camera initialized — WebView camera active, cameraSource=${_cameraSource.value}")
+        Log.i(TAG, "Camera initialized — Camera2 active, cameraSource=${_cameraSource.value}")
     }
 
     private fun updateCameraSource() {
-        val connected = cameraWebViewManager.isConnected.value
-        val cameraType = cameraWebViewManager.cameraType.value
-        val isUSB = cameraWebViewManager.isUSBCamera.value
+        val connected = cameraManager.isConnected.value
+        val cameraType = cameraManager.cameraType.value
+        val isUSB = cameraManager.isUSBCamera.value
 
         if (!connected) {
             _cameraSource.value = "none"
@@ -299,31 +292,31 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun switchCamera() {
-        val cameras = cameraWebViewManager.availableCameras.value
-        val currentId = cameraWebViewManager.currentCameraIdFlow.value
+        val cameras = cameraManager.availableCameras.value
+        val currentId = cameraManager.currentCameraIdFlow.value
         val currentIndex = cameras.indexOfFirst { it.first == currentId }
         val nextIndex = (currentIndex + 1) % cameras.size
         if (cameras.isNotEmpty()) {
-            cameraWebViewManager.switchCamera(cameras[nextIndex].first)
+            cameraManager.switchCamera(cameras[nextIndex].first)
         }
     }
 
     fun getAvailableCameras(): List<Pair<String, String>> {
-        cameraWebViewManager.refreshCameraList()
-        return cameraWebViewManager.availableCameras.value
+        cameraManager.refreshCameraList()
+        return cameraManager.availableCameras.value
     }
 
     fun switchToCameraById(cameraId: String) {
-        cameraWebViewManager.switchCamera(cameraId)
+        cameraManager.switchCamera(cameraId)
     }
 
     /**
      * Force rescan for USB cameras. Called when user taps "Pindai Ulang USB".
-     * v13: WebView's devicechange + forceRescan() handles this.
+     * v14: Camera2 enumerates cameras directly, no WebView needed.
      */
     fun forceRescanUsbCamera() {
         Log.i(TAG, "forceRescanUsbCamera: User requested USB camera rescan")
-        cameraWebViewManager.forceRescan()
+        cameraManager.forceRescan()
     }
 
     fun setUvcDeviceAttached(attached: Boolean) {
@@ -331,7 +324,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         if (attached) {
             viewModelScope.launch {
                 delay(1000)
-                cameraWebViewManager.forceRescan()
+                cameraManager.forceRescan()
             }
         }
     }
@@ -375,18 +368,18 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         val config = _project.value?.config
         if (config != null) {
             val aspectRatio = config.parseAspectRatio().toDouble()
-            cameraWebViewManager.updateConfig(aspectRatio, config.preset ?: "original")
+            cameraManager.updateConfig(aspectRatio, config.preset ?: "original")
         }
 
         // Send frame overlay to JS if available
         val frameBase64 = _project.value?.config?.frame
         if (frameBase64 != null && frameBase64 != "__FRAME_SAVED__" && frameBase64.isNotEmpty()) {
-            cameraWebViewManager.setFrameOverlay("data:image/png;base64,${if (frameBase64.contains(",")) frameBase64.substringAfter(",") else frameBase64}")
+            cameraManager.setFrameOverlay("data:image/png;base64,${if (frameBase64.contains(",")) frameBase64.substringAfter(",") else frameBase64}")
         } else {
-            cameraWebViewManager.setFrameOverlay(null)
+            cameraManager.setFrameOverlay(null)
         }
 
-        cameraWebViewManager.capturePhoto { base64DataUrl ->
+        cameraManager.capturePhoto { base64DataUrl ->
             if (base64DataUrl == null) {
                 Log.e(TAG, "Capture returned null from camera engine")
                 return@capturePhoto
@@ -997,6 +990,6 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         cameraConnectedCollector?.cancel()
         cameraTypeCollector?.cancel()
         socketManager.destroy()
-        cameraWebViewManager.destroy()
+        cameraManager.destroy()
     }
 }

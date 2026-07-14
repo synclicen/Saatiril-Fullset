@@ -171,7 +171,7 @@ fun OperatorScreen(
         }
     }
 
-    // v13: Camera is already initialized via permanent WebView at Activity level.
+    // v14: Camera is already initialized via Camera2 API at Activity level.
     // No need to re-init here — camera stream is already running.
     LaunchedEffect(effectivePermission) {
         if (effectivePermission && !cameraInitDone) {
@@ -294,10 +294,10 @@ fun OperatorScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     // ═══════════════════════════════════════════════════
-                    // v13: Camera preview is in the PERMANENT WebView
-                    // underneath this Compose UI. No TextureView or
-                    // PreviewView needed here. This Box is transparent
-                    // so the WebView camera preview shows through.
+                    // v14: Camera preview is in the TextureView
+                    // underneath this Compose UI (added in MainActivity).
+                    // This Box is transparent so the camera preview shows
+                    // through the TextureView.
                     // ═══════════════════════════════════════════════════
 
                     // Gridline Overlay
