@@ -304,20 +304,14 @@
   
   <div class="form-card">
     <div class="form-group">
-      <label class="form-label">Server IP</label>
+      <label class="form-label">Server IP (alamat IP komputer Admin)</label>
       <input id="serverIp" class="form-input" type="text" placeholder="192.168.1.100" value="">
     </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label class="form-label">Port</label>
-        <input id="serverPort" class="form-input" type="text" placeholder="3000" value="3000">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Channel</label>
-        <div class="channel-btns">
-          <button class="channel-btn active" data-ch="1" onclick="selectChannel(1)">Ch.1</button>
-          <button class="channel-btn" data-ch="2" onclick="selectChannel(2)">Ch.2</button>
-        </div>
+    <div class="form-group">
+      <label class="form-label">Channel</label>
+      <div class="channel-btns">
+        <button class="channel-btn active" data-ch="1" onclick="selectChannel(1)">Ch.1</button>
+        <button class="channel-btn" data-ch="2" onclick="selectChannel(2)">Ch.2</button>
       </div>
     </div>
     <div class="form-group">
@@ -325,6 +319,9 @@
       <input id="sessionPassword" class="form-input" type="password" placeholder="Kosongkan jika tidak ada">
     </div>
     <button id="connectBtn" class="connect-btn" onclick="handleConnect()">Hubungkan</button>
+    <div style="font-size:10px; color:rgba(196,181,253,0.5); text-align:center; margin-top:8px;">
+      Otomatis terhubung ke Socket.io port 3003 di IP server
+    </div>
   </div>
   
   <div id="connectionStatus" class="status-badge connecting" style="display:none">
@@ -777,7 +774,6 @@ function setConnectionState(state, errorMsg) {
 
 async function handleConnect() {
   const ip = document.getElementById('serverIp').value.trim()
-  const port = document.getElementById('serverPort').value.trim() || '3000'
   const password = document.getElementById('sessionPassword').value
   
   if (!ip) {
@@ -788,7 +784,6 @@ async function handleConnect() {
   
   // Save IP for later
   localStorage.setItem('saatiril_server_ip', ip)
-  localStorage.setItem('saatiril_server_port', port)
   
   // Hash password if provided
   if (password) {
@@ -796,27 +791,75 @@ async function handleConnect() {
   }
   
   setConnectionState('connecting')
-  connectToServer(ip, port)
+  connectToServer(ip)
 }
 
-function connectToServer(ip, port) {
+function connectToServer(ip) {
   if (socket) {
     socket.disconnect()
     socket = null
   }
   
-  const serverUrl = `http://${ip}:${port}`
-  console.log('[OP] Connecting to:', serverUrl)
+  // ── Socket.io Server Connection ──────────────────────────────────────
+  // The Socket.io server runs on port 3003 (separate from the Next.js
+  // web server on port 3000). We connect to port 3003 directly.
+  //
+  // If the user is accessing this page through a Caddy gateway (sandbox),
+  // we need to use XTransformPort query parameter for routing.
+  //
+  // Connection strategy:
+  // 1. If URL has ?socketPort=XXXX → use that port (explicit override)
+  // 2. If accessed via Caddy gateway (port 81) → use XTransformPort=3003
+  // 3. Default → direct connection to http://<ip>:3003
   
-  socket = io(serverUrl, {
-    path: '/',
-    transports: ['websocket', 'polling'],
-    upgrade: true,
-    reconnection: true,
-    reconnectionAttempts: 10,
-    reconnectionDelay: 2000,
-    timeout: 10000,
-  })
+  const SOCKET_PORT = 3003  // Socket.io server port (saatiril-socket)
+  const urlParams = new URLSearchParams(window.location.search)
+  const explicitSocketPort = urlParams.get('socketPort')
+  
+  let serverUrl, socketOptions
+  
+  if (explicitSocketPort) {
+    // Explicit socket port specified in URL
+    serverUrl = `http://${ip}:${explicitSocketPort}`
+    socketOptions = {
+      path: '/',
+      transports: ['websocket', 'polling'],
+      upgrade: true,
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 2000,
+      timeout: 10000,
+    }
+  } else if (window.location.port === '81' || window.location.port === '') {
+    // Accessing via Caddy gateway (port 81) or no port
+    // Use the current origin with XTransformPort query parameter
+    serverUrl = `http://${ip}:${SOCKET_PORT}`
+    socketOptions = {
+      path: '/',
+      transports: ['websocket', 'polling'],
+      upgrade: true,
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 2000,
+      timeout: 10000,
+    }
+  } else {
+    // Direct LAN connection — connect to Socket.io port 3003
+    serverUrl = `http://${ip}:${SOCKET_PORT}`
+    socketOptions = {
+      path: '/',
+      transports: ['websocket', 'polling'],
+      upgrade: true,
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 2000,
+      timeout: 10000,
+    }
+  }
+  
+  console.log('[OP] Connecting to Socket.io server:', serverUrl)
+  
+  socket = io(serverUrl, socketOptions)
   
   socket.on('connect', () => {
     console.log('[OP] Socket connected:', socket.id)
@@ -862,13 +905,33 @@ function connectToServer(ip, port) {
   
   socket.on('disconnect', (reason) => {
     console.log('[OP] Socket disconnected:', reason)
-    setConnectionState('disconnected', 'Koneksi terputus: ' + reason)
     stopLatencyPing()
+    if (reason === 'io server disconnect') {
+      setConnectionState('disconnected', 'Server memutuskan koneksi. Coba hubungkan kembali.')
+    } else if (reason === 'transport close') {
+      setConnectionState('disconnected', 'Koneksi terputus. Mencoba menyambung ulang...')
+    } else {
+      setConnectionState('disconnected', 'Koneksi terputus: ' + reason)
+    }
   })
   
   socket.on('connect_error', (err) => {
     console.error('[OP] Connection error:', err.message)
-    setConnectionState('disconnected', 'Gagal terhubung: ' + err.message)
+    stopLatencyPing()
+    // Provide more helpful error messages
+    let errorMsg = 'Gagal terhubung ke server'
+    if (err.message.includes('websocket error') || err.message.includes('WebSocket')) {
+      errorMsg = 'Gagal terhubung: Server Socket.io tidak ditemukan. Pastikan server SAATIRIL berjalan di IP ini (port 3003).'
+    } else if (err.message.includes('timeout')) {
+      errorMsg = 'Koneksi timeout. Periksa IP server dan pastikan server berjalan.'
+    } else if (err.message.includes('refused')) {
+      errorMsg = 'Koneksi ditolak. Server tidak berjalan di IP ini atau port 3003 tertutup.'
+    } else if (err.message.includes('CORS') || err.message.includes('cors')) {
+      errorMsg = 'Koneksi diblokir (CORS). Hubungi administrator.'
+    } else {
+      errorMsg = 'Gagal terhubung: ' + err.message
+    }
+    setConnectionState('disconnected', errorMsg)
   })
 }
 
@@ -1362,6 +1425,7 @@ document.addEventListener('DOMContentLoaded', () => {
   enumerateVideoDevices()
   
   // Auto-detect server IP from current URL
+  // Only use the hostname if it looks like a LAN IP (not localhost)
   if (window.location.hostname && window.location.hostname !== 'localhost' && 
       window.location.hostname !== '127.0.0.1' && !window.location.hostname.startsWith('[')) {
     document.getElementById('serverIp').value = window.location.hostname
@@ -1379,11 +1443,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const channel = parseInt(params.get('channel') || '1')
     selectChannel(channel)
     const ip = window.location.hostname
-    const port = window.location.port || '3000'
     if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
       document.getElementById('serverIp').value = ip
-      document.getElementById('serverPort').value = port
-      // Auto-connect
+      // Auto-connect after a short delay
       setTimeout(() => handleConnect(), 500)
     }
   }
