@@ -82,3 +82,31 @@ Stage Summary:
 - "🔌 Coba Semua" button added to operator screen top bar
 - Password .trim() fix for auth flow
 - Commit: ed07bf4 — pushed to origin/main
+
+---
+Task ID: 2
+Agent: main
+Task: APK v14 — Rewrite camera engine with Camera2 API for USB capture card support
+
+Work Log:
+- Analyzed all previous approaches: Chrome getUserMedia, APK v13 WebView+getUserMedia, APK v10 UVCCamera, APK v3-v6 CameraX
+- Determined root cause: ALL approaches using getUserMedia (Chrome + WebView) fail because Chrome/Chromium on Android cannot properly open USB capture cards
+- Created Camera2Manager.kt — complete Camera2 API implementation
+  - Enumerates ALL camera IDs via CameraManager.cameraIdList (not just those with LENS_FACING)
+  - Three-tier USB detection: LENS_FACING_EXTERNAL constant, raw value 2, camera ID >= 2 heuristic
+  - TextureView for real-time preview (no WebView!)
+  - ImageReader for JPEG photo capture → base64 data URL
+  - Auto-selects USB/external camera, falls back to built-in
+  - Background HandlerThread for camera operations
+  - Error recovery: auto-tries next camera on failure
+- Updated OperatorViewModel.kt: cameraWebViewManager → cameraManager
+- Updated MainActivity.kt: WebView → TextureView + UsbManager USB detection
+- Updated OperatorScreen.kt: preview from TextureView
+- Updated build.gradle.kts: v14, added Camera2 dependencies
+- Committed and pushed — GitHub Actions will build the APK
+
+Stage Summary:
+- APK v14 commit: bf85818 — pushed to origin/main
+- Key change: Camera2 API directly accesses USB cameras (bypasses WebView/getUserMedia entirely)
+- GitHub Actions CI will build the APK automatically
+- User should download the APK from GitHub Actions artifacts
