@@ -17,31 +17,33 @@
       --muted: #c4b5fd;
       --danger: #ef4444;
       --success: #22c55e;
+      --warn: #f59e0b;
     }
     body { 
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: var(--bg); color: #fff; overflow: hidden;
-      height: 100vh; width: 100vw;
+      background: var(--bg); color: #fff; overflow-x: hidden;
+      min-height: 100vh; width: 100vw;
       -webkit-user-select: none; user-select: none;
     }
+
     /* ── Connection Screen ── */
     .connection-screen {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      height: 100vh; padding: 24px; gap: 20px;
+      min-height: 100vh; padding: 20px 16px; gap: 16px;
     }
     .connection-screen.hidden { display: none; }
     .logo-text {
-      font-size: 28px; font-weight: 800; letter-spacing: 3px;
+      font-size: 26px; font-weight: 800; letter-spacing: 3px;
       background: linear-gradient(135deg, var(--gold), #f5e6a3, var(--gold));
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
       background-clip: text;
     }
-    .logo-sub { font-size: 11px; color: var(--muted); letter-spacing: 2px; margin-top: 4px; text-align: center; }
+    .logo-sub { font-size: 10px; color: var(--muted); letter-spacing: 2px; margin-top: 4px; text-align: center; }
     .form-card {
       background: var(--panel); border: 1px solid var(--border);
-      border-radius: 16px; padding: 24px; width: 100%; max-width: 380px;
+      border-radius: 16px; padding: 20px; width: 100%; max-width: 380px;
     }
-    .form-group { margin-bottom: 16px; }
+    .form-group { margin-bottom: 14px; }
     .form-label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
     .form-input {
       width: 100%; padding: 12px 14px; border-radius: 10px;
@@ -84,6 +86,8 @@
     .connected .status-dot { background: #4ade80; }
     .disconnected .status-dot { background: #f87171; }
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    /* Camera status */
     .usb-status {
       background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
       padding: 10px 14px; width: 100%; max-width: 380px;
@@ -91,7 +95,64 @@
     }
     .usb-icon { font-size: 18px; }
     .usb-label { flex: 1; color: var(--muted); }
-    .usb-value { font-weight: 700; color: var(--gold); }
+    .usb-value { font-weight: 700; }
+    .usb-value.ok { color: var(--success); }
+    .usb-value.warn { color: var(--warn); }
+    .usb-value.err { color: var(--danger); }
+
+    /* Permission button */
+    .perm-btn {
+      width: 100%; padding: 12px; border-radius: 10px; font-weight: 700; font-size: 14px;
+      background: linear-gradient(135deg, var(--warn), #d97706); color: var(--bg);
+      border: none; cursor: pointer; transition: opacity 0.2s; margin-bottom: 10px;
+    }
+    .perm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .perm-btn.granted { background: linear-gradient(135deg, var(--success), #16a34a); }
+
+    /* Troubleshooting */
+    .troubleshoot-card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+      padding: 14px; width: 100%; max-width: 380px; font-size: 11px; line-height: 1.6;
+    }
+    .troubleshoot-title { font-weight: 700; color: var(--gold); font-size: 13px; margin-bottom: 8px; }
+    .troubleshoot-card ol { padding-left: 18px; }
+    .troubleshoot-card li { margin-bottom: 4px; color: var(--muted); }
+    .troubleshoot-card li strong { color: #fff; }
+    .troubleshoot-card code {
+      background: rgba(0,0,0,0.3); padding: 1px 5px; border-radius: 3px;
+      font-size: 10px; color: var(--gold);
+    }
+    .troubleshoot-card .highlight { color: var(--gold); font-weight: 600; }
+    .troubleshoot-card .step-result { margin-top: 4px; padding: 4px 8px; border-radius: 6px; font-size: 10px; }
+    .step-result.ok { background: rgba(34,197,94,0.1); color: #4ade80; }
+    .step-result.fail { background: rgba(239,68,68,0.1); color: #f87171; }
+    .step-result.pending { background: rgba(234,179,8,0.1); color: #facc15; }
+
+    /* Camera probe */
+    .probe-section {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+      padding: 14px; width: 100%; max-width: 380px;
+    }
+    .probe-title { font-weight: 700; color: var(--gold); font-size: 12px; margin-bottom: 8px; }
+    .probe-list { max-height: 200px; overflow-y: auto; }
+    .probe-item {
+      background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 10px; margin-bottom: 6px; cursor: pointer; transition: all 0.15s;
+      display: flex; align-items: center; gap: 8px; font-size: 11px;
+    }
+    .probe-item:active { background: rgba(212,175,55,0.15); }
+    .probe-item .pi-icon { font-size: 16px; flex-shrink: 0; }
+    .probe-item .pi-info { flex: 1; min-width: 0; }
+    .probe-item .pi-label { font-weight: 600; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .probe-item .pi-detail { font-size: 9px; color: var(--muted); }
+    .probe-item .pi-badge {
+      font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 4px;
+      white-space: nowrap;
+    }
+    .pi-badge.usb { background: rgba(34,197,94,0.15); color: #4ade80; }
+    .pi-badge.phone { background: rgba(196,181,253,0.15); color: var(--muted); }
+    .pi-badge.unknown { background: rgba(234,179,8,0.15); color: #facc15; }
+    .pi-badge.active-cam { background: rgba(212,175,55,0.2); color: var(--gold); }
 
     /* ── Operator Screen ── */
     .operator-screen { display: none; height: 100vh; flex-direction: column; }
@@ -284,11 +345,25 @@
     }
     .password-title { font-size: 16px; font-weight: 700; color: var(--gold); margin-bottom: 8px; text-align: center; }
     .password-desc { font-size: 12px; color: var(--muted); text-align: center; margin-bottom: 16px; }
-    
+    .password-error { font-size: 11px; color: var(--danger); text-align: center; margin-top: 8px; display: none; }
+    .password-error.show { display: block; }
+
     /* Scrollbar */
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    /* Collapsible sections */
+    .collapse-toggle {
+      width: 100%; padding: 8px 12px; border-radius: 8px; font-size: 11px; font-weight: 600;
+      background: var(--card); border: 1px solid var(--border); color: var(--muted);
+      cursor: pointer; text-align: left; display: flex; align-items: center; gap: 6px;
+    }
+    .collapse-toggle:active { background: var(--border); }
+    .collapse-toggle .arrow { transition: transform 0.2s; font-size: 10px; }
+    .collapse-toggle.open .arrow { transform: rotate(90deg); }
+    .collapse-body { display: none; margin-top: 8px; }
+    .collapse-body.open { display: block; }
   </style>
 </head>
 <body>
@@ -302,6 +377,33 @@
     <div class="logo-sub">SISTEM AUTO TRACK INPUT, RAW INTO LIVE<br>OPERATOR KAMERA</div>
   </div>
   
+  <!-- Step 1: Camera Permission -->
+  <div id="permSection" style="width:100%;max-width:380px;">
+    <button id="permBtn" class="perm-btn" onclick="requestCameraPermission()">
+      📷 Izinkan Akses Kamera
+    </button>
+    <div id="permStatus" style="font-size:10px;color:var(--muted);text-align:center;margin-top:4px;">
+      Kamera perlu diizinkan agar USB capture card terdeteksi
+    </div>
+  </div>
+
+  <!-- Camera Probe Section -->
+  <div id="probeSection" class="probe-section" style="display:none;">
+    <div class="probe-title">📷 Kamera Terdeteksi</div>
+    <div id="probeList" class="probe-list"></div>
+    <button onclick="probeAllCameras()" style="width:100%;padding:8px;border-radius:8px;font-weight:600;font-size:11px;background:var(--card);border:1px solid var(--border);color:var(--muted);cursor:pointer;margin-top:6px;">
+      🔍 Pindai Ulang Kamera
+    </button>
+  </div>
+
+  <!-- USB Status -->
+  <div id="usbStatus" class="usb-status">
+    <span class="usb-icon">🔌</span>
+    <span class="usb-label">USB Capture Card:</span>
+    <span class="usb-value" id="usbValue">Belum diperiksa</span>
+  </div>
+
+  <!-- Connection Form -->
   <div class="form-card">
     <div class="form-group">
       <label class="form-label">Server IP (alamat IP komputer Admin)</label>
@@ -331,11 +433,40 @@
   </div>
   
   <div id="errorCard" class="error-card" style="display:none"></div>
-  
-  <div id="usbStatus" class="usb-status" style="display:none">
-    <span class="usb-icon">📷</span>
-    <span class="usb-label">USB Capture Card:</span>
-    <span class="usb-value" id="usbValue">Memindai...</span>
+
+  <!-- Troubleshooting Section -->
+  <button class="collapse-toggle" onclick="toggleTroubleshoot(this)">
+    <span class="arrow">▶</span> ❓ USB Capture Card Tidak Terdeteksi?
+  </button>
+  <div id="troubleshootBody" class="collapse-body">
+    <div class="troubleshoot-card">
+      <div class="troubleshoot-title">📱 Langkah-langkah untuk Android:</div>
+      <ol>
+        <li><strong>Pastikan USB OTG aktif</strong> — Buka Pengaturan → Setelan tambahan → OTG → Aktifkan</li>
+        <li><strong>Hubungkan USB capture card</strong> via kabel OTG ke HP</li>
+        <li><strong>Periksa notifikasi USB</strong> — Saat colok USB, akan muncul notifikasi. Tap notifikasi tersebut</li>
+        <li><strong>Izinkan akses kamera Chrome</strong> — Pengaturan → Aplikasi → Chrome → Izin → Kamera → Izinkan</li>
+        <li><strong>Aktifkan Chrome Flag</strong> (penting untuk HTTP):
+          <br>Buka tab baru → ketik <code>chrome://flags</code>
+          <br>Cari <code>insecure origin</code>
+          <br>Pada "Insecure origins treated as secure", masukkan:
+          <br><code id="flagUrl">http://192.168.x.x:3000</code>
+          <br>Pilih <strong>Enabled</strong> → Tap <strong>Relaunch</strong>
+        </li>
+        <li><strong>Tutup dan buka ulang Chrome</strong> setelah colok USB</li>
+        <li>Tap tombol <strong>"Izinkan Akses Kamera"</strong> di atas, lalu pilih <strong>izinkan</strong></li>
+      </ol>
+      <div style="margin-top:10px; padding:8px; background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.2); border-radius:6px;">
+        <div style="font-weight:700;color:var(--warn);font-size:11px;">💡 Tips:</div>
+        <div style="color:var(--muted);font-size:10px;">
+          Jika tetap tidak terdeteksi, coba:
+          <br>• Buka aplikasi Kamera bawaan HP → cek apakah USB capture card muncul
+          <br>• Jika muncul di Kamera HP tapi tidak di Chrome, berarti Chrome perlu Chrome Flag
+          <br>• Coba cabut dan pasang ulang USB capture card
+          <br>• Pastikan HDMI cable terhubung ke kamera dan capture card
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -349,7 +480,8 @@
     <div class="form-group">
       <input id="authPassword" class="form-input" type="password" placeholder="Password sesi">
     </div>
-    <button class="connect-btn" onclick="handleAuthSubmit()">Lanjutkan</button>
+    <button id="authSubmitBtn" class="connect-btn" onclick="handleAuthSubmit()">Lanjutkan</button>
+    <div id="authError" class="password-error">Password salah. Coba lagi.</div>
   </div>
 </div>
 
@@ -383,7 +515,6 @@
     
     <!-- Gridline overlay -->
     <svg id="gridlineOverlay" class="gridline-overlay hidden" viewBox="0 0 100 100" preserveAspectRatio="none">
-      <!-- Filled dynamically -->
     </svg>
     
     <!-- Frame overlay -->
@@ -460,6 +591,7 @@ let socket = null
 let myChannel = 1
 let connectionState = 'disconnected' // disconnected | connecting | connected | authenticated
 let sessionPasswordHash = null
+let cameraPermissionGranted = false
 
 // Camera
 let currentStream = null
@@ -467,6 +599,7 @@ let selectedDeviceId = null
 let videoDevices = []
 let cameraAvailable = false
 let isMirrored = true // Mirror by default for selfie view
+let probedCameras = [] // { deviceId, label, kind, capabilities, isLikelyUsb }
 
 // Capture
 let capturePhase = 'standby' // standby | ready-1 | ready-2 | sending
@@ -482,7 +615,7 @@ let frameData = null
 
 // Gridline
 let gridlineEnabled = false
-let gridlineType = 'thirds' // thirds | quarters | crosshair | diagonal
+let gridlineType = 'thirds'
 
 // Latency
 let latencyMs = 0
@@ -495,22 +628,18 @@ let usbCameraDetected = false
 async function sha256(text) {
   const encoder = new TextEncoder()
   const data = encoder.encode(text)
-  // Try native crypto.subtle first (available in secure contexts & modern browsers)
   if (typeof crypto !== 'undefined' && crypto.subtle) {
     try {
       const buf = await crypto.subtle.digest('SHA-256', data)
       return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
     } catch(e) {
-      // Fall through to pure JS implementation (HTTP/insecure context)
+      // Fall through to pure JS implementation
     }
   }
-  // Pure JS SHA-256 fallback for insecure HTTP contexts
-  // This is the same proven implementation used in socket.ts
   return sha256Fallback(data)
 }
 
 function sha256Fallback(data) {
-  // SHA-256 round constants (K)
   const K = new Uint32Array([
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
     0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -572,65 +701,383 @@ function sha256Fallback(data) {
 
 function rotR(x, n) { return (x >>> n) | (x << (32 - n)) }
 
-// ── Camera Functions ─────────────────────────────────────────────────────
-async function enumerateVideoDevices() {
+// ── Camera Permission ────────────────────────────────────────────────────
+async function requestCameraPermission() {
+  const btn = document.getElementById('permBtn')
+  const status = document.getElementById('permStatus')
+  btn.disabled = true
+  btn.textContent = '⏳ Meminta izin...'
+  
   try {
-    // Request temporary access first if no permission yet (needed for device labels)
-    if (!currentStream) {
-      try {
-        const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-        tempStream.getTracks().forEach(t => t.stop())
-      } catch(e) {
-        console.warn('[OP] Initial camera permission denied or no camera:', e)
-      }
-    }
+    // Request camera access - this triggers the browser permission dialog
+    // IMPORTANT: We must actually get a stream to trigger the permission prompt
+    const tempStream = await navigator.mediaDevices.getUserMedia({ 
+      video: true, 
+      audio: false 
+    })
     
+    // Permission granted! Stop the temp stream
+    tempStream.getTracks().forEach(t => t.stop())
+    cameraPermissionGranted = true
+    
+    btn.textContent = '✅ Izin Kamera Diberikan'
+    btn.classList.add('granted')
+    status.textContent = 'Izin kamera diberikan. Memindai kamera...'
+    status.style.color = '#4ade80'
+    
+    // Now enumerate cameras
+    await probeAllCameras()
+    
+  } catch(err) {
+    console.error('[OP] Camera permission denied:', err)
+    btn.textContent = '❌ Izin Kamera Ditolak'
+    btn.disabled = false
+    
+    if (err.name === 'NotAllowedError') {
+      status.textContent = 'Izin kamera ditolak. Buka Pengaturan → Chrome → Izin → Kamera → Izinkan'
+      status.style.color = '#f87171'
+    } else if (err.name === 'NotFoundError') {
+      status.textContent = 'Tidak ada kamera ditemukan di perangkat ini'
+      status.style.color = '#f87171'
+    } else {
+      status.textContent = 'Error: ' + err.message
+      status.style.color = '#f87171'
+    }
+  }
+}
+
+// ── Camera Probe — Open each camera and get detailed info ────────────────
+async function probeAllCameras() {
+  console.log('[OP] Probing all cameras...')
+  
+  try {
     const devices = await navigator.mediaDevices.enumerateDevices()
     videoDevices = devices.filter(d => d.kind === 'videoinput')
     
-    console.log('[OP] Video devices found:', videoDevices.map(d => d.label || d.deviceId.slice(0,8)))
+    console.log('[OP] enumerateDevices found', videoDevices.length, 'video devices')
     
-    // Detect USB cameras by label keywords
-    usbCameraDetected = videoDevices.some(d => {
-      const label = (d.label || '').toLowerCase()
-      return label.includes('usb') || label.includes('capture') || label.includes('uvc') || 
-             label.includes('external') || label.includes('video capture') || label.includes('hdmi')
+    // Probe each camera by opening it briefly
+    probedCameras = []
+    for (let i = 0; i < videoDevices.length; i++) {
+      const device = videoDevices[i]
+      const probeInfo = {
+        deviceId: device.deviceId,
+        label: device.label || `Kamera ${i}`,
+        groupId: device.groupId || '',
+        isLikelyUsb: false,
+        usbScore: 0,
+        facingMode: null,
+        width: null,
+        height: null,
+        frameRate: null,
+        probed: false,
+      }
+      
+      // Check label for USB indicators
+      const label = (device.label || '').toLowerCase()
+      if (label.includes('usb')) probeInfo.usbScore += 5
+      if (label.includes('capture')) probeInfo.usbScore += 5
+      if (label.includes('uvc')) probeInfo.usbScore += 5
+      if (label.includes('external')) probeInfo.usbScore += 3
+      if (label.includes('video capture')) probeInfo.usbScore += 5
+      if (label.includes('hdmi')) probeInfo.usbScore += 5
+      // On Android, USB capture cards sometimes show up without these labels
+      // but may have "camera" followed by a number > 1
+      if (label.match(/camera\s*[2-9]/)) probeInfo.usbScore += 2
+      // On some Android devices, USB cameras are labeled differently
+      if (label.includes('webcam')) probeInfo.usbScore += 3
+      
+      // Try to probe the camera for actual stream info
+      try {
+        const probeStream = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            deviceId: { exact: device.deviceId },
+            width: { ideal: 1920 }, height: { ideal: 1080 }
+          },
+          audio: false
+        })
+        
+        const track = probeStream.getVideoTracks()[0]
+        if (track) {
+          const settings = track.getSettings()
+          probeInfo.facingMode = settings.facingMode || null
+          probeInfo.width = settings.width || null
+          probeInfo.height = settings.height || null
+          probeInfo.frameRate = settings.frameRate || null
+          probeInfo.probed = true
+          
+          // Use actual track label for USB detection
+          const trackLabel = (track.label || '').toLowerCase()
+          if (trackLabel.includes('usb')) probeInfo.usbScore += 5
+          if (trackLabel.includes('capture')) probeInfo.usbScore += 5
+          if (trackLabel.includes('uvc')) probeInfo.usbScore += 5
+          if (trackLabel.includes('hdmi')) probeInfo.usbScore += 5
+          
+          // USB capture cards often have NO facingMode (null)
+          // Phone cameras always have 'user' or 'environment'
+          if (!settings.facingMode) probeInfo.usbScore += 4
+          
+          // USB capture cards typically output specific resolutions
+          if (settings.width === 1920 && settings.height === 1080) probeInfo.usbScore += 1
+          
+          console.log(`[OP] Probed camera ${i}: "${device.label}" → ${settings.width}x${settings.height} facing=${settings.facingMode} score=${probeInfo.usbScore}`)
+        }
+        
+        // Stop the probe stream
+        probeStream.getTracks().forEach(t => t.stop())
+      } catch(probeErr) {
+        console.warn(`[OP] Cannot probe camera ${i} "${device.label}":`, probeErr.message)
+        // If we can't open it, try without exact constraint
+        try {
+          const fallbackStream = await navigator.mediaDevices.getUserMedia({
+            video: true, audio: false
+          })
+          const track = fallbackStream.getVideoTracks()[0]
+          if (track) {
+            const settings = track.getSettings()
+            probeInfo.facingMode = settings.facingMode || null
+            probeInfo.width = settings.width || null
+            probeInfo.height = settings.height || null
+            probeInfo.probed = true
+          }
+          fallbackStream.getTracks().forEach(t => t.stop())
+        } catch(e2) {
+          // Can't open this camera at all
+        }
+      }
+      
+      // Determine if likely USB
+      probeInfo.isLikelyUsb = probeInfo.usbScore >= 4
+      probedCameras.push(probeInfo)
+    }
+    
+    // Update USB detection status
+    usbCameraDetected = probedCameras.some(c => c.isLikelyUsb)
+    
+    // Show probe results
+    renderProbeResults()
+    updateUsbStatus()
+    
+    // Auto-select USB camera if found and none selected
+    if (usbCameraDetected && !selectedDeviceId) {
+      const usbCam = probedCameras.find(c => c.isLikelyUsb)
+      if (usbCam) {
+        selectedDeviceId = usbCam.deviceId
+      }
+    }
+    
+    return probedCameras
+    
+  } catch(err) {
+    console.error('[OP] probeAllCameras failed:', err)
+    return []
+  }
+}
+
+function renderProbeResults() {
+  const section = document.getElementById('probeSection')
+  const list = document.getElementById('probeList')
+  
+  if (probedCameras.length === 0) {
+    section.style.display = 'none'
+    return
+  }
+  
+  section.style.display = 'block'
+  list.innerHTML = ''
+  
+  // Sort: USB cameras first, then by score
+  const sorted = [...probedCameras].sort((a, b) => b.usbScore - a.usbScore)
+  
+  sorted.forEach(cam => {
+    const item = document.createElement('div')
+    item.className = 'probe-item'
+    if (cam.deviceId === selectedDeviceId) {
+      item.style.borderColor = 'var(--gold)'
+    }
+    
+    const icon = cam.isLikelyUsb ? '🔌' : '📱'
+    const badgeClass = cam.isLikelyUsb ? 'usb' : (cam.facingMode ? 'phone' : 'unknown')
+    const badgeText = cam.isLikelyUsb ? 'USB' : (cam.facingMode === 'user' ? 'Depan' : cam.facingMode === 'environment' ? 'Belakang' : '?')
+    
+    let detail = ''
+    if (cam.probed) {
+      detail = `${cam.width || '?'}×${cam.height || '?'}`
+      if (cam.frameRate) detail += ` @${Math.round(cam.frameRate)}fps`
+    } else {
+      detail = 'Tidak dapat diakses'
+    }
+    
+    item.innerHTML = `
+      <span class="pi-icon">${icon}</span>
+      <div class="pi-info">
+        <div class="pi-label">${cam.label}</div>
+        <div class="pi-detail">${detail}${cam.deviceId === selectedDeviceId ? ' ✅ Dipilih' : ''}</div>
+      </div>
+      <span class="pi-badge ${badgeClass}">${badgeText}</span>
+    `
+    
+    item.onclick = () => {
+      selectedDeviceId = cam.deviceId
+      renderProbeResults()
+    }
+    
+    list.appendChild(item)
+  })
+}
+
+function updateUsbStatus() {
+  const usbVal = document.getElementById('usbValue')
+  
+  if (probedCameras.length === 0) {
+    usbVal.textContent = 'Belum diperiksa'
+    usbVal.className = 'usb-value'
+    return
+  }
+  
+  if (usbCameraDetected) {
+    const usbCams = probedCameras.filter(c => c.isLikelyUsb)
+    usbVal.textContent = `✅ ${usbCams.length} terdeteksi`
+    usbVal.className = 'usb-value ok'
+  } else {
+    usbVal.textContent = `${probedCameras.length} kamera (tanpa USB)`
+    usbVal.className = 'usb-value warn'
+  }
+}
+
+// ── Start Camera (improved — no facingMode constraint) ───────────────────
+async function startCamera(deviceId) {
+  console.log('[OP] Starting camera, deviceId:', deviceId?.slice(0,8) || 'none')
+  
+  // Stop existing stream
+  if (currentStream) {
+    currentStream.getTracks().forEach(t => t.stop())
+    currentStream = null
+  }
+  
+  const video = document.getElementById('videoPreview')
+  
+  try {
+    let constraints
+    
+    if (deviceId) {
+      // Specific device — use ONLY deviceId, NO facingMode constraint
+      // CRITICAL: facingMode constraint can cause Chrome to ignore USB cameras
+      // and select the phone's built-in camera instead
+      constraints = {
+        video: { 
+          deviceId: { exact: deviceId }, 
+          width: { ideal: 1920 }, height: { ideal: 1080 } 
+        },
+        audio: false
+      }
+    } else {
+      // No specific device — try to find USB camera first
+      // Then fall back to environment camera
+      const usbCam = probedCameras.find(c => c.isLikelyUsb)
+      if (usbCam) {
+        constraints = {
+          video: { 
+            deviceId: { exact: usbCam.deviceId },
+            width: { ideal: 1920 }, height: { ideal: 1080 }
+          },
+          audio: false
+        }
+      } else {
+        // Last resort — use facingMode (this prefers phone's back camera)
+        constraints = {
+          video: { 
+            facingMode: 'environment',
+            width: { ideal: 1920 }, height: { ideal: 1080 }
+          },
+          audio: false
+        }
+      }
+    }
+    
+    console.log('[OP] getUserMedia constraints:', JSON.stringify(constraints))
+    const stream = await navigator.mediaDevices.getUserMedia(constraints)
+    currentStream = stream
+    selectedDeviceId = deviceId || stream.getVideoTracks()[0]?.getSettings()?.deviceId
+    cameraAvailable = true
+    
+    // Apply mirror if needed
+    video.style.transform = isMirrored ? 'scaleX(-1)' : 'none'
+    video.srcObject = stream
+    
+    // Log which camera we actually got
+    const track = stream.getVideoTracks()[0]
+    const trackSettings = track.getSettings()
+    console.log('[OP] Camera stream active:', {
+      label: track.label,
+      deviceId: trackSettings?.deviceId?.slice(0,8),
+      width: trackSettings?.width,
+      height: trackSettings?.height,
+      facingMode: trackSettings?.facingMode
     })
     
-    // Update USB status display
-    const usbEl = document.getElementById('usbStatus')
-    const usbVal = document.getElementById('usbValue')
-    if (videoDevices.length > 0) {
-      usbEl.style.display = 'flex'
-      if (usbCameraDetected) {
-        usbVal.textContent = '✅ Terdeteksi'
-        usbVal.style.color = 'var(--success)'
-      } else {
-        usbVal.textContent = `${videoDevices.length} kamera (tanpa USB)`
-        usbVal.style.color = 'var(--muted)'
-      }
+    // Check if this looks like a USB camera
+    const trackLabel = (track.label || '').toLowerCase()
+    const isUsbStream = trackLabel.includes('usb') || trackLabel.includes('capture') || 
+                        trackLabel.includes('uvc') || trackLabel.includes('hdmi') ||
+                        trackLabel.includes('video capture') || !trackSettings?.facingMode
+    
+    if (isUsbStream && deviceId) {
+      console.log('[OP] ✅ USB capture card camera is active!')
     }
     
-    // Update camera selector
+    // Hide no-camera message
+    document.getElementById('noCameraMsg').classList.add('hidden')
+    
+    // Update selector
     updateCameraSelector()
     
-    // Auto-select USB camera if available and none selected
-    if (usbCameraDetected && !selectedDeviceId) {
-      const usbDevice = videoDevices.find(d => {
-        const label = (d.label || '').toLowerCase()
-        return label.includes('usb') || label.includes('capture') || label.includes('uvc') || 
-               label.includes('external') || label.includes('video capture') || label.includes('hdmi')
-      })
-      if (usbDevice) {
-        selectedDeviceId = usbDevice.deviceId
-        startCamera(usbDevice.deviceId)
+  } catch(err) {
+    console.error('[OP] Camera start failed:', err)
+    cameraAvailable = false
+    document.getElementById('noCameraMsg').classList.remove('hidden')
+    
+    // If exact deviceId failed, try different approaches
+    if (deviceId) {
+      console.log('[OP] Exact deviceId failed, trying alternatives...')
+      
+      // Try 1: Without exact (use preferred)
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            deviceId: { ideal: deviceId },
+            width: { ideal: 1920 }, height: { ideal: 1080 }
+          }, 
+          audio: false 
+        })
+        currentStream = stream
+        cameraAvailable = true
+        video.srcObject = stream
+        selectedDeviceId = stream.getVideoTracks()[0]?.getSettings()?.deviceId
+        document.getElementById('noCameraMsg').classList.add('hidden')
+        updateCameraSelector()
+        console.log('[OP] Camera started with ideal deviceId')
+        return
+      } catch(e1) {
+        console.warn('[OP] ideal deviceId also failed:', e1.message)
+      }
+      
+      // Try 2: Generic video with no constraints
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: true, audio: false 
+        })
+        currentStream = stream
+        cameraAvailable = true
+        video.srcObject = stream
+        selectedDeviceId = stream.getVideoTracks()[0]?.getSettings()?.deviceId
+        document.getElementById('noCameraMsg').classList.add('hidden')
+        updateCameraSelector()
+        console.log('[OP] Camera started with generic constraints')
+      } catch(err2) {
+        console.error('[OP] All camera start attempts failed:', err2)
       }
     }
-    
-    return videoDevices
-  } catch(err) {
-    console.error('[OP] enumerateVideoDevices failed:', err)
-    return []
   }
 }
 
@@ -647,99 +1094,21 @@ function updateCameraSelector() {
     const opt = document.createElement('option')
     opt.value = d.deviceId
     const label = d.label || `Kamera ${i+1}`
-    // Mark USB cameras
-    const isUSB = label.toLowerCase().includes('usb') || label.toLowerCase().includes('capture') ||
-                  label.toLowerCase().includes('uvc') || label.toLowerCase().includes('external') ||
-                  label.toLowerCase().includes('video capture') || label.toLowerCase().includes('hdmi')
-    opt.textContent = isUSB ? `🔌 ${label}` : `📱 ${label}`
+    
+    // Check probed info for USB detection
+    const probed = probedCameras.find(c => c.deviceId === d.deviceId)
+    const isUSB = probed?.isLikelyUsb || false
+    
+    // Show camera type and resolution if probed
+    let displayLabel = isUSB ? `🔌 ${label}` : `📱 ${label}`
+    if (probed?.probed && probed?.width) {
+      displayLabel += ` (${probed.width}×${probed.height})`
+    }
+    
+    opt.textContent = displayLabel
     if (d.deviceId === selectedDeviceId) opt.selected = true
     select.appendChild(opt)
   })
-}
-
-async function startCamera(deviceId) {
-  console.log('[OP] Starting camera, deviceId:', deviceId?.slice(0,8) || 'none')
-  
-  // Stop existing stream
-  if (currentStream) {
-    currentStream.getTracks().forEach(t => t.stop())
-    currentStream = null
-  }
-  
-  const video = document.getElementById('videoPreview')
-  
-  try {
-    let constraints
-    if (deviceId) {
-      // Specific device — use exact deviceId to guarantee we get THAT camera
-      constraints = {
-        video: { 
-          deviceId: { exact: deviceId }, 
-          width: { ideal: 1920 }, height: { ideal: 1080 } 
-        },
-        audio: false
-      }
-    } else {
-      // Default — prefer environment (back) camera on mobile
-      constraints = {
-        video: { 
-          facingMode: 'environment',
-          width: { ideal: 1920 }, height: { ideal: 1080 } 
-        },
-        audio: false
-      }
-    }
-    
-    console.log('[OP] getUserMedia constraints:', JSON.stringify(constraints))
-    const stream = await navigator.mediaDevices.getUserMedia(constraints)
-    currentStream = stream
-    selectedDeviceId = deviceId || stream.getVideoTracks()[0]?.getSettings()?.deviceId
-    cameraAvailable = true
-    
-    // Apply mirror if needed
-    video.style.transform = isMirrored ? 'scaleX(-1)' : 'none'
-    video.srcObject = stream
-    
-    // Log which camera we actually got
-    const track = stream.getVideoTracks()[0]
-    console.log('[OP] Camera stream active:', {
-      label: track.label,
-      deviceId: track.getSettings()?.deviceId?.slice(0,8),
-      width: track.getSettings()?.width,
-      height: track.getSettings()?.height,
-      facingMode: track.getSettings()?.facingMode
-    })
-    
-    // Hide no-camera message
-    document.getElementById('noCameraMsg').classList.add('hidden')
-    
-    // Update selector to show current device
-    updateCameraSelector()
-    
-  } catch(err) {
-    console.error('[OP] Camera start failed:', err)
-    cameraAvailable = false
-    document.getElementById('noCameraMsg').classList.remove('hidden')
-    
-    // If exact deviceId failed, try without exact
-    if (deviceId) {
-      console.log('[OP] Retrying without exact deviceId...')
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, 
-          audio: false 
-        })
-        currentStream = stream
-        cameraAvailable = true
-        video.srcObject = stream
-        selectedDeviceId = stream.getVideoTracks()[0]?.getSettings()?.deviceId
-        document.getElementById('noCameraMsg').classList.add('hidden')
-        updateCameraSelector()
-      } catch(err2) {
-        console.error('[OP] Camera fallback also failed:', err2)
-      }
-    }
-  }
 }
 
 function handleCameraChange() {
@@ -753,20 +1122,17 @@ function handleCameraChange() {
 
 async function rescanCameras() {
   console.log('[OP] Rescanning cameras...')
-  await enumerateVideoDevices()
-  // If we had a selected device, restart with it
+  await probeAllCameras()
   if (selectedDeviceId) {
     startCamera(selectedDeviceId)
   } else if (videoDevices.length > 0) {
     // Auto-select USB camera or first camera
-    const usbDevice = videoDevices.find(d => {
-      const label = (d.label || '').toLowerCase()
-      return label.includes('usb') || label.includes('capture') || label.includes('uvc') || 
-             label.includes('external') || label.includes('video capture') || label.includes('hdmi')
-    })
-    const device = usbDevice || videoDevices[0]
-    selectedDeviceId = device.deviceId
-    startCamera(device.deviceId)
+    const usbCam = probedCameras.find(c => c.isLikelyUsb)
+    const device = usbCam || probedCameras[0]
+    if (device) {
+      selectedDeviceId = device.deviceId
+      startCamera(device.deviceId)
+    }
   }
 }
 
@@ -780,19 +1146,23 @@ function toggleMirror() {
 // ── Device change listener (USB hot-plug) ────────────────────────────────
 navigator.mediaDevices?.addEventListener('devicechange', async () => {
   console.log('[OP] Device change detected — rescanning...')
-  await enumerateVideoDevices()
+  await probeAllCameras()
+  
   // Auto-switch to newly connected USB camera
-  const usbDevice = videoDevices.find(d => {
-    const label = (d.label || '').toLowerCase()
-    return label.includes('usb') || label.includes('capture') || label.includes('uvc') || 
-           label.includes('external') || label.includes('video capture') || label.includes('hdmi')
-  })
-  if (usbDevice && usbDevice.deviceId !== selectedDeviceId) {
-    console.log('[OP] USB camera detected — auto-switching to:', usbDevice.label)
-    selectedDeviceId = usbDevice.deviceId
-    startCamera(usbDevice.deviceId)
+  const usbCam = probedCameras.find(c => c.isLikelyUsb && c.deviceId !== selectedDeviceId)
+  if (usbCam) {
+    console.log('[OP] USB camera detected — auto-switching to:', usbCam.label)
+    selectedDeviceId = usbCam.deviceId
+    startCamera(usbCam.deviceId)
   }
 })
+
+// ── Troubleshooting toggle ───────────────────────────────────────────────
+function toggleTroubleshoot(btn) {
+  btn.classList.toggle('open')
+  const body = document.getElementById('troubleshootBody')
+  body.classList.toggle('open')
+}
 
 // ── Connection Functions ─────────────────────────────────────────────────
 function selectChannel(ch) {
@@ -900,6 +1270,13 @@ async function testConnection() {
   results.push('ℹ️ Halaman diakses dari: ' + window.location.origin)
   results.push('ℹ️ Port halaman: ' + (window.location.port || 'default(80/443)'))
   
+  // Test 4: Camera status
+  results.push('ℹ️ Kamera ditemukan: ' + probedCameras.length)
+  results.push('ℹ️ USB capture card: ' + (usbCameraDetected ? '✅ Terdeteksi' : '❌ Tidak terdeteksi'))
+  if (!usbCameraDetected && probedCameras.length > 0) {
+    results.push('⚠️ Kamera USB tidak muncul. Pastikan: (1) Izin kamera sudah diberikan, (2) USB OTG aktif, (3) Chrome Flag diaktifkan')
+  }
+  
   // Show results
   errorCard.innerHTML = results.join('<br>')
   errorCard.style.display = 'block'
@@ -927,6 +1304,9 @@ async function handleConnect() {
   // Hash password if provided
   if (password) {
     sessionPasswordHash = await sha256(password)
+    console.log('[OP] Session password hashed:', sessionPasswordHash?.slice(0,8) + '...')
+  } else {
+    sessionPasswordHash = null
   }
   
   setConnectionState('connecting')
@@ -939,32 +1319,15 @@ function connectToServer(ip) {
     socket = null
   }
   
-  // ── Socket.io Server Connection ──────────────────────────────────────
-  // The Socket.io server runs on port 3003 (separate from the Next.js
-  // web server on port 3000). We connect to port 3003 directly.
-  //
-  // If the user is accessing this page through a Caddy gateway (sandbox),
-  // we need to use XTransformPort query parameter for routing.
-  //
-  // Connection strategy:
-  // 1. If URL has ?socketPort=XXXX → use that port (explicit override)
-  // 2. If accessed via Caddy gateway (port 81) → use XTransformPort=3003
-  // 3. Default → direct connection to http://<ip>:3003
-  
-  const SOCKET_PORT = 3003  // Socket.io server port (saatiril-socket)
+  const SOCKET_PORT = 3003
   const urlParams = new URLSearchParams(window.location.search)
   const explicitSocketPort = urlParams.get('socketPort')
   
   let serverUrl, socketOptions
   
-  // Check if we're accessing via Caddy gateway (sandbox environment)
-  // In sandbox: only port 81 is exposed, must use XTransformPort for routing
-  // In real LAN: direct connection to port 3003 works
   const isCaddyGateway = window.location.port === '81'
-  const isNoPort = window.location.port === '' // e.g., file:// or default port 80
   
   if (explicitSocketPort) {
-    // Explicit socket port specified in URL
     serverUrl = `http://${ip}:${explicitSocketPort}`
     socketOptions = {
       transports: ['polling', 'websocket'],
@@ -975,9 +1338,6 @@ function connectToServer(ip) {
       timeout: 15000,
     }
   } else if (isCaddyGateway) {
-    // Accessing via Caddy gateway — MUST use XTransformPort for routing
-    // The Caddy gateway only exposes port 81 and routes to backend ports
-    // using the XTransformPort query parameter
     serverUrl = window.location.origin
     socketOptions = {
       transports: ['polling', 'websocket'],
@@ -1013,26 +1373,33 @@ function connectToServer(ip) {
   
   socket.on('connect', () => {
     console.log('[OP] Socket connected:', socket.id)
-    // Identify ourselves
+    // Identify ourselves immediately
     socket.emit('identify', {
       role: 'operator',
       channel: myChannel,
       sessionPasswordHash: sessionPasswordHash
     })
+    console.log('[OP] Sent identify with hash:', sessionPasswordHash ? sessionPasswordHash.slice(0,8) + '...' : 'null')
   })
   
   socket.on('auth-requirement', (data) => {
-    console.log('[OP] Auth requirement:', data)
-    if (data.passwordRequired && !sessionPasswordHash) {
-      // Show password prompt
-      document.getElementById('passwordOverlay').classList.remove('hidden')
+    console.log('[OP] Auth requirement received:', data)
+    if (data.passwordRequired) {
+      if (!sessionPasswordHash) {
+        // Show password prompt - we don't have a hash yet
+        document.getElementById('passwordOverlay').classList.remove('hidden')
+        document.getElementById('authError').classList.remove('show')
+      }
+      // If we already have a hash, the identify was already sent in connect handler
+      // The server will respond with auth-success or auth-failed
     }
   })
   
   socket.on('auth-success', (data) => {
-    console.log('[OP] Auth success:', data)
+    console.log('[OP] ✅ Auth success:', data)
     setConnectionState('connected')
     document.getElementById('passwordOverlay').classList.add('hidden')
+    document.getElementById('authError').classList.remove('show')
     
     // Transition to operator screen
     showOperatorScreen()
@@ -1045,8 +1412,13 @@ function connectToServer(ip) {
   })
   
   socket.on('auth-failed', (data) => {
-    console.log('[OP] Auth failed:', data)
+    console.log('[OP] ❌ Auth failed:', data)
+    // Show password overlay with error
     document.getElementById('passwordOverlay').classList.remove('hidden')
+    document.getElementById('authError').classList.add('show')
+    
+    // Clear the stored hash since it's wrong
+    sessionPasswordHash = null
   })
   
   socket.on('lan-message', (payload) => {
@@ -1068,17 +1440,13 @@ function connectToServer(ip) {
   socket.on('connect_error', (err) => {
     console.error('[OP] Connection error:', err.message, 'description:', err.description?.message)
     stopLatencyPing()
-    // Provide more helpful error messages in Indonesian
     let errorMsg = 'Gagal terhubung ke server'
     const msg = (err.message || '').toLowerCase()
     const desc = (err.description?.message || '').toLowerCase()
     
     if (msg.includes('websocket error') || msg.includes('websocket') || desc.includes('websocket')) {
-      errorMsg = 'Gagal terhubung via WebSocket. Mencoba polling... (Ini normal, koneksi akan otomatis beralih ke polling)'
-      // Don't set disconnected — let Socket.io try polling transport
-      // The polling transport should kick in automatically
       console.log('[OP] WebSocket failed, waiting for polling fallback...')
-      return // Don't show error yet — polling might succeed
+      return
     } else if (msg.includes('timeout') || desc.includes('timeout')) {
       errorMsg = 'Koneksi timeout (15 detik). Pastikan: (1) Server SAATIRIL berjalan, (2) IP benar, (3) HP dan server di jaringan WiFi yang sama, (4) Port 3003 tidak diblokir firewall.'
     } else if (msg.includes('refused') || desc.includes('refused') || msg.includes('econnrefused')) {
@@ -1097,12 +1465,35 @@ function connectToServer(ip) {
 async function handleAuthSubmit() {
   const password = document.getElementById('authPassword').value
   if (!password) return
-  sessionPasswordHash = await sha256(password)
-  socket.emit('identify', {
-    role: 'operator',
-    channel: myChannel,
-    sessionPasswordHash: sessionPasswordHash
-  })
+  
+  const btn = document.getElementById('authSubmitBtn')
+  btn.disabled = true
+  btn.textContent = 'Memverifikasi...'
+  document.getElementById('authError').classList.remove('show')
+  
+  try {
+    sessionPasswordHash = await sha256(password)
+    console.log('[OP] Auth submit - hashed password:', sessionPasswordHash?.slice(0,8) + '...')
+    
+    socket.emit('identify', {
+      role: 'operator',
+      channel: myChannel,
+      sessionPasswordHash: sessionPasswordHash
+    })
+    
+    // Re-enable button after a delay (in case auth-failed is received)
+    setTimeout(() => {
+      btn.disabled = false
+      btn.textContent = 'Lanjutkan'
+    }, 3000)
+    
+  } catch(err) {
+    console.error('[OP] Auth hash failed:', err)
+    btn.disabled = false
+    btn.textContent = 'Lanjutkan'
+    document.getElementById('authError').textContent = 'Gagal memproses password'
+    document.getElementById('authError').classList.add('show')
+  }
 }
 
 function handleDisconnect() {
@@ -1123,17 +1514,19 @@ function showOperatorScreen() {
   
   // Start camera if not already
   if (!cameraAvailable) {
-    enumerateVideoDevices().then(() => {
-      if (videoDevices.length > 0 && !selectedDeviceId) {
+    probeAllCameras().then(() => {
+      if (probedCameras.length > 0) {
         // Prefer USB camera, then first available
-        const usbDevice = videoDevices.find(d => {
-          const label = (d.label || '').toLowerCase()
-          return label.includes('usb') || label.includes('capture') || label.includes('uvc') || 
-                 label.includes('external') || label.includes('video capture') || label.includes('hdmi')
-        })
-        const device = usbDevice || videoDevices[0]
-        selectedDeviceId = device.deviceId
-        startCamera(device.deviceId)
+        const usbCam = probedCameras.find(c => c.isLikelyUsb)
+        const device = usbCam || probedCameras[0]
+        if (device && !selectedDeviceId) {
+          selectedDeviceId = device.deviceId
+        }
+        if (selectedDeviceId) {
+          startCamera(selectedDeviceId)
+        } else {
+          startCamera(device.deviceId)
+        }
       }
     })
   }
@@ -1235,7 +1628,6 @@ function updateTargetDisplay() {
     info.classList.add('hidden')
   }
   
-  // Photo progress dots (only for standard dual mode)
   if (currentTarget && !isPhotoshoot && capturePhase !== 'standby') {
     dots.classList.remove('hidden')
     document.getElementById('dot1').className = 'photo-dot' + (capturedPhotos.length >= 1 ? ' done' : (capturePhase === 'ready-1' ? ' current' : ''))
@@ -1258,14 +1650,12 @@ function handleCaptureClick() {
   if (capturePhase !== 'ready-1' && capturePhase !== 'ready-2') return
   
   if (shutterMode.startsWith('timer-')) {
-    // Start/cancel timer
     if (timerInterval) {
       cancelTimer()
     } else {
       startTimer(parseInt(shutterMode.split('-')[1]))
     }
   } else {
-    // Manual — capture immediately
     doCapture()
   }
 }
@@ -1304,7 +1694,6 @@ function doCapture() {
     return
   }
   
-  // Determine aspect ratio from project config
   const ratioMap = { '4:3': 4/3, '16:9': 16/9, '3:4': 3/4, '2:3': 2/3, '1:1': 1 }
   const ratio = ratioMap[currentProject?.config?.ratio] || 4/3
   
@@ -1317,7 +1706,6 @@ function doCapture() {
   ctx.fillStyle = '#000'
   ctx.fillRect(0, 0, targetWidth, targetHeight)
   
-  // Draw video with proper cropping
   const vw = video.videoWidth
   const vh = video.videoHeight
   const videoRatio = vw / vh
@@ -1330,7 +1718,6 @@ function doCapture() {
     sy = (vh - sh) / 2
   }
   
-  // Apply mirror if needed (canvas capture is not mirrored automatically)
   if (isMirrored) {
     ctx.translate(targetWidth, 0)
     ctx.scale(-1, 1)
@@ -1340,19 +1727,15 @@ function doCapture() {
     ctx.setTransform(1, 0, 0, 1, 0, 0)
   }
   
-  // Draw frame overlay
   const frameImg = document.getElementById('frameOverlay')
   if (frameImg && frameImg.src && !frameImg.classList.contains('hidden') && frameImg.complete) {
     ctx.drawImage(frameImg, 0, 0, targetWidth, targetHeight)
   }
   
-  // Get JPEG data
   const dataUrl = canvas.toDataURL('image/jpeg', 0.95)
   
-  // Flash effect
   triggerFlash()
   
-  // Determine photo label
   const isPhotoshoot = currentProject?.config?.mode?.includes('photoshoot')
   const label = isPhotoshoot ? 'photo' : 
                 (capturePhase === 'ready-1' ? 'toga' : 'ijazah')
@@ -1362,12 +1745,10 @@ function doCapture() {
   const isDualMode = !isPhotoshoot && currentProject?.config?.mode?.includes('dual') !== false
   
   if (isDualMode && capturePhase === 'ready-1') {
-    // First photo done, wait for second
     capturePhase = 'ready-2'
     updateTargetDisplay()
     updateCaptureButton()
   } else {
-    // All photos captured — send
     capturePhase = 'sending'
     updateTargetDisplay()
     updateCaptureButton()
@@ -1389,7 +1770,6 @@ async function sendPhotos() {
   const isPhotoshoot = currentProject?.config?.mode?.includes('photoshoot')
   const channel = myChannel
   
-  // Build filenames
   const photos = capturedPhotos.map((p, i) => {
     let filename
     if (isPhotoshoot) {
@@ -1403,7 +1783,6 @@ async function sendPhotos() {
   
   console.log('[OP] Sending photos:', photos.map(p => p.filename))
   
-  // 1. IMMEDIATE: Send STUDENT_DONE so MC can call next student
   socket.emit('lan-message', {
     event: 'STUDENT_DONE',
     data: { 
@@ -1413,7 +1792,6 @@ async function sendPhotos() {
     }
   })
   
-  // 2. Send PHOTOS_SAVED with photo data for admin to save
   socket.emit('lan-message', {
     event: 'PHOTOS_SAVED',
     data: {
@@ -1426,7 +1804,6 @@ async function sendPhotos() {
     }
   })
   
-  // 3. Send lightweight SYNC_DB
   socket.emit('lan-message', {
     event: 'SYNC_DB',
     data: {
@@ -1445,7 +1822,6 @@ async function sendPhotos() {
     }
   })
   
-  // Reset capture state
   capturedPhotos = []
   currentTarget = null
   capturePhase = 'standby'
@@ -1500,13 +1876,11 @@ function updateQueueList() {
   const db = currentProject.database
   const isPhotoshoot = currentProject.config?.mode?.includes('photoshoot')
   
-  // Show students relevant to our channel
   const relevant = db.filter(s => {
-    if (isPhotoshoot) return true // All students in photoshoot mode
+    if (isPhotoshoot) return true
     return s.assignedChannel === myChannel || s.status === `active_${myChannel}`
   })
   
-  // Sort: active first, then by status priority
   const statusPriority = { active_1: 0, active_2: 0, sent: 1, pending: 2, done: 3 }
   relevant.sort((a, b) => {
     const pa = statusPriority[a.status] ?? 9
@@ -1530,7 +1904,7 @@ function updateQueueList() {
 function selectQueueItem(studentId) {
   if (!currentProject?.database) return
   const isPhotoshoot = currentProject.config?.mode?.includes('photoshoot')
-  if (!isPhotoshoot) return // Only in photoshoot mode can operator select target
+  if (!isPhotoshoot) return
   
   const student = currentProject.database.find(s => s.id === studentId)
   if (student && student.status !== 'done') {
@@ -1580,19 +1954,61 @@ document.addEventListener('DOMContentLoaded', () => {
   const savedIp = localStorage.getItem('saatiril_server_ip')
   if (savedIp) document.getElementById('serverIp').value = savedIp
   
-  // Start camera enumeration for USB detection on connection screen
-  enumerateVideoDevices()
-  
   // Auto-detect server IP from current URL
-  // Only use the hostname if it looks like a LAN IP (not localhost)
   if (window.location.hostname && window.location.hostname !== 'localhost' && 
       window.location.hostname !== '127.0.0.1' && !window.location.hostname.startsWith('[')) {
     document.getElementById('serverIp').value = window.location.hostname
   }
   
+  // Update Chrome Flag URL in troubleshooting section
+  const currentHost = window.location.hostname || '192.168.x.x'
+  const currentPort = window.location.port || '3000'
+  const flagUrlEl = document.getElementById('flagUrl')
+  if (flagUrlEl) {
+    flagUrlEl.textContent = `http://${currentHost}:${currentPort}`
+  }
+  
   // Mirror toggle default
   document.getElementById('mirrorToggle').classList.add('active')
+  
+  // Check if camera permission is already granted
+  checkExistingPermission()
 })
+
+async function checkExistingPermission() {
+  try {
+    // Check permission status
+    if (navigator.permissions) {
+      const result = await navigator.permissions.query({ name: 'camera' })
+      console.log('[OP] Camera permission status:', result.state)
+      
+      if (result.state === 'granted') {
+        cameraPermissionGranted = true
+        const btn = document.getElementById('permBtn')
+        btn.textContent = '✅ Izin Kamera Diberikan'
+        btn.classList.add('granted')
+        document.getElementById('permStatus').textContent = 'Izin kamera sudah diberikan'
+        document.getElementById('permStatus').style.color = '#4ade80'
+        
+        // Auto-probe cameras
+        await probeAllCameras()
+      }
+      
+      // Listen for permission changes
+      result.addEventListener('change', async () => {
+        if (result.state === 'granted') {
+          cameraPermissionGranted = true
+          const btn = document.getElementById('permBtn')
+          btn.textContent = '✅ Izin Kamera Diberikan'
+          btn.classList.add('granted')
+          await probeAllCameras()
+        }
+      })
+    }
+  } catch(err) {
+    console.warn('[OP] Permission check failed:', err)
+  }
+}
 
 // ── Also check URL params for auto-connect ───────────────────────────────
 (function() {
