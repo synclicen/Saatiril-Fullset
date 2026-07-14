@@ -110,3 +110,31 @@ Stage Summary:
 - Key change: Camera2 API directly accesses USB cameras (bypasses WebView/getUserMedia entirely)
 - GitHub Actions CI will build the APK automatically
 - User should download the APK from GitHub Actions artifacts
+
+---
+Task ID: 2
+Agent: Main
+Task: Fix Android build failure - UVCCamera dependency not found on JitPack
+
+Work Log:
+- Build failed: `com.github.saki4510t:UVCCamera:v3.1.0` not found on JitPack
+- Searched web for correct UVCCamera dependency coordinates
+- Found alexey-pelykh/UVCCamera fork on Maven Central: `org.uvccamera:lib:0.0.13`
+- Verified AAR (605KB) and POM accessible on Maven Central (HTTP 200)
+- Verified source JAR contains same `com.serenegiant.usb.*` package namespace
+- Updated build.gradle.kts: replaced JitPack dependency with Maven Central one
+- Discovered API differences and fixed:
+  1. `onDetach` → `onDettach` (library uses original misspelling with double 't')
+  2. Removed `captureStill()` usage (not in org.uvccamera:lib module)
+  3. Replaced with TextureView.bitmap as primary capture method
+  4. IFrameCallback remains as fallback
+- Removed unused imports (File, FileInputStream)
+- Updated version to 1.0.16-uvc-mavencentral (versionCode 16)
+- Updated comments in OperatorViewModel.kt
+- Pushed two commits to GitHub: aaa0ea3, bf17ded
+
+Stage Summary:
+- Replaced broken JitPack dependency with working Maven Central one
+- Fixed two critical API incompatibilities that would have caused compile errors
+- Build should now succeed on GitHub Actions
+- Capture method changed from file-based captureStill() to TextureView.bitmap (actually more reliable)

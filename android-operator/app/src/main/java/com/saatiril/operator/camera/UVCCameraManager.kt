@@ -777,7 +777,7 @@ class UVCCameraManager(private val context: Context) {
 
                     // Remove callback after one frame
                     try {
-                        camera.setFrameCallback(null)
+                        camera.setFrameCallback(null, 0)
                     } catch (_: Exception) {}
                 }
             }, UVCCamera.PIXEL_FORMAT_NV21)
@@ -788,7 +788,7 @@ class UVCCameraManager(private val context: Context) {
                 if (captureCallback != null) {
                     Log.w(TAG, "IFrameCallback timed out, trying TextureView bitmap")
                     try {
-                        camera.setFrameCallback(null)
+                        camera.setFrameCallback(null, 0)
                     } catch (_: Exception) {}
 
                     // One more try with TextureView bitmap
