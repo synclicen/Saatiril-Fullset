@@ -6,11 +6,13 @@
     <!-- Legacy video class -->
     <usb-device class="14" subclass="1" protocol="0" />
     <usb-device class="14" subclass="2" protocol="0" />
-    <!-- Common capture card vendor IDs -->
-    <usb-device vendor-id="1161" />  <!-- Fushicai -->
-    <usb-device vendor-id="3141" />  <!-- MacroSilicon -->
-    <usb-device vendor-id="1046" />  <!-- Magewell -->
-    <usb-device vendor-id="5961" />  <!-- Elgato/Corsair -->
-    <usb-device vendor-id="4544" />  <!-- AverMedia -->
-    <usb-device vendor-id="1060" />  <!-- Genki -->
+    <!-- Common capture card vendor IDs (DECIMAL values, not hex!) -->
+    <usb-device vendor-id="1161" />   <!-- Fushicai (0x0489) -->
+    <usb-device vendor-id="13407" />  <!-- MacroSilicon (0x345F) — JASOZ capture card -->
+    <usb-device vendor-id="1046" />   <!-- Magewell (0x0416) -->
+    <usb-device vendor-id="5961" />   <!-- Elgato/Corsair (0x1749) -->
+    <usb-device vendor-id="4544" />   <!-- AverMedia (0x11C0) -->
+    <usb-device vendor-id="1060" />   <!-- Genki (0x0424) -->
+    <!-- Broad UVC catch-all: Video class 14 (0x0E) -->
+    <usb-device class="14" subclass="1" />
 </resources>

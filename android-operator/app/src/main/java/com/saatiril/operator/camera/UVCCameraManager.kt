@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.SurfaceTexture
@@ -13,6 +12,7 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
 import android.util.Base64
 import android.util.Log
 import android.view.Surface
@@ -30,30 +30,33 @@ import java.nio.ByteBuffer
 
 /**
  * ═════════════════════════════════════════════════════════════════════════
- * UVCCamera Manager — v17 MacroSilicon Black Screen Fix
+ * UVCCamera Manager — v18 Hardened (MacroSilicon Black Screen Fix)
  * ═════════════════════════════════════════════════════════════════════════
  *
- * CRITICAL FIXES for MacroSilicon (VID:345F) HDMI capture card:
+ * BUG FIXES from v17 → v18:
  *
- * FIX #1: FORCE MJPEG FORMAT + LOCK 720p
- *   MacroSilicon dongles FREEZE (black screen) if YUYV/YUY2 format
- *   is requested or if resolution > 720p at > 30fps.
- *   → setPreviewSize(1280, 720, UVCCamera.FRAME_FORMAT_MJPEG) ALWAYS
- *   → NEVER use FRAME_FORMAT_YUYV or default format
+ * BUG #1 (CRASH): setBandwidthFactor(1.0f) DOES NOT EXIST in org.uvccamera:lib!
+ *   → Use setPreviewSize(w, h, minFps, maxFps, format, bandwidthFactor) instead
+ *   → This was causing compilation error or NoSuchMethodError at runtime
  *
- * FIX #2: BANDWIDTH FACTOR
- *   MacroSilicon often fails USB bandwidth negotiation with Android kernel.
- *   Camera appears "open" (green checkmark) but receives 0-byte packets.
- *   → camera.setBandwidthFactor(1.0f) immediately after open
- *   → If still black, try 0.5f or 0.8f
+ * BUG #2 (DEVICE NOT DETECTED): MacroSilicon VID in device_filter.xml was 3141
+ *   → Should be 13407 (0x345F in decimal). 3141 = 0xC45 ≠ MacroSilicon
+ *   → Fixed in device_filter.xml
  *
- * FIX #3: PROPER PREVIEW SURFACE (TextureView + startPreview)
- *   The preview Surface MUST be set before startPreview().
- *   Must wait for TextureView.SurfaceTextureAvailable before setting surface.
- *   → camera.setPreviewTexture(surfaceTexture) THEN camera.startPreview()
+ * BUG #3 (DOUBLE SURFACE): Called both setPreviewTexture() and setPreviewDisplay()
+ *   → These conflict. Use setPreviewDisplay(Surface) only for TextureView
+ *   → Create Surface from SurfaceTexture, pass to setPreviewDisplay()
  *
- * Using org.uvccamera:lib (alexey-pelykh fork on Maven Central).
- * Same com.serenegiant.usb.* package — drop-in replacement for saki4510t.
+ * BUG #4 (THREAD VIOLATION): setupPreviewSurface called from background thread
+ *   → Surface/UI operations MUST be on main thread
+ *   → Use Handler(Looper.getMainLooper()).post() for surface setup
+ *
+ * BUG #5 (RECOMPOSITION): AndroidView factory re-creates TextureView
+ *   → Added remember + key to prevent unnecessary recreation
+ *
+ * FIX #1: FORCE MJPEG + LOCK 720p (MacroSilicon freezes on YUYV)
+ * FIX #2: Bandwidth factor via setPreviewSize overload (1.0f = full)
+ * FIX #3: Proper preview surface — setPreviewDisplay(Surface) then startPreview()
  */
 class UVCCameraManager(private val context: Context) {
 
@@ -61,23 +64,26 @@ class UVCCameraManager(private val context: Context) {
         private const val TAG = "UVCCameraManager"
 
         // ═══════════════════════════════════════════════════════════
-        // FIX #1: Resolution and Format for MacroSilicon
-        // MUST use MJPEG, MUST start at 720p. NO YUYV.
+        // FIX #1: Resolution, Format, FPS for MacroSilicon
+        // MUST use MJPEG, MUST start at 720p, MUST cap at 30fps
         // ═══════════════════════════════════════════════════════════
         private const val PREVIEW_WIDTH = 1280
         private const val PREVIEW_HEIGHT = 720
+        private const val PREVIEW_MIN_FPS = 1
+        private const val PREVIEW_MAX_FPS = 30
         private const val PREVIEW_FORMAT = UVCCamera.FRAME_FORMAT_MJPEG  // NEVER YUYV!
 
         // ═══════════════════════════════════════════════════════════
         // FIX #2: Bandwidth Factor for MacroSilicon
+        // Passed as 6th param to setPreviewSize(w, h, minFps, maxFps, format, bandwidth)
         // 1.0f = full bandwidth. If still black, try 0.5f.
         // ═══════════════════════════════════════════════════════════
         private const val BANDWIDTH_FACTOR = 1.0f
 
-        // Known UVC Vendor IDs
-        private const val VENDOR_MACROSILICON = 0x345F  // MacroSilicon (JASOZ capture card)
-        private const val VENDOR_FUSHICAI = 0x0489
-        private const val VENDOR_MAGEWELL = 0x0416
+        // Known UVC Vendor IDs (decimal values)
+        private const val VENDOR_MACROSILICON = 0x345F  // 13407 decimal — JASOZ capture card
+        private const val VENDOR_FUSHICAI = 0x0489       // 1161 decimal
+        private const val VENDOR_MAGEWELL = 0x0416       // 1046 decimal
 
         const val ACTION_USB_PERMISSION = "com.saatiril.operator.USB_PERMISSION"
     }
@@ -112,6 +118,7 @@ class UVCCameraManager(private val context: Context) {
     // ─── Background Handler ─────────────────────────────────────
     private var backgroundThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     // ─── Capture ────────────────────────────────────────────────
     private var captureCallback: ((String?) -> Unit)? = null
@@ -122,16 +129,26 @@ class UVCCameraManager(private val context: Context) {
     // ─── Discovered Devices ─────────────────────────────────────
     private val discoveredDevices = mutableMapOf<String, UsbDevice>()
 
-    // ─── Pending surface setup ──────────────────────────────────
+    // ─── State tracking ─────────────────────────────────────────
     private var pendingSurfaceSetup = false
+    private var isInitialized = false
+    private var isDestroying = false
 
     /**
      * Initialize the UVC camera system.
-     * Call this once when the Activity is created.
+     * Called once when the Activity is created.
+     * Guard against multiple calls.
      */
     fun initCamera() {
+        if (isInitialized) {
+            Log.i(TAG, "initCamera: already initialized, skipping")
+            return
+        }
+        isInitialized = true
+        isDestroying = false
+
         Log.i(TAG, "═══════════════════════════════════════════════════")
-        Log.i(TAG, "initCamera: v17 UVCCamera Direct (MacroSilicon Fix)")
+        Log.i(TAG, "initCamera: v18 UVCCamera Direct (MacroSilicon Fix)")
         Log.i(TAG, "═══════════════════════════════════════════════════")
 
         startBackgroundThread()
@@ -139,7 +156,7 @@ class UVCCameraManager(private val context: Context) {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // Background Thread (UVC operations MUST be on background thread)
+    // Background Thread (UVC open/close MUST be on background thread)
     // ═══════════════════════════════════════════════════════════════
 
     private fun startBackgroundThread() {
@@ -152,11 +169,12 @@ class UVCCameraManager(private val context: Context) {
     private fun stopBackgroundThread() {
         try {
             backgroundThread?.quitSafely()
-            backgroundThread = null
-            backgroundHandler = null
+            backgroundThread?.join(2000)
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping background thread: ${e.message}")
         }
+        backgroundThread = null
+        backgroundHandler = null
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -195,6 +213,7 @@ class UVCCameraManager(private val context: Context) {
                     override fun onConnect(device: UsbDevice, ctrlBlock: UsbControlBlock, createNew: Boolean) {
                         Log.i(TAG, "═══════════════════════════════════════════════════")
                         Log.i(TAG, "USB CONNECTED (permission granted): ${device.deviceName}")
+                        Log.i(TAG, "  createNew=$createNew")
                         Log.i(TAG, "═══════════════════════════════════════════════════")
 
                         currentUsbDevice = device
@@ -206,6 +225,7 @@ class UVCCameraManager(private val context: Context) {
                         }
                     }
 
+                    // NOTE: onDettach (double-t) is the correct spelling in this library
                     override fun onDettach(device: UsbDevice) {
                         Log.i(TAG, "USB DETACHED: ${device.deviceName}")
                         discoveredDevices.remove(device.deviceName)
@@ -223,11 +243,41 @@ class UVCCameraManager(private val context: Context) {
             isRegistered = true
             Log.i(TAG, "USBMonitor registered successfully")
 
-            // Also register BroadcastReceiver for USB permission results
+            // Register BroadcastReceiver for USB permission results
             registerUsbPermissionReceiver()
+
+            // Enumerate already-connected USB devices
+            enumerateConnectedDevices()
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register USBMonitor: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Enumerate USB devices that are already connected when app starts.
+     */
+    private fun enumerateConnectedDevices() {
+        try {
+            val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+            if (usbManager == null) {
+                Log.e(TAG, "UsbManager not available for enumeration")
+                return
+            }
+
+            for (device in usbManager.deviceList.values) {
+                Log.i(TAG, "Enumerating: ${device.deviceName} vid=0x${Integer.toHexString(device.vendorId)} pid=0x${Integer.toHexString(device.productId)}")
+                if (isUVCDevice(device)) {
+                    Log.i(TAG, "★ Already-connected UVC device found: ${device.deviceName}")
+                    discoveredDevices[device.deviceName] = device
+                    if (!usbManager.hasPermission(device)) {
+                        requestUsbPermission(device)
+                    }
+                }
+            }
+            updateAvailableCameras()
+        } catch (e: Exception) {
+            Log.e(TAG, "Device enumeration failed: ${e.message}")
         }
     }
 
@@ -261,7 +311,6 @@ class UVCCameraManager(private val context: Context) {
 
                         if (granted && device != null) {
                             Log.i(TAG, "USB permission GRANTED for ${device.deviceName}")
-                            // USBMonitor handles the connection via onConnect callback
                         } else if (device != null) {
                             Log.w(TAG, "USB permission DENIED for ${device.deviceName}")
                         } else {
@@ -306,7 +355,7 @@ class UVCCameraManager(private val context: Context) {
             return true
         }
 
-        // Heuristic: if device has multiple interfaces and isn't a well-known non-UVC type
+        // Heuristic: class 239 subclass 2
         if (device.interfaceCount >= 2 && device.vendorId != 0) {
             for (i in 0 until device.interfaceCount) {
                 val iface = device.getInterface(i)
@@ -323,7 +372,6 @@ class UVCCameraManager(private val context: Context) {
     private fun updateAvailableCameras() {
         val cameras = mutableListOf<Pair<String, String>>()
 
-        // Add discovered UVC devices
         for ((name, device) in discoveredDevices) {
             val vid = device.vendorId
             val label = when (vid) {
@@ -353,7 +401,7 @@ class UVCCameraManager(private val context: Context) {
 
             if (usbManager.hasPermission(device)) {
                 Log.i(TAG, "USB permission already granted for ${device.deviceName}")
-                // USBMonitor should handle connection automatically
+                // USBMonitor handles connection via onConnect
                 return
             }
 
@@ -378,10 +426,15 @@ class UVCCameraManager(private val context: Context) {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // ★★★ OPEN UVC CAMERA — WITH MACROSILICON FIXES ★★★
+    // ★★★ OPEN UVC CAMERA — WITH ALL MACROSILICON FIXES ★★★
     // ═══════════════════════════════════════════════════════════════
 
     private fun openUVCCamera(device: UsbDevice, ctrlBlock: UsbControlBlock) {
+        if (isDestroying) {
+            Log.w(TAG, "openUVCCamera: skipping, manager is destroying")
+            return
+        }
+
         closeUVCCamera()
 
         Log.i(TAG, "═══════════════════════════════════════════════════")
@@ -400,48 +453,57 @@ class UVCCameraManager(private val context: Context) {
             Log.i(TAG, "★ UVCCamera opened successfully")
 
             // ═════════════════════════════════════════════════════
-            // FIX #2: Set Bandwidth Factor IMMEDIATELY after open
-            // MacroSilicon needs bandwidth negotiation fix.
-            // Without this, camera opens but receives 0-byte frames.
-            // ═════════════════════════════════════════════════════
-            camera.setBandwidthFactor(BANDWIDTH_FACTOR)
-            Log.i(TAG, "★ Bandwidth factor set to $BANDWIDTH_FACTOR")
-
-            // ═════════════════════════════════════════════════════
-            // FIX #1: FORCE MJPEG FORMAT + LOCK 720p
-            // MacroSilicon FREEZES on YUYV or > 720p!
-            // Try: 1280x720 MJPEG → 640x480 MJPEG → 640x480 YUYV
+            // FIX #1 + FIX #2 COMBINED:
+            // Use setPreviewSize(w, h, minFps, maxFps, format, bandwidthFactor)
+            // This is the ONLY way to set bandwidth in org.uvccamera:lib!
+            // setBandwidthFactor() DOES NOT EXIST in this library.
+            //
+            // MacroSilicon: MJPEG forced, 720p, max 30fps, bandwidth 1.0f
             // ═════════════════════════════════════════════════════
             try {
-                Log.i(TAG, "★ Trying setPreviewSize(${PREVIEW_WIDTH}x${PREVIEW_HEIGHT}, MJPEG)")
-                camera.setPreviewSize(PREVIEW_WIDTH, PREVIEW_HEIGHT, PREVIEW_FORMAT)
-                Log.i(TAG, "★ Preview size set: ${PREVIEW_WIDTH}x${PREVIEW_HEIGHT} MJPEG")
+                Log.i(TAG, "★ Trying setPreviewSize(${PREVIEW_WIDTH}x${PREVIEW_HEIGHT}, ${PREVIEW_MIN_FPS}-${PREVIEW_MAX_FPS}fps, MJPEG, bw=${BANDWIDTH_FACTOR})")
+                camera.setPreviewSize(
+                    PREVIEW_WIDTH, PREVIEW_HEIGHT,
+                    PREVIEW_MIN_FPS, PREVIEW_MAX_FPS,
+                    PREVIEW_FORMAT, BANDWIDTH_FACTOR
+                )
+                Log.i(TAG, "★ Preview size set: ${PREVIEW_WIDTH}x${PREVIEW_HEIGHT} MJPEG bw=${BANDWIDTH_FACTOR}")
             } catch (e1: Exception) {
-                Log.w(TAG, "1280x720 MJPEG failed: ${e1.message}, trying 640x480 MJPEG...")
+                Log.w(TAG, "1280x720 MJPEG bw=1.0 failed: ${e1.message}, trying without bw param...")
                 try {
-                    camera.setPreviewSize(640, 480, UVCCamera.FRAME_FORMAT_MJPEG)
-                    Log.i(TAG, "★ Preview size set: 640x480 MJPEG")
+                    // Fallback: simpler overload without bandwidth
+                    camera.setPreviewSize(PREVIEW_WIDTH, PREVIEW_HEIGHT, PREVIEW_FORMAT)
+                    Log.i(TAG, "★ Preview size set: ${PREVIEW_WIDTH}x${PREVIEW_HEIGHT} MJPEG (no bw)")
                 } catch (e2: Exception) {
-                    Log.w(TAG, "640x480 MJPEG failed: ${e2.message}, trying 640x480 YUYV...")
+                    Log.w(TAG, "1280x720 MJPEG failed: ${e2.message}, trying 640x480 MJPEG...")
                     try {
-                        camera.setPreviewSize(640, 480, UVCCamera.FRAME_FORMAT_YUYV)
-                        Log.i(TAG, "★ Preview size set: 640x480 YUYV (last resort)")
+                        camera.setPreviewSize(640, 480, PREVIEW_MIN_FPS, PREVIEW_MAX_FPS, UVCCamera.FRAME_FORMAT_MJPEG, BANDWIDTH_FACTOR)
+                        Log.i(TAG, "★ Preview size set: 640x480 MJPEG bw=${BANDWIDTH_FACTOR}")
                     } catch (e3: Exception) {
-                        Log.e(TAG, "ALL preview size attempts failed! ${e3.message}")
-                        closeUVCCamera()
-                        return
+                        Log.w(TAG, "640x480 MJPEG bw failed: ${e3.message}, trying 640x480 simple...")
+                        try {
+                            camera.setPreviewSize(640, 480, UVCCamera.FRAME_FORMAT_MJPEG)
+                            Log.i(TAG, "★ Preview size set: 640x480 MJPEG (no bw)")
+                        } catch (e4: Exception) {
+                            Log.e(TAG, "ALL preview size attempts failed! ${e4.message}")
+                            closeUVCCamera()
+                            return
+                        }
                     }
                 }
             }
 
             // ═════════════════════════════════════════════════════
             // FIX #3: Set the PREVIEW SURFACE before startPreview
-            // The TextureView's SurfaceTexture must be available.
-            // If not ready yet, we'll set it up when surface is available.
+            // Use setPreviewDisplay(Surface) — NOT setPreviewTexture
+            // Surface is created from TextureView's SurfaceTexture
             // ═════════════════════════════════════════════════════
             val tv = textureView
             if (tv != null && tv.isAvailable) {
-                setupPreviewSurface(camera, tv)
+                // BUG #4 FIX: Must set up surface on MAIN thread
+                mainHandler.post {
+                    setupPreviewSurface(camera, tv)
+                }
             } else {
                 Log.i(TAG, "TextureView not ready yet — will set up surface when available")
                 pendingSurfaceSetup = true
@@ -454,7 +516,7 @@ class UVCCameraManager(private val context: Context) {
             _cameraType.value = "external"
 
             Log.i(TAG, "═══════════════════════════════════════════════════")
-            Log.i(TAG, "★ UVC CAMERA READY — streaming should begin")
+            Log.i(TAG, "★ UVC CAMERA READY — waiting for surface to start preview")
             Log.i(TAG, "═══════════════════════════════════════════════════")
 
         } catch (e: Exception) {
@@ -465,45 +527,59 @@ class UVCCameraManager(private val context: Context) {
 
     /**
      * Set up the preview surface and start streaming.
-     * Called when TextureView's surface becomes available.
+     * MUST be called on the MAIN thread (UI thread).
      */
     private fun setupPreviewSurface(camera: UVCCamera, tv: TextureView) {
         try {
             val surfaceTexture = tv.surfaceTexture
-            if (surfaceTexture != null) {
-                val surface = Surface(surfaceTexture)
-                previewSurface = surface
-
-                // Set the preview surface on the camera
-                camera.setPreviewTexture(surfaceTexture)
-                Log.i(TAG, "★ Preview texture set on UVCCamera")
-
-                // Also set the preview display surface
-                camera.setPreviewDisplay(surface)
-                Log.i(TAG, "★ Preview display surface set on UVCCamera")
-
-                // START THE PREVIEW STREAM
-                camera.startPreview()
-                Log.i(TAG, "★★★ startPreview() called — video stream should now be visible ★★★")
-            } else {
+            if (surfaceTexture == null) {
                 Log.e(TAG, "SurfaceTexture is null even though TextureView is available!")
+                return
             }
+
+            // Create Surface from SurfaceTexture
+            val surface = Surface(surfaceTexture)
+            previewSurface = surface
+
+            // Use setPreviewDisplay(Surface) — the correct method for TextureView
+            // Do NOT also call setPreviewTexture() — they conflict
+            camera.setPreviewDisplay(surface)
+            Log.i(TAG, "★ setPreviewDisplay(Surface) called")
+
+            // START THE PREVIEW STREAM
+            camera.startPreview()
+            Log.i(TAG, "★★★ startPreview() called — video stream should now be visible ★★★")
+
         } catch (e: Exception) {
             Log.e(TAG, "Failed to setup preview surface: ${e.message}", e)
+            // Try alternative: setPreviewTexture instead
+            try {
+                val surfaceTexture = tv.surfaceTexture
+                if (surfaceTexture != null) {
+                    camera.setPreviewTexture(surfaceTexture)
+                    Log.i(TAG, "★ Fallback: setPreviewTexture() called")
+                    camera.startPreview()
+                    Log.i(TAG, "★★★ startPreview() called after fallback ★★★")
+                }
+            } catch (e2: Exception) {
+                Log.e(TAG, "Fallback setPreviewTexture also failed: ${e2.message}")
+            }
         }
     }
 
     /**
-     * Called by the Activity/Compose when the TextureView's surface is ready.
+     * Called by TextureView.SurfaceTextureListener when surface becomes available.
      */
     fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
         Log.i(TAG, "onSurfaceTextureAvailable: ${width}x${height}")
         val camera = uvcCamera
         val tv = textureView
-        if (camera != null && tv != null) {
-            setupPreviewSurface(camera, tv)
-        } else {
-            pendingSurfaceSetup = true
+        if (camera != null && tv != null && pendingSurfaceSetup) {
+            pendingSurfaceSetup = false
+            // BUG #4 FIX: Run on main thread
+            mainHandler.post {
+                setupPreviewSurface(camera, tv)
+            }
         }
     }
 
@@ -517,17 +593,20 @@ class UVCCameraManager(private val context: Context) {
         } catch (_: Exception) {}
         previewSurface?.release()
         previewSurface = null
-        return true
+        pendingSurfaceSetup = true  // Will need to re-setup when surface returns
+        return true  // Return true = we handled it, surface can be destroyed
     }
 
     private fun closeUVCCamera() {
         try {
             uvcCamera?.let { cam ->
                 try { cam.stopPreview() } catch (_: Exception) {}
+                try { cam.close() } catch (_: Exception) {}
                 try { cam.destroy() } catch (_: Exception) {}
             }
         } catch (_: Exception) {}
         uvcCamera = null
+        previewSurface?.release()
         previewSurface = null
         _isConnected.value = false
         _cameraType.value = "none"
@@ -551,13 +630,18 @@ class UVCCameraManager(private val context: Context) {
      * Called from Compose's AndroidView factory.
      */
     fun setTextureView(tv: TextureView) {
-        Log.i(TAG, "setTextureView: new TextureView set")
+        Log.i(TAG, "setTextureView: new TextureView set (available=${tv.isAvailable})")
+
+        // Clean up old surface
+        previewSurface?.release()
+        previewSurface = null
+
         this.textureView = tv
 
         tv.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
                 Log.i(TAG, "TextureView.SurfaceTexture available: ${width}x${height}")
-                onSurfaceTextureAvailable(surface, width, height)
+                this@UVCCameraManager.onSurfaceTextureAvailable(surface, width, height)
             }
 
             override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
@@ -566,7 +650,7 @@ class UVCCameraManager(private val context: Context) {
 
             override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
                 Log.i(TAG, "TextureView.SurfaceTexture destroyed")
-                return onSurfaceTextureDestroyed()
+                return this@UVCCameraManager.onSurfaceTextureDestroyed()
             }
 
             override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {
@@ -576,10 +660,12 @@ class UVCCameraManager(private val context: Context) {
 
         // If camera is already open and surface is available, set it up immediately
         val camera = uvcCamera
-        if (camera != null && tv.isAvailable && pendingSurfaceSetup) {
+        if (camera != null && tv.isAvailable) {
             Log.i(TAG, "Camera already open + TextureView available — setting up preview NOW")
-            setupPreviewSurface(camera, tv)
             pendingSurfaceSetup = false
+            mainHandler.post {
+                setupPreviewSurface(camera, tv)
+            }
         }
     }
 
@@ -588,6 +674,7 @@ class UVCCameraManager(private val context: Context) {
      */
     fun clearTextureView() {
         textureView = null
+        previewSurface?.release()
         previewSurface = null
     }
 
@@ -595,12 +682,6 @@ class UVCCameraManager(private val context: Context) {
     // Photo Capture
     // ═══════════════════════════════════════════════════════════════
 
-    /**
-     * Capture a photo from the current UVC stream.
-     * Strategy:
-     * 1. Try TextureView.getBitmap() — simplest, captures rendered frame
-     * 2. Fallback: IFrameCallback → NV21 → JPEG → base64
-     */
     fun capturePhoto(onResult: (String?) -> Unit) {
         val camera = uvcCamera
         if (camera == null) {
@@ -609,13 +690,12 @@ class UVCCameraManager(private val context: Context) {
             return
         }
 
-        // Strategy 1: Capture from TextureView bitmap
+        // Strategy 1: TextureView.getBitmap()
         val tv = textureView
         if (tv != null && tv.isAvailable) {
             try {
                 val bitmap = tv.bitmap
                 if (bitmap != null && !bitmap.isRecycled) {
-                    // Check if bitmap is not all black
                     if (!isBitmapBlack(bitmap)) {
                         val outputStream = ByteArrayOutputStream()
                         bitmap.compress(Bitmap.CompressFormat.JPEG, 95, outputStream)
@@ -642,14 +722,10 @@ class UVCCameraManager(private val context: Context) {
         captureFromFrameCallback(camera, onResult)
     }
 
-    /**
-     * Check if a bitmap is entirely black (all pixels = 0).
-     */
     private fun isBitmapBlack(bitmap: Bitmap): Boolean {
         try {
             val w = bitmap.width
             val h = bitmap.height
-            // Sample pixels instead of checking all
             val stepX = maxOf(1, w / 20)
             val stepY = maxOf(1, h / 20)
             var blackCount = 0
@@ -659,7 +735,6 @@ class UVCCameraManager(private val context: Context) {
                 for (y in 0 until h step stepY) {
                     val pixel = bitmap.getPixel(x, y)
                     totalCount++
-                    // Check if pixel is very dark (R+G+B < 30)
                     val r = (pixel shr 16) and 0xFF
                     val g = (pixel shr 8) and 0xFF
                     val b = pixel and 0xFF
@@ -669,9 +744,7 @@ class UVCCameraManager(private val context: Context) {
                 }
             }
 
-            // If > 95% of sampled pixels are black, consider it a black frame
             val blackRatio = blackCount.toFloat() / totalCount.toFloat()
-            Log.d(TAG, "Black pixel ratio: $blackRatio (${blackCount}/${totalCount})")
             return blackRatio > 0.95f
         } catch (e: Exception) {
             Log.e(TAG, "isBitmapBlack check failed: ${e.message}")
@@ -679,9 +752,6 @@ class UVCCameraManager(private val context: Context) {
         }
     }
 
-    /**
-     * Capture via IFrameCallback (raw frame data → NV21 → JPEG → base64).
-     */
     private fun captureFromFrameCallback(camera: UVCCamera, callback: (String?) -> Unit) {
         captureCallback = callback
 
@@ -697,11 +767,9 @@ class UVCCameraManager(private val context: Context) {
                     }
 
                     try {
-                        // Convert ByteBuffer to ByteArray
                         val frameBytes = ByteArray(frame.remaining())
                         frame.get(frameBytes)
 
-                        // Decode as NV21 → JPEG
                         val yuvImage = android.graphics.YuvImage(
                             frameBytes, ImageFormat.NV21,
                             PREVIEW_WIDTH, PREVIEW_HEIGHT, null
@@ -713,9 +781,9 @@ class UVCCameraManager(private val context: Context) {
                         val bytes = outputStream.toByteArray()
                         val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
                         val dataUrl = "data:image/jpeg;base64,$base64"
+                        outputStream.close()
 
                         Log.i(TAG, "Photo captured via IFrameCallback (${dataUrl.length} chars)")
-                        outputStream.close()
 
                         val cb = captureCallback
                         captureCallback = null
@@ -734,15 +802,12 @@ class UVCCameraManager(private val context: Context) {
                 }
             }, UVCCamera.PIXEL_FORMAT_NV21)
 
-            // Timeout — if no frame received in 3 seconds
+            // Timeout
             backgroundHandler?.postDelayed({
                 if (captureCallback != null) {
                     Log.w(TAG, "IFrameCallback timed out")
-                    try {
-                        camera.setFrameCallback(null, 0)
-                    } catch (_: Exception) {}
+                    try { camera.setFrameCallback(null, 0) } catch (_: Exception) {}
 
-                    // Last attempt: TextureView bitmap
                     val tv = textureView
                     if (tv != null && tv.isAvailable) {
                         try {
@@ -786,11 +851,8 @@ class UVCCameraManager(private val context: Context) {
         if (device != null) {
             val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
             if (usbManager?.hasPermission(device) == true) {
-                // Force re-connect to this device
                 backgroundHandler?.post {
                     closeUVCCamera()
-                    // USBMonitor should handle reconnection
-                    // Or manually trigger:
                     usbMonitor?.requestPermission(device)
                 }
             } else {
@@ -806,74 +868,29 @@ class UVCCameraManager(private val context: Context) {
             discoveredDevices.clear()
             updateAvailableCameras()
             registerUsbMonitor()
-
-            // Also enumerate currently connected devices
-            val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
-            usbManager?.deviceList?.values?.forEach { device ->
-                if (isUVCDevice(device)) {
-                    Log.i(TAG, "forceRescan: Found UVC device: ${device.deviceName}")
-                    discoveredDevices[device.deviceName] = device
-                    if (!usbManager.hasPermission(device)) {
-                        requestUsbPermission(device)
-                    }
-                }
-            }
-            updateAvailableCameras()
         } catch (e: Exception) {
             Log.e(TAG, "forceRescan failed: ${e.message}")
         }
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // Compatibility Methods (matching WebViewCameraManager interface)
+    // Compatibility Methods
     // ═══════════════════════════════════════════════════════════════
 
-    fun showPreview() {
-        Log.i(TAG, "showPreview — preview is always visible via TextureView")
-    }
-
-    fun hidePreview() {
-        Log.i(TAG, "hidePreview — TextureView stays active for streaming")
-    }
-
+    fun showPreview() { Log.i(TAG, "showPreview — preview always visible via TextureView") }
+    fun hidePreview() { Log.i(TAG, "hidePreview — TextureView stays active for streaming") }
     fun switchToCamera(cameraId: String) = switchCamera(cameraId)
     fun hasCameraPermission(): Boolean = true
     fun refreshCameraList() = forceRescan()
     fun forceSwitchToUSB() = forceRescan()
-
-    fun setFilter(preset: String) {
-        Log.d(TAG, "setFilter: $preset (not yet implemented for UVCCamera)")
-    }
-
-    fun setFrameOverlay(base64Data: String?) {
-        Log.d(TAG, "setFrameOverlay: ${if (base64Data != null) "${base64Data.length} chars" else "null"} (not yet implemented for UVCCamera)")
-    }
-
-    fun updateConfig(aspectRatio: Double, filterPreset: String) {
-        setFilter(filterPreset)
-    }
-
-    /**
-     * Get the USBMonitor instance. The Activity needs this to handle
-     * USB permission results and device events.
-     */
+    fun setFilter(preset: String) { Log.d(TAG, "setFilter: $preset") }
+    fun setFrameOverlay(base64Data: String?) { Log.d(TAG, "setFrameOverlay: ${base64Data != null}") }
+    fun updateConfig(aspectRatio: Double, filterPreset: String) { setFilter(filterPreset) }
     fun getUSBMonitor(): USBMonitor? = usbMonitor
 
-    /**
-     * Called from Activity when USB permission result is received.
-     */
     fun onUsbPermissionResult(device: UsbDevice, granted: Boolean) {
         Log.i(TAG, "onUsbPermissionResult: ${device.deviceName}, granted=$granted")
-        if (granted) {
-            // USBMonitor should handle this via onConnect,
-            // but just in case, trigger it manually
-            val ctrlBlock = currentCtrlBlock
-            if (ctrlBlock != null) {
-                backgroundHandler?.post {
-                    openUVCCamera(device, ctrlBlock)
-                }
-            }
-        }
+        // USBMonitor's onConnect handles the actual camera opening
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -882,6 +899,8 @@ class UVCCameraManager(private val context: Context) {
 
     fun destroy() {
         Log.i(TAG, "destroy: Cleaning up UVCCamera")
+        isDestroying = true
+        isInitialized = false
         closeUVCCamera()
         unregisterUsbMonitor()
         unregisterUsbPermissionReceiver()

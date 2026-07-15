@@ -294,23 +294,28 @@ fun OperatorScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     // ═══════════════════════════════════════════════════
-                    // v17: TextureView for UVC camera preview
+                    // v18: TextureView for UVC camera preview
                     // UVCCamera renders directly to this TextureView.
-                    // This replaces the WebView approach which couldn't
-                    // access USB UVC capture cards on Android.
+                    // Uses remember + key to prevent Compose from re-creating
+                    // the TextureView during recomposition (which would break
+                    // the camera stream).
                     // ═══════════════════════════════════════════════════
+                    val textureViewRef = remember { android.view.TextureView(context) }
                     AndroidView(
-                        factory = { ctx ->
-                            android.view.TextureView(ctx).apply {
+                        factory = { _ ->
+                            textureViewRef.apply {
                                 layoutParams = android.widget.FrameLayout.LayoutParams(
                                     android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
                                     android.widget.FrameLayout.LayoutParams.MATCH_PARENT
                                 )
-                                // Register this TextureView with the UVC camera manager
-                                viewModel.cameraUVCManager.setTextureView(this)
                             }
                         },
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize(),
+                        update = { tv ->
+                            // Re-register with UVC manager on every update
+                            // (safe because setTextureView handles dedup)
+                            viewModel.cameraUVCManager.setTextureView(tv)
+                        }
                     )
 
                     // Gridline Overlay

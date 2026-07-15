@@ -11,8 +11,8 @@ android {
         applicationId = "com.saatiril.operator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 17
-        versionName = "1.0.17-uvc-macrosilicon-fix"
+        versionCode = 18
+        versionName = "1.0.18-uvc-hardened"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
