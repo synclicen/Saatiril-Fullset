@@ -11,8 +11,8 @@ android {
         applicationId = "com.saatiril.operator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 16
-        versionName = "1.0.16-uvc-mavencentral"
+        versionCode = 17
+        versionName = "1.0.17-uvc-macrosilicon-fix"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -79,22 +79,23 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     // Socket.io — Saatiril protocol communication
-    // socket.io-client 2.1.0 depends on engine.io-client 2.1.0 → OkHttp 3.12.12
-    // Coil has been removed to avoid OkHttp 3.x/4.x version conflict.
-    // If adding Coil later, use coil-compose-base (no OkHttp) or handle version conflict.
     implementation("io.socket:socket.io-client:2.1.0")
 
-    // UVCCamera — direct USB Video Class access for HDMI capture cards
-    // v15: Replaced Camera2 API with UVCCamera library.
-    // Camera2 API CANNOT access USB HDMI video capture cards on Android.
-    // USB capture cards are UVC (USB Video Class) devices and require
-    // a dedicated UVC library to access. Camera2/CameraX only sees
-    // built-in phone cameras, not UVC devices.
-    //
-    // Using alexey-pelykh/UVCCamera fork (org.uvccamera:lib) on Maven Central.
+    // ═══════════════════════════════════════════════════════════════
+    // UVCCamera — Direct USB Video Class access for HDMI capture cards
+    // ═══════════════════════════════════════════════════════════════
+    // v17: Using alexey-pelykh/UVCCamera fork (org.uvccamera:lib) on Maven Central.
     // This is a maintained hard fork of the original saki4510t/UVCCamera.
     // Same com.serenegiant.usb.* package namespace — no code changes needed.
-    // The original saki4510t repo does NOT have proper JitPack builds.
+    //
+    // CRITICAL: Camera2/CameraX API CANNOT access USB HDMI video capture
+    // cards on Android. USB capture cards are UVC (USB Video Class) devices
+    // and require a dedicated UVC library to access them via USB Host API.
+    //
+    // v17 FIX: MacroSilicon (VID:345F) black screen fix:
+    //   1. FORCE MJPEG format + lock 720p (never YUYV)
+    //   2. setBandwidthFactor(1.0f) immediately after open
+    //   3. Proper TextureView surface setup before startPreview()
     implementation("org.uvccamera:lib:0.0.13")
 
     // JSON parsing

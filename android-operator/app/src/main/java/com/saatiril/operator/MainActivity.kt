@@ -3,21 +3,17 @@ package com.saatiril.operator
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.WindowManager
-import android.widget.FrameLayout
-import android.view.TextureView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
-import com.saatiril.operator.camera.UVCCameraManager
 import com.saatiril.operator.data.ConnectionState
 import com.saatiril.operator.data.OperatorViewModel
 import com.saatiril.operator.ui.operator.OperatorScreen
@@ -25,33 +21,34 @@ import com.saatiril.operator.ui.connection.ConnectionScreen
 
 /**
  * ═════════════════════════════════════════════════════════════════════════
- * v15: UVCCamera Direct Architecture (USB Capture Card Support)
+ * v17: UVCCamera Direct Architecture (MacroSilicon Black Screen Fix)
  * ═════════════════════════════════════════════════════════════════════════
  *
- * Replaced Camera2 API with UVCCamera library + TextureView.
- * Camera2/CameraX API CANNOT access USB HDMI video capture cards on Android.
- * USB capture cards are UVC (USB Video Class) devices and require a dedicated
- * UVC library (saki4510t/UVCCamera) to access them directly via USB Host API.
+ * Replaced WebView approach with native UVCCamera library.
+ * USB capture cards are UVC devices — Chrome/WebView getUserMedia CANNOT
+ * access them on Android. Only USB Host API + UVC library works.
  *
- * Layout structure (same as v14 but with UVC instead of Camera2):
- * ┌──────────────────────────────┐
- * │  FrameLayout (root)          │
- * │  ┌────────────────────────┐  │
- * │  │ TextureView (preview)  │  │  ← Bottom layer, UVC camera preview
- * │  └────────────────────────┘  │
- * │  ┌────────────────────────┐  │
- * │  │ ComposeView (UI)       │  │  ← Top layer, transparent background
- * │  │ ConnectionScreen /     │  │     on OperatorScreen so camera shows
- * │  │ OperatorScreen         │  │     through
- * │  └────────────────────────┘  │
- * └──────────────────────────────┘
+ * Architecture:
+ * ┌──────────────────────────────────┐
+ * │  Activity                        │
+ * │  ┌────────────────────────────┐  │
+ * │  │ ComposeView                │  │
+ * │  │  ┌──────────────────────┐  │  │
+ * │  │  │ TextureView (UVC)    │  │  │  ← Camera preview via AndroidView
+ * │  │  │ camera preview here  │  │  │
+ * │  │  └──────────────────────┘  │  │
+ * │  │  ┌──────────────────────┐  │  │
+ * │  │  │ UI Overlays          │  │  │  ← Gridline, frame, controls
+ * │  │  └──────────────────────┘  │  │
+ * │  └────────────────────────────┘  │
+ * └──────────────────────────────────┘
  *
- * This guarantees:
- * 1. UVCCamera directly accesses USB capture cards via USB Host API
- * 2. TextureView renders UVC camera preview in real-time
- * 3. Compose UI overlays on top of camera preview
- * 4. On ConnectionScreen: Compose has opaque background → camera hidden
- * 5. On OperatorScreen: Compose has transparent areas → camera visible
+ * Key Changes:
+ * - USB Host API: UsbManager + USBMonitor for device detection
+ * - UVCCamera: Direct UVC device access (not Camera2/WebView)
+ * - TextureView: Preview surface for UVC camera stream
+ * - MJPEG forced: MacroSilicon fix for black screen
+ * - BandwidthFactor: USB bandwidth negotiation fix
  */
 class MainActivity : ComponentActivity() {
 
@@ -61,7 +58,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private lateinit var viewModel: OperatorViewModel
-    private lateinit var rootFrameLayout: FrameLayout
 
     private var _cameraPermissionGranted = false
     val cameraPermissionGranted: Boolean
@@ -85,7 +81,6 @@ class MainActivity : ComponentActivity() {
             Log.i(TAG, "Camera permission GRANTED")
             _cameraPermissionGranted = true
             onCameraPermissionGranted?.invoke()
-            // Initialize camera via UVCCamera
             viewModel.initCamera()
         }
 
@@ -110,48 +105,15 @@ class MainActivity : ComponentActivity() {
         _cameraPermissionGranted = (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
                 == PackageManager.PERMISSION_GRANTED)
 
-        // ═══════════════════════════════════════════════════════════
-        // CRITICAL: Create root FrameLayout BEFORE setContent.
-        // The TextureView goes in as the bottom layer, ComposeView
-        // goes in as the top layer. Both are ALWAYS in the window.
-        // ═══════════════════════════════════════════════════════════
-        rootFrameLayout = FrameLayout(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        }
-
-        // Create the TextureView for UVC camera preview and add to root as bottom layer
-        val textureView = TextureView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        }
-        rootFrameLayout.addView(textureView, 0)
-        viewModel.cameraManager.setTextureView(textureView)
-
-        // Detect USB capture card presence
-        val usbCaptureCardDetected = detectUsbCaptureCard()
-        if (usbCaptureCardDetected) {
-            Log.i(TAG, "═══════════════════════════════════════════════════")
-            Log.i(TAG, "USB CAPTURE CARD DETECTED at startup!")
-            Log.i(TAG, "═══════════════════════════════════════════════════")
-            viewModel.setUvcDeviceAttached(true)
-        }
-
         // Request permissions
         requestPermissions()
 
         // Handle USB device attachment
         handleUsbIntent(intent)
 
-        // Set content with the root FrameLayout containing TextureView + Compose
+        // Set content
         setContent {
-            // Add ComposeView on top of the TextureView
-            // This is automatically added as a child of the root layout
-            SaatirilOperatorApp(viewModel, this, rootFrameLayout)
+            SaatirilOperatorApp(viewModel, this)
         }
 
         // If camera permission already granted, init camera immediately
@@ -179,78 +141,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        // UVCCameraManager handles its own cleanup via destroy()
-        // which is called from ViewModel.onCleared()
-    }
-
     private fun handleUsbIntent(intent: Intent) {
         when (intent.action) {
             UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                 Log.i(TAG, "USB device attached")
-                val isVideoDevice = detectUsbCaptureCard()
-                if (isVideoDevice) {
-                    Log.i(TAG, "USB VIDEO DEVICE attached — triggering camera rescan")
-                }
                 viewModel.setUvcDeviceAttached(true)
             }
             UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                 Log.i(TAG, "USB device detached")
                 viewModel.setUvcDeviceAttached(false)
             }
-            ACTION_USB_PERMISSION -> {
-                synchronized(this) {
-                    val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
-                    }
-                    val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-
-                    Log.i(TAG, "USB permission result: device=${device?.deviceName}, granted=$granted")
-
-                    if (device != null) {
-                        (viewModel.cameraManager as? UVCCameraManager)?.onUsbPermissionResult(device, granted)
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Detect USB capture card by enumerating USB devices and checking
-     * for USB Video Class (UVC) interface class.
-     *
-     * UVC devices have:
-     * - Interface class 14 (USB_CLASS_VIDEO)
-     * - Or interface class 239 / subclass 2 (Miscellaneous / UVC)
-     */
-    private fun detectUsbCaptureCard(): Boolean {
-        return try {
-            val usbManager = getSystemService(USB_SERVICE) as UsbManager
-            val devices = usbManager.deviceList
-            for (device in devices.values) {
-                try {
-                    val interfaceCount = device.interfaceCount
-                    for (i in 0 until interfaceCount) {
-                        val iface = device.getInterface(i)
-                        if (iface.interfaceClass == 14 ||          // USB video class
-                            (iface.interfaceClass == 239 && iface.interfaceSubclass == 2)) { // UVC
-                            Log.i(TAG, "USB video capture card detected: ${device.deviceName}, " +
-                                    "class=${iface.interfaceClass}, subclass=${iface.interfaceSubclass}")
-                            return true
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error checking USB device ${device.deviceName}: ${e.message}")
-                }
-            }
-            false
-        } catch (e: Exception) {
-            Log.w(TAG, "Error enumerating USB devices: ${e.message}")
-            false
         }
     }
 
@@ -280,8 +180,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun SaatirilOperatorApp(
     viewModel: OperatorViewModel,
-    activity: MainActivity,
-    rootFrameLayout: FrameLayout
+    activity: MainActivity
 ) {
     val connectionState by viewModel.connectionState.collectAsState()
     var isConnected by remember { mutableStateOf(false) }
@@ -310,13 +209,11 @@ fun SaatirilOperatorApp(
         when (connectionState) {
             ConnectionState.AUTHENTICATED, ConnectionState.WAITING_FOR_DATA -> {
                 isConnected = true
-                // Camera preview is in the TextureView underneath Compose UI
-                // Just show the preview by making TextureView visible
-                viewModel.cameraManager.showPreview()
+                viewModel.cameraUVCManager.showPreview()
             }
             ConnectionState.DISCONNECTED -> {
                 isConnected = false
-                viewModel.cameraManager.hidePreview()
+                viewModel.cameraUVCManager.hidePreview()
             }
             else -> {}
         }
@@ -332,7 +229,7 @@ fun SaatirilOperatorApp(
             viewModel = viewModel,
             onConnected = {
                 isConnected = true
-                viewModel.cameraManager.showPreview()
+                viewModel.cameraUVCManager.showPreview()
             }
         )
     }

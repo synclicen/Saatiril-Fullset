@@ -171,7 +171,7 @@ fun OperatorScreen(
         }
     }
 
-    // v14: Camera is already initialized via Camera2 API at Activity level.
+    // v13: Camera is already initialized via permanent WebView at Activity level.
     // No need to re-init here — camera stream is already running.
     LaunchedEffect(effectivePermission) {
         if (effectivePermission && !cameraInitDone) {
@@ -294,11 +294,24 @@ fun OperatorScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     // ═══════════════════════════════════════════════════
-                    // v14: Camera preview is in the TextureView
-                    // underneath this Compose UI (added in MainActivity).
-                    // This Box is transparent so the camera preview shows
-                    // through the TextureView.
+                    // v17: TextureView for UVC camera preview
+                    // UVCCamera renders directly to this TextureView.
+                    // This replaces the WebView approach which couldn't
+                    // access USB UVC capture cards on Android.
                     // ═══════════════════════════════════════════════════
+                    AndroidView(
+                        factory = { ctx ->
+                            android.view.TextureView(ctx).apply {
+                                layoutParams = android.widget.FrameLayout.LayoutParams(
+                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                                )
+                                // Register this TextureView with the UVC camera manager
+                                viewModel.cameraUVCManager.setTextureView(this)
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
 
                     // Gridline Overlay
                     if (gridlineSettings.enabled) {

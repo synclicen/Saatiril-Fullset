@@ -19,21 +19,27 @@ import kotlinx.coroutines.launch
 
 /**
  * ═════════════════════════════════════════════════════════════════════════
- * Central ViewModel — v15 UVCCamera Direct Engine
+ * Central ViewModel — v10 Dual Camera Engine (UVCCamera + CameraX)
  * ═════════════════════════════════════════════════════════════════════════
  *
- * v15 CHANGES (UVCCamera replacing Camera2 API):
- * - Camera: UVCCameraManager replaces Camera2Manager.
- *   UVCCamera library directly communicates with USB Video Class devices.
- *   Camera2/CameraX API CANNOT access USB HDMI capture cards on Android.
- *   USB capture cards are UVC devices and require a dedicated UVC library.
- * - USB Detection: USBMonitor detects UVC devices via USB Host API.
- * - Photo Capture: TextureView.bitmap → JPEG → base64. No Camera2 involved.
- * - Preview: TextureView (same as v14). UVC camera preview renders directly.
+ * v10 CHANGES (fundamental architectural shift — NATIVE USB camera):
+ * - Camera: DualCameraManager replaces WebViewCameraManager.
+ *   UVCCamera (com.herohan:UVCAndroid) talks DIRECTLY to USB hardware
+ *   via USB Host API, bypassing Android's broken Camera2 HAL entirely.
+ *   CameraX handles built-in cameras (which work fine).
+ * - USB Detection: UVCCamera's USBMonitor detects USB devices natively.
+ *   No more WebView/getUserMedia (which couldn't see USB cameras on Android).
+ * - Photo Capture: UVCCamera IFrameCallback → NV21 → JPEG → base64.
+ *   CameraX ImageCapture → JPEG → base64. No JavaScript involved.
+ * - Photo Saving: REMOVED. Photos are NOT saved on the operator device.
+ *   They are sent via socket.io to the admin who saves them (matching
+ *   the Electron browser-mode behavior exactly).
+ * - Frame Overlay: TODO: apply in Kotlin (not JavaScript).
  *
  * Camera priority:
- * 1. USB UVC camera (USBMonitor auto-detect) — auto-selected if present
- * 2. No fallback — UVC only (Camera2 cannot access capture cards)
+ * 1. USB/External camera (UVCCamera) — auto-selected if present
+ * 2. Built-in back camera (CameraX) — fallback
+ * 3. Built-in front camera (CameraX) — last resort
  */
 class OperatorViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -44,9 +50,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     private val socketManager = SocketManager()
 
-    // ─── Camera Manager (v15: UVCCamera Direct) ──────────
+    // ─── Camera Manager (v17: UVC Direct Access for MacroSilicon) ──────────
 
-    val cameraManager = UVCCameraManager(application)
+    val cameraUVCManager = UVCCameraManager(application)
 
     // ─── Connection State ───────────────────────────────────────
 
@@ -182,8 +188,8 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private val _cameraConnected = MutableStateFlow(false)
     val cameraConnected: StateFlow<Boolean> = _cameraConnected.asStateFlow()
 
-    val availableCameras: StateFlow<List<Pair<String, String>>> = cameraManager.availableCameras
-    val currentCameraId: StateFlow<String> = cameraManager.currentCameraIdFlow
+    val availableCameras: StateFlow<List<Pair<String, String>>> = cameraUVCManager.availableCameras
+    val currentCameraId: StateFlow<String> = cameraUVCManager.currentCameraIdFlow
 
     // ─── Frame Overlay ──────────────────────────────────────────
 
@@ -245,21 +251,21 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private var cameraTypeCollector: Job? = null
 
     /**
-     * v15: Initialize camera via UVCCamera library.
-     * UVCCamera opens the USB device directly via USB Host API.
+     * v17: Initialize camera via UVCCamera library.
+     * USB Host API directly accesses UVC capture cards.
      */
     fun initCamera() {
         Log.i(TAG, "═══════════════════════════════════════════════════")
-        Log.i(TAG, "initCamera: v15 UVCCamera Direct")
+        Log.i(TAG, "initCamera: v17 UVCCamera Direct (MacroSilicon Fix)")
         Log.i(TAG, "═══════════════════════════════════════════════════")
 
-        cameraManager.initCamera()
+        cameraUVCManager.initCamera()
 
         // Set up collectors if not already set up
         if (cameraConnectedCollector?.isActive != true) {
             cameraConnectedCollector?.cancel()
             cameraConnectedCollector = viewModelScope.launch {
-                cameraManager.isConnected.collect { connected ->
+                cameraUVCManager.isConnected.collect { connected ->
                     _cameraConnected.value = connected
                     updateCameraSource()
                 }
@@ -269,7 +275,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         if (cameraTypeCollector?.isActive != true) {
             cameraTypeCollector?.cancel()
             cameraTypeCollector = viewModelScope.launch {
-                cameraManager.cameraType.collect {
+                cameraUVCManager.cameraType.collect {
                     updateCameraSource()
                 }
             }
@@ -279,9 +285,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun updateCameraSource() {
-        val connected = cameraManager.isConnected.value
-        val cameraType = cameraManager.cameraType.value
-        val isUSB = cameraManager.isUSBCamera.value
+        val connected = cameraUVCManager.isConnected.value
+        val cameraType = cameraUVCManager.cameraType.value
+        val isUSB = cameraUVCManager.isUSBCamera.value
 
         if (!connected) {
             _cameraSource.value = "none"
@@ -292,31 +298,31 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun switchCamera() {
-        val cameras = cameraManager.availableCameras.value
-        val currentId = cameraManager.currentCameraIdFlow.value
+        val cameras = cameraUVCManager.availableCameras.value
+        val currentId = cameraUVCManager.currentCameraIdFlow.value
         val currentIndex = cameras.indexOfFirst { it.first == currentId }
         val nextIndex = (currentIndex + 1) % cameras.size
         if (cameras.isNotEmpty()) {
-            cameraManager.switchCamera(cameras[nextIndex].first)
+            cameraUVCManager.switchCamera(cameras[nextIndex].first)
         }
     }
 
     fun getAvailableCameras(): List<Pair<String, String>> {
-        cameraManager.refreshCameraList()
-        return cameraManager.availableCameras.value
+        cameraUVCManager.refreshCameraList()
+        return cameraUVCManager.availableCameras.value
     }
 
     fun switchToCameraById(cameraId: String) {
-        cameraManager.switchCamera(cameraId)
+        cameraUVCManager.switchCamera(cameraId)
     }
 
     /**
      * Force rescan for USB cameras. Called when user taps "Pindai Ulang USB".
-     * v15: UVCCamera enumerates USB devices directly, no Camera2 needed.
+     * v13: WebView's devicechange + forceRescan() handles this.
      */
     fun forceRescanUsbCamera() {
         Log.i(TAG, "forceRescanUsbCamera: User requested USB camera rescan")
-        cameraManager.forceRescan()
+        cameraUVCManager.forceRescan()
     }
 
     fun setUvcDeviceAttached(attached: Boolean) {
@@ -324,7 +330,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         if (attached) {
             viewModelScope.launch {
                 delay(1000)
-                cameraManager.forceRescan()
+                cameraUVCManager.forceRescan()
             }
         }
     }
@@ -333,8 +339,8 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     /**
      * Trigger a photo capture. Supports timer mode.
-     * v15: Capture via UVCCameraManager (UVC capture card).
-     * Native capture — no JavaScript or Camera2 involved.
+     * v10: Capture via DualCameraManager (UVCCamera or CameraX).
+     * Native capture — no JavaScript involved.
      */
     fun triggerCapture() {
         val phase = _capturePhase.value
@@ -354,8 +360,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * v15: Capture via UVCCameraManager (UVC capture card).
-     * UVC: TextureView.bitmap → JPEG → base64
+     * v10: Capture via DualCameraManager (UVCCamera or CameraX).
+     * USB: IFrameCallback → NV21 → JPEG → base64
+     * Built-in: ImageCapture → JPEG → base64
      *
      * The result is a base64 data URL string, ready to send via socket.
      * Photos are NOT saved locally — only sent to admin via socket.
@@ -367,18 +374,18 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         val config = _project.value?.config
         if (config != null) {
             val aspectRatio = config.parseAspectRatio().toDouble()
-            cameraManager.updateConfig(aspectRatio, config.preset ?: "original")
+            cameraUVCManager.updateConfig(aspectRatio, config.preset ?: "original")
         }
 
         // Send frame overlay to JS if available
         val frameBase64 = _project.value?.config?.frame
         if (frameBase64 != null && frameBase64 != "__FRAME_SAVED__" && frameBase64.isNotEmpty()) {
-            cameraManager.setFrameOverlay("data:image/png;base64,${if (frameBase64.contains(",")) frameBase64.substringAfter(",") else frameBase64}")
+            cameraUVCManager.setFrameOverlay("data:image/png;base64,${if (frameBase64.contains(",")) frameBase64.substringAfter(",") else frameBase64}")
         } else {
-            cameraManager.setFrameOverlay(null)
+            cameraUVCManager.setFrameOverlay(null)
         }
 
-        cameraManager.capturePhoto { base64DataUrl ->
+        cameraUVCManager.capturePhoto { base64DataUrl ->
             if (base64DataUrl == null) {
                 Log.e(TAG, "Capture returned null from camera engine")
                 return@capturePhoto
@@ -390,9 +397,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * Handle a captured photo (base64 data URL from UVCCamera engine).
-     * v15: No WebView/JS or Camera2 — native UVC capture returns base64 directly.
-     * v15: Photos NOT saved on operator device — only sent via socket.
+     * Handle a captured photo (base64 data URL from camera engine).
+     * v10: No WebView/JS processing — native capture returns base64 directly.
+     * v10: Photos NOT saved on operator device — only sent via socket.
      */
     private fun handleCapturedPhoto(base64DataUrl: String) {
         val mode = _project.value?.config?.mode
@@ -989,6 +996,6 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         cameraConnectedCollector?.cancel()
         cameraTypeCollector?.cancel()
         socketManager.destroy()
-        cameraManager.destroy()
+        cameraUVCManager.destroy()
     }
 }
