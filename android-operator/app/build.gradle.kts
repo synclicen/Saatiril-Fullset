@@ -11,8 +11,8 @@ android {
         applicationId = "com.saatiril.operator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 18
-        versionName = "1.0.18-uvc-hardened"
+        versionCode = 19
+        versionName = "1.0.19-frame-overlay-fix"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
