@@ -30,7 +30,7 @@ import java.nio.ByteBuffer
 
 /**
  * ═════════════════════════════════════════════════════════════════════════
- * UVCCamera Manager — v18 Hardened (MacroSilicon Black Screen Fix)
+ * UVCCamera Manager — v28 (MacroSilicon Fix + Already-Permitted Device Fix)
  * ═════════════════════════════════════════════════════════════════════════
  *
  * BUG FIXES from v17 → v18:
@@ -148,7 +148,7 @@ class UVCCameraManager(private val context: Context) {
         isDestroying = false
 
         Log.i(TAG, "═══════════════════════════════════════════════════")
-        Log.i(TAG, "initCamera: v18 UVCCamera Direct (MacroSilicon Fix)")
+        Log.i(TAG, "initCamera: v28 UVCCamera Direct (Already-Permitted Fix)")
         Log.i(TAG, "═══════════════════════════════════════════════════")
 
         startBackgroundThread()
@@ -196,10 +196,14 @@ class UVCCameraManager(private val context: Context) {
                         Log.i(TAG, "═══════════════════════════════════════════════════")
 
                         if (isUVCDevice(device)) {
-                            Log.i(TAG, "★ UVC VIDEO DEVICE detected! Requesting permission...")
+                            Log.i(TAG, "★ UVC VIDEO DEVICE detected! Requesting permission via USBMonitor...")
                             discoveredDevices[device.deviceName] = device
                             updateAvailableCameras()
-                            requestUsbPermission(device)
+                            // v28 FIX: Use USBMonitor.requestPermission() instead of our
+                            // custom requestUsbPermission(). The library method properly
+                            // triggers onConnect() for already-permissioned devices, while
+                            // our custom method returns early and never opens the camera.
+                            usbMonitor?.requestPermission(device)
                         } else {
                             Log.i(TAG, "Not a UVC device, ignoring")
                         }
@@ -215,6 +219,13 @@ class UVCCameraManager(private val context: Context) {
                         Log.i(TAG, "USB CONNECTED (permission granted): ${device.deviceName}")
                         Log.i(TAG, "  createNew=$createNew")
                         Log.i(TAG, "═══════════════════════════════════════════════════")
+
+                        // v28 FIX: Guard against double-open when onConnect fires twice
+                        // (can happen with already-permissioned devices)
+                        if (uvcCamera != null && currentUsbDevice?.deviceName == device.deviceName) {
+                            Log.i(TAG, "onConnect: same device already open, skipping")
+                            return
+                        }
 
                         currentUsbDevice = device
                         currentCtrlBlock = ctrlBlock
@@ -256,6 +267,9 @@ class UVCCameraManager(private val context: Context) {
 
     /**
      * Enumerate USB devices that are already connected when app starts.
+     * v28 FIX: Use USBMonitor.requestPermission() for ALL devices (not just
+     * non-permissioned ones) so that already-permissioned devices also get
+     * their onConnect() callback fired, which opens the camera.
      */
     private fun enumerateConnectedDevices() {
         try {
@@ -270,9 +284,11 @@ class UVCCameraManager(private val context: Context) {
                 if (isUVCDevice(device)) {
                     Log.i(TAG, "★ Already-connected UVC device found: ${device.deviceName}")
                     discoveredDevices[device.deviceName] = device
-                    if (!usbManager.hasPermission(device)) {
-                        requestUsbPermission(device)
-                    }
+                    // v28 FIX: Always request permission via USBMonitor, even if already
+                    // permitted. USBMonitor.requestPermission() triggers onConnect() for
+                    // already-permissioned devices — our custom requestUsbPermission()
+                    // returns early and never triggers camera open.
+                    usbMonitor?.requestPermission(device)
                 }
             }
             updateAvailableCameras()

@@ -11,8 +11,8 @@ android {
         applicationId = "com.saatiril.operator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 27
-        versionName = "1.0.27-revert-to-v19-camera"
+        versionCode = 28
+        versionName = "1.0.28-already-permitted-fix"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
