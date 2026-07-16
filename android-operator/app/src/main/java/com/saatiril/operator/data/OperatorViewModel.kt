@@ -482,26 +482,25 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         val captureCallback: (String?) -> Unit = { base64DataUrl ->
             if (base64DataUrl == null) {
                 Log.e(TAG, "Capture returned null from camera engine")
-                return@captureCallback
-            }
-
-            Log.i(TAG, "doCapture: Raw photo captured (${base64DataUrl.length} chars)")
-
-            // ═══════════════════════════════════════════════════════
-            // POST-PROCESS: Apply frame overlay + filter + crop
-            // This processes the raw camera capture and applies:
-            // 1. Center-crop to project aspect ratio
-            // 2. Filter preset (studio, cinematic, etc.)
-            // 3. Frame overlay (if selected by admin)
-            // ═══════════════════════════════════════════════════════
-            val processedDataUrl = if (config != null) {
-                processPhotoWithFrame(base64DataUrl, config)
             } else {
-                Log.w(TAG, "doCapture: No config — sending raw photo without frame")
-                base64DataUrl
-            }
+                Log.i(TAG, "doCapture: Raw photo captured (${base64DataUrl.length} chars)")
 
-            handleCapturedPhoto(processedDataUrl)
+                // ═══════════════════════════════════════════════════════
+                // POST-PROCESS: Apply frame overlay + filter + crop
+                // This processes the raw camera capture and applies:
+                // 1. Center-crop to project aspect ratio
+                // 2. Filter preset (studio, cinematic, etc.)
+                // 3. Frame overlay (if selected by admin)
+                // ═══════════════════════════════════════════════════════
+                val processedDataUrl = if (config != null) {
+                    processPhotoWithFrame(base64DataUrl, config)
+                } else {
+                    Log.w(TAG, "doCapture: No config — sending raw photo without frame")
+                    base64DataUrl
+                }
+
+                handleCapturedPhoto(processedDataUrl)
+            }
         }
 
         if (_activeCameraEngine.value == "camera2") {
