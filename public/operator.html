@@ -458,13 +458,14 @@
   </button>
   <div id="troubleshootBody" class="collapse-body">
     <div class="troubleshoot-card">
-      <div class="troubleshoot-title">📱 Langkah-langkah untuk Android:</div>
+      <!-- Section: Android -->
+      <div class="troubleshoot-title">📱 Langkah-langkah untuk Android (HP/Tablet):</div>
       <ol>
-        <li><strong>Pastikan USB OTG aktif</strong> — Buka Pengaturan → Setelan tambahan → OTG → Aktifkan</li>
+        <li><strong>Pastikan USB OTG aktif</strong> — Buka Pengaturan → Cari "OTG" → Aktifkan (beberapa HP menyebutnya "USB Host" atau "Koneksi USB")</li>
         <li><strong>Hubungkan USB capture card</strong> via kabel OTG ke HP</li>
         <li><strong>Periksa notifikasi USB</strong> — Saat colok USB, akan muncul notifikasi. Tap notifikasi tersebut</li>
         <li><strong>Izinkan akses kamera Chrome</strong> — Pengaturan → Aplikasi → Chrome → Izin → Kamera → Izinkan</li>
-        <li><strong>Aktifkan Chrome Flag</strong> (penting untuk HTTP):
+        <li><strong>Aktifkan Chrome Flag</strong> (WAJIB untuk akses kamera via HTTP):
           <br>Buka tab baru → ketik <code>chrome://flags</code>
           <br>Cari <code>insecure origin</code>
           <br>Pada "Insecure origins treated as secure", masukkan:
@@ -474,14 +475,35 @@
         <li><strong>Tutup dan buka ulang Chrome</strong> setelah colok USB</li>
         <li>Tap tombol <strong>"Izinkan Akses Kamera"</strong> di atas, lalu pilih <strong>izinkan</strong></li>
       </ol>
+
+      <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--border);"></div>
+
+      <!-- Section: PC/Laptop -->
+      <div class="troubleshoot-title">💻 Langkah-langkah untuk PC / Laptop:</div>
+      <ol>
+        <li><strong>Hubungkan USB capture card</strong> langsung ke port USB di PC/Laptop. Pastikan HDMI terhubung ke kamera DSLR</li>
+        <li><strong>Aktifkan Chrome Flag</strong> (WAJIB untuk akses kamera via HTTP):
+          <br>Buka tab baru → ketik <code>chrome://flags</code>
+          <br>Cari <code>insecure origin</code>
+          <br>Pada "Insecure origins treated as secure", masukkan:
+          <br><code id="flagUrlPc">http://192.168.x.x:3000</code>
+          <br>Pilih <strong>Enabled</strong> → Klik <strong>Relaunch</strong>
+        </li>
+        <li><strong>Izinkan akses kamera di Windows</strong> — Pengaturan → Privasi & Keamanan → Kamera → Pastikan "Izinkan aplikasi mengakses kamera" aktif, dan Chrome diizinkan</li>
+        <li><strong>Refresh halaman</strong> setelah Chrome Flag diaktifkan</li>
+        <li>Klik tombol <strong>"Izinkan Akses Kamera"</strong> di atas, lalu pilih <strong>izinkan</strong></li>
+      </ol>
+
       <div style="margin-top:10px; padding:8px; background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.2); border-radius:6px;">
         <div style="font-weight:700;color:var(--warn);font-size:11px;">💡 Tips:</div>
         <div style="color:var(--muted);font-size:10px;">
           Jika tetap tidak terdeteksi, coba:
           <br>• Buka aplikasi Kamera bawaan HP → cek apakah USB capture card muncul
           <br>• Jika muncul di Kamera HP tapi tidak di Chrome, berarti Chrome perlu Chrome Flag
+          <br>• Di PC/Laptop, cek Device Manager → pastikan USB capture card terdeteksi
           <br>• Coba cabut dan pasang ulang USB capture card
           <br>• Pastikan HDMI cable terhubung ke kamera dan capture card
+          <br>• Chrome Flag hanya perlu diatur sekali per perangkat
         </div>
       </div>
     </div>
@@ -2665,6 +2687,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const flagUrlEl = document.getElementById('flagUrl')
   if (flagUrlEl) {
     flagUrlEl.textContent = `http://${currentHost}:${currentPort}`
+  }
+  const flagUrlPcEl = document.getElementById('flagUrlPc')
+  if (flagUrlPcEl) {
+    flagUrlPcEl.textContent = `http://${currentHost}:${currentPort}`
   }
   
   // Mirror toggle default

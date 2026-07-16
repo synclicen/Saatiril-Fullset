@@ -871,17 +871,17 @@ export default function AdminDashboard() {
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        {/* Chrome Flag instruction for Operator — ALWAYS shown (not just Electron) */}
-        <div className="rounded-md p-3 text-xs" style={{ backgroundColor: '#f59e0b15', border: '1px solid #f59e0b33', color: '#fde68a' }}>
-          <p className="font-semibold mb-1.5" style={{ color: GOLD }}>📱 Instruksi Lengkap untuk Operator Kamera (Android + USB Capture Card):</p>
-          <p className="mb-1.5">Untuk menggunakan kamera USB HDMI capture card di HP Android:</p>
+        {/* ── Section A: APK Android (Native App) ── */}
+        <div className="rounded-md p-3 text-xs" style={{ backgroundColor: '#22c55e15', border: '1px solid #22c55e33', color: '#86efac' }}>
+          <p className="font-semibold mb-1.5" style={{ color: '#4ade80' }}>📱 Opsi 1 — APK Android (Native App):</p>
+          <p className="mb-1.5 opacity-80">Cara paling mudah. Tidak perlu Chrome Flag. Langsung install dan jalankan.</p>
           <ol className="space-y-1 pl-1">
             <li><strong>1. Aktifkan USB OTG</strong> — Buka Pengaturan → Cari "OTG" → Aktifkan (beberapa HP menyebutnya "USB Host" atau "Koneksi USB")</li>
             <li><strong>2. Hubungkan USB capture card</strong> ke HP menggunakan kabel OTG. Pastikan HDMI terhubung ke kamera DSLR</li>
             <li><strong>3. Periksa notifikasi USB</strong> — Saat colok USB, akan muncul notifikasi. Tap dan izinkan akses</li>
             <li><strong>4. Izinkan akses kamera</strong> — Pengaturan → Aplikasi → Saatiril Operator → Izin → Kamera → Izinkan</li>
-            <li><strong>5. Buka aplikasi Saatiril Operator</strong> — Scan QR Code "📱 APK Android" di bawah, atau download dan install APK-nya</li>
-            <li><strong>6. Pilih kamera USB</strong> — Di halaman operator, pilih kamera yang bertanda 🔌 USB dari daftar kamera yang tersedia</li>
+            <li><strong>5. Download & install APK</strong> — Scan QR Code "📱 APK Android" di bawah, atau download dan install APK-nya</li>
+            <li><strong>6. Buka aplikasi Saatiril Operator</strong> — Pilih kamera USB dari daftar kamera yang tersedia</li>
           </ol>
           <div className="mt-2 p-2 rounded" style={{ backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
             <p className="font-semibold" style={{ color: '#f87171' }}>⚠️ Jika USB capture card tidak terdeteksi:</p>
@@ -894,8 +894,39 @@ export default function AdminDashboard() {
               <li>• Jika masih tidak terdeteksi, gunakan kamera HP (depan/belakang) sebagai alternatif</li>
             </ul>
           </div>
-          <p className="mt-2 opacity-70">MC tidak perlu USB OTG (tidak butuh kamera). Hanya Operator yang perlu.</p>
         </div>
+
+        {/* ── Section B: Google Chrome Browser ── */}
+        <div className="rounded-md p-3 text-xs" style={{ backgroundColor: '#f59e0b15', border: '1px solid #f59e0b33', color: '#fde68a' }}>
+          <p className="font-semibold mb-1.5" style={{ color: GOLD }}>💻 Opsi 2 — Google Chrome (PC / Laptop / Android):</p>
+          <p className="mb-1.5 opacity-80">Jika menggunakan browser Chrome, WAJIB aktifkan Chrome Flag agar kamera bisa diakses melalui HTTP.</p>
+          <ol className="space-y-1 pl-1">
+            <li><strong>1. Buka Chrome</strong> — Di PC, laptop, atau HP Android</li>
+            <li><strong>2. Aktifkan Chrome Flag</strong> (WAJIB untuk akses kamera via HTTP):
+              <ul className="mt-0.5 ml-3 space-y-0.5" style={{ color: '#fbbf24' }}>
+                <li>• Buka tab baru → ketik <code className="px-1 py-0.5 rounded" style={{ backgroundColor: 'rgba(255,255,255,0.1)' }}>chrome://flags</code></li>
+                <li>• Cari <code className="px-1 py-0.5 rounded" style={{ backgroundColor: 'rgba(255,255,255,0.1)' }}>insecure origin</code></li>
+                <li>• Pada "Insecure origins treated as secure", masukkan URL server (contoh: <code className="px-1 py-0.5 rounded" style={{ backgroundColor: 'rgba(255,255,255,0.1)' }}>http://192.168.x.x:3000</code>)</li>
+                <li>• Pilih <strong>Enabled</strong> → Klik/Tap <strong>Relaunch</strong></li>
+              </ul>
+            </li>
+            <li><strong>3. Jika di Android</strong> — Aktifkan USB OTG, hubungkan USB capture card via kabel OTG, izinkan akses kamera Chrome di Pengaturan</li>
+            <li><strong>4. Jika di PC/Laptop</strong> — Hubungkan USB capture card langsung ke port USB, Chrome akan otomatis mendeteksi</li>
+            <li><strong>5. Buka link Operator</strong> — Gunakan tombol "🔌 Chrome + USB" di bawah untuk mendapatkan link</li>
+            <li><strong>6. Izinkan akses kamera</strong> — Saat diminta oleh Chrome, klik/tap "Izinkan"</li>
+          </ol>
+          <div className="mt-2 p-2 rounded" style={{ backgroundColor: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)' }}>
+            <p className="font-semibold" style={{ color: '#fbbf24' }}>💡 Tips Chrome:</p>
+            <ul className="space-y-0.5 mt-1 pl-3 opacity-80">
+              <li>• Chrome Flag hanya perlu diatur sekali per perangkat</li>
+              <li>• Jika kamera tidak muncul, pastikan Chrome Flag sudah di-enable dan Chrome sudah di-relaunch</li>
+              <li>• Di PC/Laptop, cek juga Pengaturan Privasi Windows → izinkan Chrome akses kamera</li>
+              <li>• Pastikan tidak ada tab lain yang sedang menggunakan kamera</li>
+            </ul>
+          </div>
+        </div>
+
+        <p className="text-xs opacity-60 px-1">📌 MC tidak perlu USB OTG atau kamera — cukup buka link MC di browser saja. Hanya Operator yang perlu kamera.</p>
         {/* Session Password Display */}
         {currentProject?.config?.sessionPassword && currentProject.config.sessionPassword !== '__PASSWORD_SET__' && (
           <div className="rounded-md p-3 text-xs" style={{ backgroundColor: '#22c55e15', border: '1px solid #22c55e33', color: '#86efac' }}>
