@@ -7,7 +7,6 @@ import android.util.Base64
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.saatiril.operator.camera.CameraCapture
 import com.saatiril.operator.camera.UVCCameraManager
 import com.saatiril.operator.util.FilenameUtils
 import kotlinx.coroutines.Job
@@ -371,7 +370,20 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private fun doCapture() {
         Log.i(TAG, "doCapture: phase=${_capturePhase.value}, target=${_currentTarget.value?.nama}")
 
+        // Update camera config before capture (aspect ratio + filter + frame)
         val config = _project.value?.config
+        if (config != null) {
+            val aspectRatio = config.parseAspectRatio().toDouble()
+            cameraUVCManager.updateConfig(aspectRatio, config.preset ?: "original")
+        }
+
+        // Send frame overlay to JS if available
+        val frameBase64 = _project.value?.config?.frame
+        if (frameBase64 != null && frameBase64 != "__FRAME_SAVED__" && frameBase64.isNotEmpty()) {
+            cameraUVCManager.setFrameOverlay("data:image/png;base64,${if (frameBase64.contains(",")) frameBase64.substringAfter(",") else frameBase64}")
+        } else {
+            cameraUVCManager.setFrameOverlay(null)
+        }
 
         cameraUVCManager.capturePhoto { base64DataUrl ->
             if (base64DataUrl == null) {
@@ -379,69 +391,8 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
                 return@capturePhoto
             }
 
-            Log.i(TAG, "doCapture: Raw photo captured (${base64DataUrl.length} chars)")
-
-            // ═══════════════════════════════════════════════════════
-            // POST-PROCESS: Apply frame overlay + filter + crop
-            // This was missing in v17/v18 — photos were sent raw
-            // without the frame overlay selected by admin.
-            // ═══════════════════════════════════════════════════════
-            val processedDataUrl = if (config != null) {
-                processPhotoWithFrame(base64DataUrl, config)
-            } else {
-                Log.w(TAG, "doCapture: No config — sending raw photo without frame")
-                base64DataUrl
-            }
-
-            handleCapturedPhoto(processedDataUrl)
-        }
-    }
-
-    /**
-     * Process a raw captured photo:
-     * 1. Decode base64 → Bitmap
-     * 2. Center-crop to project aspect ratio
-     * 3. Apply filter preset (studio, cinematic, etc.)
-     * 4. Overlay frame bitmap (if any)
-     * 5. Encode back to base64 data URL
-     */
-    private fun processPhotoWithFrame(rawDataUrl: String, config: ProjectConfig): String {
-        try {
-            // Decode the raw photo
-            val pureBase64 = if (rawDataUrl.contains(",")) rawDataUrl.substringAfter(",") else rawDataUrl
-            val photoBytes = Base64.decode(pureBase64, Base64.DEFAULT)
-            val sourceBitmap = BitmapFactory.decodeByteArray(photoBytes, 0, photoBytes.size)
-
-            if (sourceBitmap == null) {
-                Log.e(TAG, "processPhotoWithFrame: Failed to decode raw photo bitmap")
-                return rawDataUrl
-            }
-
-            Log.i(TAG, "processPhotoWithFrame: source=${sourceBitmap.width}x${sourceBitmap.height}, frame=${_frameBitmap.value != null}, preset=${config.preset}")
-
-            // Process: crop + filter + frame overlay
-            val processedBitmap = CameraCapture.processFrame(
-                sourceBitmap = sourceBitmap,
-                config = config,
-                frameBitmap = _frameBitmap.value
-            )
-
-            // Convert back to base64 data URL
-            val resultDataUrl = CameraCapture.bitmapToBase64(processedBitmap, 95)
-
-            Log.i(TAG, "processPhotoWithFrame: output=${processedBitmap.width}x${processedBitmap.height} (${resultDataUrl.length} chars)")
-
-            // Recycle bitmaps
-            if (sourceBitmap != processedBitmap) {
-                sourceBitmap.recycle()
-            }
-            processedBitmap.recycle()
-
-            return resultDataUrl
-
-        } catch (e: Exception) {
-            Log.e(TAG, "processPhotoWithFrame: Failed — sending raw photo: ${e.message}")
-            return rawDataUrl
+            Log.i(TAG, "doCapture: Photo captured (${base64DataUrl.length} chars)")
+            handleCapturedPhoto(base64DataUrl)
         }
     }
 

@@ -30,7 +30,7 @@ import java.nio.ByteBuffer
 
 /**
  * ═════════════════════════════════════════════════════════════════════════
- * UVCCamera Manager — v29 (MacroSilicon Fix + Already-Permitted Device Fix)
+ * UVCCamera Manager — v18 Hardened (MacroSilicon Black Screen Fix)
  * ═════════════════════════════════════════════════════════════════════════
  *
  * BUG FIXES from v17 → v18:
@@ -133,7 +133,6 @@ class UVCCameraManager(private val context: Context) {
     private var pendingSurfaceSetup = false
     private var isInitialized = false
     private var isDestroying = false
-    private var isOpening = false  // v29: guard against double-open
 
     /**
      * Initialize the UVC camera system.
@@ -149,7 +148,7 @@ class UVCCameraManager(private val context: Context) {
         isDestroying = false
 
         Log.i(TAG, "═══════════════════════════════════════════════════")
-        Log.i(TAG, "initCamera: v29 UVCCamera Direct (Already-Permitted Fix)")
+        Log.i(TAG, "initCamera: v18 UVCCamera Direct (MacroSilicon Fix)")
         Log.i(TAG, "═══════════════════════════════════════════════════")
 
         startBackgroundThread()
@@ -217,22 +216,12 @@ class UVCCameraManager(private val context: Context) {
                         Log.i(TAG, "  createNew=$createNew")
                         Log.i(TAG, "═══════════════════════════════════════════════════")
 
-                        // v29: Guard against double-open (can happen when
-                        // USBMonitor.register() auto-fires onConnect AND
-                        // our delayed requestPermission also triggers it)
-                        if (isOpening) {
-                            Log.i(TAG, "onConnect: already opening a camera, skipping")
-                            return
-                        }
-                        isOpening = true
-
                         currentUsbDevice = device
                         currentCtrlBlock = ctrlBlock
 
                         // Open UVC camera on background thread
                         backgroundHandler?.post {
                             openUVCCamera(device, ctrlBlock)
-                            isOpening = false
                         }
                     }
 
@@ -267,14 +256,6 @@ class UVCCameraManager(private val context: Context) {
 
     /**
      * Enumerate USB devices that are already connected when app starts.
-     *
-     * v29 FIX: For already-permissioned devices, we must trigger onConnect()
-     * because the USBMonitor library does NOT auto-fire onConnect() for
-     * already-permissioned devices when register() is called.
-     *
-     * We use a DELAYED call to usbMonitor.requestPermission() to avoid
-     * re-entrancy issues (calling it during register() callback can crash).
-     * The delay ensures USBMonitor has finished its internal init.
      */
     private fun enumerateConnectedDevices() {
         try {
@@ -284,43 +265,17 @@ class UVCCameraManager(private val context: Context) {
                 return
             }
 
-            var hasAlreadyPermittedDevice = false
-
             for (device in usbManager.deviceList.values) {
                 Log.i(TAG, "Enumerating: ${device.deviceName} vid=0x${Integer.toHexString(device.vendorId)} pid=0x${Integer.toHexString(device.productId)}")
                 if (isUVCDevice(device)) {
                     Log.i(TAG, "★ Already-connected UVC device found: ${device.deviceName}")
                     discoveredDevices[device.deviceName] = device
                     if (!usbManager.hasPermission(device)) {
-                        // Not yet permitted — request via system dialog
                         requestUsbPermission(device)
-                    } else {
-                        // v29: Already permitted — flag for delayed onConnect trigger
-                        Log.i(TAG, "★ Already permitted — will trigger onConnect via delayed requestPermission")
-                        hasAlreadyPermittedDevice = true
                     }
                 }
             }
             updateAvailableCameras()
-
-            // v29: For already-permissioned devices, trigger onConnect() via
-            // delayed usbMonitor.requestPermission(). Must be delayed to avoid
-            // re-entrancy during register() callback.
-            if (hasAlreadyPermittedDevice) {
-                mainHandler.postDelayed({
-                    try {
-                        for (device in usbManager.deviceList.values) {
-                            if (isUVCDevice(device) && usbManager.hasPermission(device)) {
-                                Log.i(TAG, "★ Delayed trigger: requestPermission for already-permitted ${device.deviceName}")
-                                usbMonitor?.requestPermission(device)
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Delayed requestPermission failed: ${e.message}")
-                    }
-                }, 1000)  // 1 second delay to avoid re-entrancy
-            }
-
         } catch (e: Exception) {
             Log.e(TAG, "Device enumeration failed: ${e.message}")
         }
@@ -445,12 +400,8 @@ class UVCCameraManager(private val context: Context) {
             }
 
             if (usbManager.hasPermission(device)) {
-                Log.i(TAG, "USB permission already granted for ${device.deviceName} — triggering onConnect via library")
-                // v29 FIX: Don't just return! Already-permissioned devices need
-                // onConnect() to fire so the camera opens. Use the library's
-                // requestPermission() which triggers onConnect() for
-                // already-permissioned devices.
-                usbMonitor?.requestPermission(device)
+                Log.i(TAG, "USB permission already granted for ${device.deviceName}")
+                // USBMonitor handles connection via onConnect
                 return
             }
 
