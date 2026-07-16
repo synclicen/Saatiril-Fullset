@@ -138,3 +138,29 @@ Stage Summary:
 - Fixed two critical API incompatibilities that would have caused compile errors
 - Build should now succeed on GitHub Actions
 - Capture method changed from file-based captureStill() to TextureView.bitmap (actually more reliable)
+---
+Task ID: 1
+Agent: main
+Task: Fix USB camera black screen + implement filter/frame/local save + build APK
+
+Work Log:
+- Identified root cause: enumerateConnectedDevices() silently skipped already-permissioned USB devices
+- Fixed enumerateConnectedDevices() to call usbMonitor.requestPermission() for already-permitted devices
+- Added same-instance dedup guard to setTextureView() to prevent streaming interruption
+- Fixed clearTextureView() to set pendingSurfaceSetup=true for proper reconnect
+- Implemented setFilter() and setFrameOverlay() (previously NO-OPs)
+- Added applyFilter() and applyFrameOverlay() processing methods
+- Added local photo saving via PhotoSaver in handleCapturedPhoto()
+- Added localFolder field to ProjectConfig
+- Fixed adaptive-icon SDK 26+ error by removing duplicate XMLs from mipmap density dirs
+- Added PNG fallback icons for API 24-25 compatibility
+- Removed 7 unused camera files causing compilation errors (BuiltInCameraEngine, etc.)
+- Fixed OperatorViewModel compilation errors (FilenameUtils.sanitize → buildStandardFilename, nama → name, appContext → getApplication())
+- Build #85 succeeded with APK artifact (16.9 MB)
+
+Stage Summary:
+- v26 APK builds successfully
+- Key fix: enumerateConnectedDevices() now auto-opens already-permissioned USB devices
+- Filter and frame overlay implemented (applied in ViewModel post-processing via CameraCapture)
+- Local photo saving to Pictures/Saatiril/{folderName}/ added
+- Version: 26 (versionCode=26)
