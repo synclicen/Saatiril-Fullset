@@ -164,3 +164,29 @@ Stage Summary:
 - Filter and frame overlay implemented (applied in ViewModel post-processing via CameraCapture)
 - Local photo saving to Pictures/Saatiril/{folderName}/ added
 - Version: 26 (versionCode=26)
+---
+Task ID: v30-revert
+Agent: main
+Task: Revert to exact v18/v19 code that successfully displayed USB camera live view
+
+Work Log:
+- Reverted UVCCameraManager.kt from commit 368bee1 (v18) — identical to abdc194 (v19)
+- Reverted OperatorViewModel.kt from commit 368bee1 (v18)
+- Updated build.gradle.kts to versionCode=30, versionName=1.0.30-exact-v18-revert
+- Removed ALL v26-v29 changes that broke USB detection
+- Built successfully on GitHub Actions (run #29486631367)
+- APK downloaded to /tmp/saatiril-v30/app-debug.apk and /home/z/saatiril-repo/saatiril-operator-v30-exact-v18-revert.apk
+
+Stage Summary:
+- ★★★ KODE YANG BERHASIL MENAMPILKAN LIVE VIEW KAMERA USB = v18/v19 = commit 368bee1 ★★★
+- File kunci: android-operator/app/src/main/java/com/saatiril/operator/camera/UVCCameraManager.kt
+- Kunci keberhasilan v18/v19:
+  1. onAttach() → requestUsbPermission(device) — method custom, BUKAN usbMonitor.requestPermission()
+  2. onConnect() → langsung set currentUsbDevice + currentCtrlBlock, lalu backgroundHandler.post { openUVCCamera() } — TANPA double-open guard
+  3. enumerateConnectedDevices() → hanya requestUsbPermission() untuk device yang BELUM di-permit
+  4. requestUsbPermission() → jika sudah di-permit, return biasa — TIDAK memanggil usbMonitor.requestPermission()
+  5. openUVCCamera() → MJPEG forced, 6-param setPreviewSize, setPreviewDisplay(Surface) only, main thread surface setup
+  6. isInitialized guard untuk mencegah double-init
+  7. pendingSurfaceSetup flag untuk TextureView yang belum ready saat camera sudah open
+- JANGAN PERNAH mengubah flow ini tanpa persetujuan user
+- v28/v29 rusak karena: usbMonitor.requestPermission() di onAttach() menyebabkan re-entrancy, isOpening guard memblokir koneksi legitimate
