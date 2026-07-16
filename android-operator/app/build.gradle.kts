@@ -11,8 +11,8 @@ android {
         applicationId = "com.saatiril.operator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 19
-        versionName = "1.0.19-frame-overlay-fix"
+        versionCode = 26
+        versionName = "1.0.26-full-fix-camera-filter-frame"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

@@ -45,7 +45,9 @@ data class ProjectConfig(
     val targetFolder: String = "",
     val frame: String? = null,
     @SerializedName("sessionPassword")
-    val sessionPassword: String? = null
+    val sessionPassword: String? = null,
+    @SerializedName("localFolder")
+    val localFolder: String = ""
 ) {
     fun parseAspectRatio(): Float {
         val parts = ratio.split(":")
