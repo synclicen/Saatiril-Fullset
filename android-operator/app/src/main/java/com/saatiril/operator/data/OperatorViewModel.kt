@@ -468,13 +468,18 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         val poseName = if (photosPerSession > 1) {
             if (photoIndex == 1) "Toga" else "Ijazah"
         } else ""
-        val filename = FilenameUtils.sanitize("${target.nim}_${target.nama}_${photoIndex}_${poseName}".replace("_{2,}".toRegex(), "_")) + ".jpg"
-        val projectName = _project.value?.nama ?: "Saatiril"
-        val targetFolder = _project.value?.config?.localFolder ?: ""
+        val filename = FilenameUtils.buildStandardFilename(
+            nim = target.nim,
+            nama = target.nama,
+            suffix = photoIndex,
+            type = poseName
+        )
+        val projectName = _project.value?.name ?: "Saatiril"
+        val targetFolder = _project.value?.config?.targetFolder ?: ""
 
         try {
             val savedName = PhotoSaver.savePhoto(
-                context = appContext,
+                context = getApplication(),
                 base64Data = base64DataUrl,
                 filename = filename,
                 projectName = projectName,
