@@ -1,0 +1,403 @@
+From dfe5f6f5ff027565748a56656d2393d6a0c6ee86 Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Thu, 16 Jul 2026 07:57:40 +0000
+Subject: [PATCH] =?UTF-8?q?v27:=20Revert=20UVCCameraManager=20+=20Operator?=
+ =?UTF-8?q?ViewModel=20to=20v19=20=E2=80=94=20remove=20v26=20regressions?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+PROBLEM: v26 changes caused USB camera black screen regression.
+- enumerateConnectedDevices() calling requestPermission() for already-
+  permitted devices triggered onConnect() TWICE, causing double-open
+  conflict with the camera.
+- setTextureView() same-instance skip prevented necessary re-registration
+- Added filter/frame features that were not needed for core camera preview
+
+FIX: Revert UVCCameraManager.kt and OperatorViewModel.kt back to v19
+(abdc194) which had working USB camera preview.
+
+v18 core fixes PRESERVED in v19 code:
+- FIX #1: FORCE MJPEG + LOCK 720p (MacroSilicon freeze prevention)
+- FIX #2: Bandwidth factor via 6-param setPreviewSize (1.0f)
+- FIX #3: Proper surface — setPreviewDisplay(Surface) then startPreview()
+- FIX #4: Surface setup on main thread via Handler
+- FIX #5: remember TextureView across recompositions
+- FIX #6: isInitialized guard against double init
+---
+ android-operator/app/build.gradle.kts         |   4 +-
+ .../operator/camera/UVCCameraManager.kt       | 205 +-----------------
+ .../operator/data/OperatorViewModel.kt        |  37 +---
+ 3 files changed, 10 insertions(+), 236 deletions(-)
+
+diff --git a/android-operator/app/build.gradle.kts b/android-operator/app/build.gradle.kts
+index e712ffb..2cab538 100755
+--- a/android-operator/app/build.gradle.kts
++++ b/android-operator/app/build.gradle.kts
+@@ -11,8 +11,8 @@ android {
+         applicationId = "com.saatiril.operator"
+         minSdk = 24
+         targetSdk = 34
+-        versionCode = 26
+-        versionName = "1.0.26-full-fix-camera-filter-frame"
++        versionCode = 27
++        versionName = "1.0.27-revert-to-v19-camera"
+ 
+         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+         vectorDrawables {
+diff --git a/android-operator/app/src/main/java/com/saatiril/operator/camera/UVCCameraManager.kt b/android-operator/app/src/main/java/com/saatiril/operator/camera/UVCCameraManager.kt
+index fad80ee..eba703b 100755
+--- a/android-operator/app/src/main/java/com/saatiril/operator/camera/UVCCameraManager.kt
++++ b/android-operator/app/src/main/java/com/saatiril/operator/camera/UVCCameraManager.kt
+@@ -5,12 +5,7 @@ import android.content.Context
+ import android.content.Intent
+ import android.content.IntentFilter
+ import android.graphics.Bitmap
+-import android.graphics.BitmapFactory
+-import android.graphics.Canvas
+-import android.graphics.ColorMatrix
+-import android.graphics.ColorMatrixColorFilter
+ import android.graphics.ImageFormat
+-import android.graphics.Paint
+ import android.graphics.Rect
+ import android.graphics.SurfaceTexture
+ import android.hardware.usb.UsbDevice
+@@ -35,7 +30,7 @@ import java.nio.ByteBuffer
+ 
+ /**
+  * ═════════════════════════════════════════════════════════════════════════
+- * UVCCamera Manager — v26 (Full Fix: Camera + Filter + Frame + Enum)
++ * UVCCamera Manager — v18 Hardened (MacroSilicon Black Screen Fix)
+  * ═════════════════════════════════════════════════════════════════════════
+  *
+  * BUG FIXES from v17 → v18:
+@@ -128,10 +123,6 @@ class UVCCameraManager(private val context: Context) {
+     // ─── Capture ────────────────────────────────────────────────
+     private var captureCallback: ((String?) -> Unit)? = null
+ 
+-    // ─── Frame Overlay & Filter ─────────────────────────────────
+-    private var frameOverlayBitmap: Bitmap? = null
+-    private var currentFilter: String = "original"
+-
+     // ─── USB Permission ─────────────────────────────────────────
+     private var usbPermissionReceiver: BroadcastReceiver? = null
+ 
+@@ -157,7 +148,7 @@ class UVCCameraManager(private val context: Context) {
+         isDestroying = false
+ 
+         Log.i(TAG, "═══════════════════════════════════════════════════")
+-        Log.i(TAG, "initCamera: v26 UVCCamera Direct (Full Fix)")
++        Log.i(TAG, "initCamera: v18 UVCCamera Direct (MacroSilicon Fix)")
+         Log.i(TAG, "═══════════════════════════════════════════════════")
+ 
+         startBackgroundThread()
+@@ -265,9 +256,6 @@ class UVCCameraManager(private val context: Context) {
+ 
+     /**
+      * Enumerate USB devices that are already connected when app starts.
+-     * v26 FIX: If a device already has USB permission, trigger the
+-     * onConnect flow via usbMonitor.requestPermission() so the camera
+-     * opens immediately — not just silently skipped.
+      */
+     private fun enumerateConnectedDevices() {
+         try {
+@@ -282,11 +270,7 @@ class UVCCameraManager(private val context: Context) {
+                 if (isUVCDevice(device)) {
+                     Log.i(TAG, "★ Already-connected UVC device found: ${device.deviceName}")
+                     discoveredDevices[device.deviceName] = device
+-                    if (usbManager.hasPermission(device)) {
+-                        // v26 FIX: Already permitted — trigger onConnect via requestPermission
+-                        Log.i(TAG, "★ Device already permitted — triggering onConnect via requestPermission")
+-                        usbMonitor?.requestPermission(device)
+-                    } else {
++                    if (!usbManager.hasPermission(device)) {
+                         requestUsbPermission(device)
+                     }
+                 }
+@@ -646,12 +630,6 @@ class UVCCameraManager(private val context: Context) {
+      * Called from Compose's AndroidView factory.
+      */
+     fun setTextureView(tv: TextureView) {
+-        // v26: Avoid unnecessary re-registration that interrupts streaming
+-        if (this.textureView === tv) {
+-            Log.d(TAG, "setTextureView: same TextureView instance, skipping")
+-            return
+-        }
+-
+         Log.i(TAG, "setTextureView: new TextureView set (available=${tv.isAvailable})")
+ 
+         // Clean up old surface
+@@ -693,12 +671,8 @@ class UVCCameraManager(private val context: Context) {
+ 
+     /**
+      * Remove the TextureView reference.
+-     * v26: Sets pendingSurfaceSetup so preview reconnects when TextureView is re-assigned.
+      */
+     fun clearTextureView() {
+-        if (uvcCamera != null && textureView != null) {
+-            pendingSurfaceSetup = true
+-        }
+         textureView = null
+         previewSurface?.release()
+         previewSurface = null
+@@ -909,41 +883,8 @@ class UVCCameraManager(private val context: Context) {
+     fun hasCameraPermission(): Boolean = true
+     fun refreshCameraList() = forceRescan()
+     fun forceSwitchToUSB() = forceRescan()
+-    /**
+-     * Set filter preset. Applied to captured photos before encoding.
+-     * Supported: original, grayscale, sepia, invert, warm, cool, vintage, bright, contrast
+-     */
+-    fun setFilter(preset: String) {
+-        Log.i(TAG, "setFilter: $preset")
+-        currentFilter = preset.lowercase().trim()
+-    }
+-
+-    /**
+-     * Set frame overlay from base64 data URL.
+-     * Frame is composited on top of captured photos before encoding.
+-     */
+-    fun setFrameOverlay(base64Data: String?) {
+-        Log.i(TAG, "setFrameOverlay: ${base64Data != null}")
+-        if (base64Data == null || base64Data.isEmpty()) {
+-            frameOverlayBitmap?.recycle()
+-            frameOverlayBitmap = null
+-            return
+-        }
+-        try {
+-            val pureBase64 = if (base64Data.contains(",")) base64Data.substringAfter(",") else base64Data
+-            val bytes = Base64.decode(pureBase64, Base64.DEFAULT)
+-            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+-            if (bitmap != null) {
+-                frameOverlayBitmap?.recycle()
+-                frameOverlayBitmap = bitmap
+-                Log.i(TAG, "Frame overlay set: ${bitmap.width}x${bitmap.height}")
+-            } else {
+-                Log.w(TAG, "Failed to decode frame overlay bitmap")
+-            }
+-        } catch (e: Exception) {
+-            Log.e(TAG, "Failed to set frame overlay: ${e.message}")
+-        }
+-    }
++    fun setFilter(preset: String) { Log.d(TAG, "setFilter: $preset") }
++    fun setFrameOverlay(base64Data: String?) { Log.d(TAG, "setFrameOverlay: ${base64Data != null}") }
+     fun updateConfig(aspectRatio: Double, filterPreset: String) { setFilter(filterPreset) }
+     fun getUSBMonitor(): USBMonitor? = usbMonitor
+ 
+@@ -952,140 +893,6 @@ class UVCCameraManager(private val context: Context) {
+         // USBMonitor's onConnect handles the actual camera opening
+     }
+ 
+-    // ═══════════════════════════════════════════════════════════════
+-    // Frame Overlay & Filter Processing
+-    // ═══════════════════════════════════════════════════════════════
+-
+-    /**
+-     * Apply the admin-selected frame overlay on top of the captured photo.
+-     * The frame is scaled to match the photo dimensions exactly (FIT_XY).
+-     * Returns the input bitmap if no frame is set (no copy made).
+-     */
+-    private fun applyFrameOverlay(sourceBitmap: Bitmap): Bitmap {
+-        val frame = frameOverlayBitmap
+-        if (frame == null || frame.isRecycled) return sourceBitmap
+-
+-        try {
+-            val width = sourceBitmap.width
+-            val height = sourceBitmap.height
+-            val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+-            val canvas = Canvas(result)
+-
+-            // Draw the photo as base layer
+-            canvas.drawBitmap(sourceBitmap, 0f, 0f, null)
+-
+-            // Scale frame to fit exactly over the photo (FIT_XY)
+-            val scaledFrame = Bitmap.createScaledBitmap(frame, width, height, true)
+-            canvas.drawBitmap(scaledFrame, 0f, 0f, null)
+-
+-            if (scaledFrame !== frame) scaledFrame.recycle()
+-
+-            Log.i(TAG, "Frame overlay applied: ${width}x${height}")
+-            return result
+-        } catch (e: Exception) {
+-            Log.e(TAG, "Failed to apply frame overlay: ${e.message}")
+-            return sourceBitmap
+-        }
+-    }
+-
+-    /**
+-     * Apply a filter preset to the bitmap.
+-     * Returns the input bitmap if filter is "original" (no copy made).
+-     */
+-    private fun applyFilter(sourceBitmap: Bitmap, preset: String): Bitmap {
+-        if (preset == "original" || preset.isBlank()) return sourceBitmap
+-
+-        try {
+-            val width = sourceBitmap.width
+-            val height = sourceBitmap.height
+-            val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+-            val canvas = Canvas(result)
+-            val paint = Paint()
+-
+-            when (preset) {
+-                "grayscale" -> {
+-                    val matrix = ColorMatrix().apply { setSaturation(0f) }
+-                    paint.colorFilter = ColorMatrixColorFilter(matrix)
+-                }
+-                "sepia" -> {
+-                    val matrix = ColorMatrix(floatArrayOf(
+-                        0.393f, 0.769f, 0.189f, 0f, 0f,
+-                        0.349f, 0.686f, 0.168f, 0f, 0f,
+-                        0.272f, 0.534f, 0.131f, 0f, 0f,
+-                        0f, 0f, 0f, 1f, 0f
+-                    ))
+-                    paint.colorFilter = ColorMatrixColorFilter(matrix)
+-                }
+-                "invert" -> {
+-                    val matrix = ColorMatrix(floatArrayOf(
+-                        -1f, 0f, 0f, 0f, 255f,
+-                        0f, -1f, 0f, 0f, 255f,
+-                        0f, 0f, -1f, 0f, 255f,
+-                        0f, 0f, 0f, 1f, 0f
+-                    ))
+-                    paint.colorFilter = ColorMatrixColorFilter(matrix)
+-                }
+-                "warm" -> {
+-                    val matrix = ColorMatrix(floatArrayOf(
+-                        1.2f, 0.1f, 0f, 0f, 10f,
+-                        0f, 1.0f, 0f, 0f, 0f,
+-                        0f, 0f, 0.9f, 0f, 0f,
+-                        0f, 0f, 0f, 1f, 0f
+-                    ))
+-                    paint.colorFilter = ColorMatrixColorFilter(matrix)
+-                }
+-                "cool" -> {
+-                    val matrix = ColorMatrix(floatArrayOf(
+-                        0.9f, 0f, 0f, 0f, 0f,
+-                        0f, 1.0f, 0f, 0f, 0f,
+-                        0f, 0.1f, 1.2f, 0f, 10f,
+-                        0f, 0f, 0f, 1f, 0f
+-                    ))
+-                    paint.colorFilter = ColorMatrixColorFilter(matrix)
+-                }
+-                "vintage" -> {
+-                    val desat = ColorMatrix().apply { setSaturation(0.6f) }
+-                    val warm = ColorMatrix(floatArrayOf(
+-                        1.1f, 0.05f, 0f, 0f, 10f,
+-                        0f, 1.0f, 0f, 0f, 0f,
+-                        0f, 0f, 0.85f, 0f, 5f,
+-                        0f, 0f, 0f, 1f, 0f
+-                    ))
+-                    warm.postConcat(desat)
+-                    paint.colorFilter = ColorMatrixColorFilter(warm)
+-                }
+-                "bright" -> {
+-                    val matrix = ColorMatrix(floatArrayOf(
+-                        1.3f, 0f, 0f, 0f, 20f,
+-                        0f, 1.3f, 0f, 0f, 20f,
+-                        0f, 0f, 1.3f, 0f, 20f,
+-                        0f, 0f, 0f, 1f, 0f
+-                    ))
+-                    paint.colorFilter = ColorMatrixColorFilter(matrix)
+-                }
+-                "contrast" -> {
+-                    val scale = 1.4f
+-                    val offset = -128f * (scale - 1f)
+-                    val matrix = ColorMatrix(floatArrayOf(
+-                        scale, 0f, 0f, 0f, offset,
+-                        0f, scale, 0f, 0f, offset,
+-                        0f, 0f, scale, 0f, offset,
+-                        0f, 0f, 0f, 1f, 0f
+-                    ))
+-                    paint.colorFilter = ColorMatrixColorFilter(matrix)
+-                }
+-                else -> return sourceBitmap
+-            }
+-
+-            canvas.drawBitmap(sourceBitmap, 0f, 0f, paint)
+-            Log.i(TAG, "Filter applied: $preset")
+-            return result
+-        } catch (e: Exception) {
+-            Log.e(TAG, "Failed to apply filter $preset: ${e.message}")
+-            return sourceBitmap
+-        }
+-    }
+-
+     // ═══════════════════════════════════════════════════════════════
+     // Lifecycle — Destroy
+     // ═══════════════════════════════════════════════════════════════
+@@ -1104,7 +911,5 @@ class UVCCameraManager(private val context: Context) {
+         _availableCameras.value = emptyList()
+         textureView = null
+         previewSurface = null
+-        frameOverlayBitmap?.recycle()
+-        frameOverlayBitmap = null
+     }
+ }
+diff --git a/android-operator/app/src/main/java/com/saatiril/operator/data/OperatorViewModel.kt b/android-operator/app/src/main/java/com/saatiril/operator/data/OperatorViewModel.kt
+index 80c51b3..6040b7b 100755
+--- a/android-operator/app/src/main/java/com/saatiril/operator/data/OperatorViewModel.kt
++++ b/android-operator/app/src/main/java/com/saatiril/operator/data/OperatorViewModel.kt
+@@ -10,7 +10,6 @@ import androidx.lifecycle.viewModelScope
+ import com.saatiril.operator.camera.CameraCapture
+ import com.saatiril.operator.camera.UVCCameraManager
+ import com.saatiril.operator.util.FilenameUtils
+-import com.saatiril.operator.util.PhotoSaver
+ import kotlinx.coroutines.Job
+ import kotlinx.coroutines.delay
+ import kotlinx.coroutines.flow.MutableStateFlow
+@@ -448,7 +447,8 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
+ 
+     /**
+      * Handle a captured photo (base64 data URL from camera engine).
+-     * v26: Photos saved locally via PhotoSaver AND sent via socket.
++     * v10: No WebView/JS processing — native capture returns base64 directly.
++     * v10: Photos NOT saved on operator device — only sent via socket.
+      */
+     private fun handleCapturedPhoto(base64DataUrl: String) {
+         val mode = _project.value?.config?.mode
+@@ -463,41 +463,10 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
+         currentPhotos.add(base64DataUrl)
+         _capturedPhotos.value = currentPhotos
+ 
+-        // v26: Save photo locally to Pictures/Saatiril/{folderName}/
+-        val photoIndex = currentPhotos.size
+-        val poseName = if (photosPerSession > 1) {
+-            if (photoIndex == 1) "Toga" else "Ijazah"
+-        } else ""
+-        val filename = FilenameUtils.buildStandardFilename(
+-            nim = target.nim,
+-            nama = target.nama,
+-            suffix = photoIndex,
+-            type = poseName
+-        )
+-        val projectName = _project.value?.name ?: "Saatiril"
+-        val targetFolder = _project.value?.config?.targetFolder ?: ""
+-
+-        try {
+-            val savedName = PhotoSaver.savePhoto(
+-                context = getApplication(),
+-                base64Data = base64DataUrl,
+-                filename = filename,
+-                projectName = projectName,
+-                targetFolder = targetFolder
+-            )
+-            if (savedName != null) {
+-                Log.i(TAG, "handleCapturedPhoto: Photo saved locally as $savedName")
+-            } else {
+-                Log.w(TAG, "handleCapturedPhoto: Local save failed — photo still sent via socket")
+-            }
+-        } catch (e: Exception) {
+-            Log.e(TAG, "handleCapturedPhoto: Local save error: ${e.message}")
+-        }
+-
+         Log.i(TAG, "handleCapturedPhoto: photo ${currentPhotos.size}/${photosPerSession} captured for ${target.nama}")
+ 
+         if (photosPerSession == 1 || currentPhotos.size >= photosPerSession) {
+-            // All photos captured — finalize (send via socket + already saved locally)
++            // All photos captured — finalize (send via socket only, NO local save)
+             viewModelScope.launch {
+                 finalizeCapture(target, currentPhotos)
+             }
+-- 
+2.47.3
+
