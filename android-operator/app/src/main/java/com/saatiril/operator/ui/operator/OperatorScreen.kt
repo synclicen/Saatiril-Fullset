@@ -294,13 +294,14 @@ fun OperatorScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     // ═══════════════════════════════════════════════════
-                    // v18: TextureView for UVC camera preview
-                    // UVCCamera renders directly to this TextureView.
-                    // Uses remember + key to prevent Compose from re-creating
+                    // TextureView for camera preview
+                    // UVC camera OR Camera2 renders directly to this TextureView.
+                    // Uses remember to prevent Compose from re-creating
                     // the TextureView during recomposition (which would break
                     // the camera stream).
                     // ═══════════════════════════════════════════════════
                     val textureViewRef = remember { android.view.TextureView(context) }
+                    val activeEngine by viewModel.activeCameraEngine.collectAsState()
                     AndroidView(
                         factory = { _ ->
                             textureViewRef.apply {
@@ -312,9 +313,12 @@ fun OperatorScreen(
                         },
                         modifier = Modifier.fillMaxSize(),
                         update = { tv ->
-                            // Re-register with UVC manager on every update
-                            // (safe because setTextureView handles dedup)
-                            viewModel.cameraUVCManager.setTextureView(tv)
+                            // Register TextureView with the active camera engine
+                            if (activeEngine == "camera2") {
+                                viewModel.camera2Manager.setTextureView(tv)
+                            } else {
+                                viewModel.cameraUVCManager.setTextureView(tv)
+                            }
                         }
                     )
 

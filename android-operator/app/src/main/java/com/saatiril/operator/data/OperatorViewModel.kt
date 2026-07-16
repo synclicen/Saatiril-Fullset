@@ -7,8 +7,11 @@ import android.util.Base64
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.saatiril.operator.camera.Camera2Manager
+import com.saatiril.operator.camera.CameraCapture
 import com.saatiril.operator.camera.UVCCameraManager
 import com.saatiril.operator.util.FilenameUtils
+import com.saatiril.operator.util.PhotoSaver
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,9 +53,12 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     private val socketManager = SocketManager()
 
-    // ─── Camera Manager (v17: UVC Direct Access for MacroSilicon) ──────────
+    // ─── Camera Managers ──────────────────────────────────────────
+    // UVC: USB capture cards (MacroSilicon, etc.) — DO NOT MODIFY THIS
+    // Camera2: Built-in phone cameras (front/back)
 
     val cameraUVCManager = UVCCameraManager(application)
+    val camera2Manager = Camera2Manager(application)
 
     // ─── Connection State ───────────────────────────────────────
 
@@ -188,8 +194,16 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private val _cameraConnected = MutableStateFlow(false)
     val cameraConnected: StateFlow<Boolean> = _cameraConnected.asStateFlow()
 
-    val availableCameras: StateFlow<List<Pair<String, String>>> = cameraUVCManager.availableCameras
-    val currentCameraId: StateFlow<String> = cameraUVCManager.currentCameraIdFlow
+    // Track which camera engine is active: "uvc" or "camera2"
+    private val _activeCameraEngine = MutableStateFlow("uvc")
+    val activeCameraEngine: StateFlow<String> = _activeCameraEngine.asStateFlow()
+
+    // Merged available cameras from UVC + Camera2
+    private val _allAvailableCameras = MutableStateFlow<List<Pair<String, String>>>(emptyList())
+    val availableCameras: StateFlow<List<Pair<String, String>>> = _allAvailableCameras.asStateFlow()
+
+    val currentCameraId: StateFlow<String>
+        get() = if (_activeCameraEngine.value == "camera2") camera2Manager.currentCameraIdFlow else cameraUVCManager.currentCameraIdFlow
 
     // ─── Frame Overlay ──────────────────────────────────────────
 
@@ -249,25 +263,35 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     private var cameraConnectedCollector: Job? = null
     private var cameraTypeCollector: Job? = null
+    private var camera2ConnectedCollector: Job? = null
+    private var camera2TypeCollector: Job? = null
 
     /**
-     * v17: Initialize camera via UVCCamera library.
-     * USB Host API directly accesses UVC capture cards.
+     * Initialize BOTH camera systems:
+     * - UVCCamera for USB capture cards (MacroSilicon, etc.) — DO NOT MODIFY
+     * - Camera2 for built-in phone cameras (front/back)
      */
     fun initCamera() {
         Log.i(TAG, "═══════════════════════════════════════════════════")
-        Log.i(TAG, "initCamera: v17 UVCCamera Direct (MacroSilicon Fix)")
+        Log.i(TAG, "initCamera: Dual engine — UVC + Camera2")
         Log.i(TAG, "═══════════════════════════════════════════════════")
 
+        // Initialize UVC camera system (USB capture cards) — UNCHANGED from v18
         cameraUVCManager.initCamera()
 
-        // Set up collectors if not already set up
+        // Enumerate Camera2 built-in cameras (front/back)
+        camera2Manager.enumerateCameras()
+
+        // Set up UVC collectors
         if (cameraConnectedCollector?.isActive != true) {
             cameraConnectedCollector?.cancel()
             cameraConnectedCollector = viewModelScope.launch {
                 cameraUVCManager.isConnected.collect { connected ->
-                    _cameraConnected.value = connected
+                    if (_activeCameraEngine.value == "uvc") {
+                        _cameraConnected.value = connected
+                    }
                     updateCameraSource()
+                    refreshAvailableCameras()
                 }
             }
         }
@@ -277,43 +301,125 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             cameraTypeCollector = viewModelScope.launch {
                 cameraUVCManager.cameraType.collect {
                     updateCameraSource()
+                    refreshAvailableCameras()
                 }
             }
         }
 
-        Log.i(TAG, "Camera initialized — UVCCamera active, cameraSource=${_cameraSource.value}")
+        // Set up Camera2 collectors
+        if (camera2ConnectedCollector?.isActive != true) {
+            camera2ConnectedCollector?.cancel()
+            camera2ConnectedCollector = viewModelScope.launch {
+                camera2Manager.isConnected.collect { connected ->
+                    if (_activeCameraEngine.value == "camera2") {
+                        _cameraConnected.value = connected
+                    }
+                    updateCameraSource()
+                    refreshAvailableCameras()
+                }
+            }
+        }
+
+        if (camera2TypeCollector?.isActive != true) {
+            camera2TypeCollector?.cancel()
+            camera2TypeCollector = viewModelScope.launch {
+                camera2Manager.cameraType.collect {
+                    updateCameraSource()
+                    refreshAvailableCameras()
+                }
+            }
+        }
+
+        // Build initial merged camera list
+        refreshAvailableCameras()
+
+        Log.i(TAG, "Camera initialized — UVC + Camera2, cameraSource=${_cameraSource.value}")
     }
 
     private fun updateCameraSource() {
-        val connected = cameraUVCManager.isConnected.value
+        val uvcConnected = cameraUVCManager.isConnected.value
         val cameraType = cameraUVCManager.cameraType.value
         val isUSB = cameraUVCManager.isUSBCamera.value
+        val c2Connected = camera2Manager.isConnected.value
 
-        if (!connected) {
-            _cameraSource.value = "none"
+        // If UVC is connected, it takes priority
+        if (uvcConnected) {
+            _activeCameraEngine.value = "uvc"
+            _cameraConnected.value = true
+            _cameraSource.value = if (isUSB || cameraType == "external") "uvc" else "builtin"
             return
         }
 
-        _cameraSource.value = if (isUSB || cameraType == "external") "uvc" else "builtin"
+        // If Camera2 is connected
+        if (c2Connected) {
+            _activeCameraEngine.value = "camera2"
+            _cameraConnected.value = true
+            _cameraSource.value = "builtin"
+            return
+        }
+
+        // Nothing connected yet — but Camera2 may connect later
+        if (_activeCameraEngine.value == "camera2") {
+            _cameraConnected.value = c2Connected
+            _cameraSource.value = if (c2Connected) "builtin" else "none"
+        } else {
+            _cameraConnected.value = uvcConnected
+            _cameraSource.value = if (uvcConnected) "uvc" else "none"
+        }
+    }
+
+    /**
+     * Refresh the merged available cameras list from both engines.
+     */
+    private fun refreshAvailableCameras() {
+        val uvcList = cameraUVCManager.availableCameras.value
+        val c2List = camera2Manager.availableCameras.value
+        _allAvailableCameras.value = uvcList + c2List
     }
 
     fun switchCamera() {
-        val cameras = cameraUVCManager.availableCameras.value
-        val currentId = cameraUVCManager.currentCameraIdFlow.value
+        val cameras = _allAvailableCameras.value
+        if (cameras.isEmpty()) return
+
+        val currentId = currentCameraId.value
         val currentIndex = cameras.indexOfFirst { it.first == currentId }
         val nextIndex = (currentIndex + 1) % cameras.size
-        if (cameras.isNotEmpty()) {
-            cameraUVCManager.switchCamera(cameras[nextIndex].first)
-        }
+        val nextCamera = cameras[nextIndex]
+
+        switchToCameraById(nextCamera.first)
     }
 
     fun getAvailableCameras(): List<Pair<String, String>> {
         cameraUVCManager.refreshCameraList()
-        return cameraUVCManager.availableCameras.value
+        camera2Manager.enumerateCameras()
+        refreshAvailableCameras()
+        return _allAvailableCameras.value
     }
 
     fun switchToCameraById(cameraId: String) {
-        cameraUVCManager.switchCamera(cameraId)
+        // Check if this is a Camera2 camera (ID is numeric 0, 1, etc.)
+        val c2Cameras = camera2Manager.availableCameras.value
+        val isCamera2 = c2Cameras.any { it.first == cameraId }
+
+        if (isCamera2) {
+            Log.i(TAG, "switchToCameraById: Switching to Camera2 camera $cameraId")
+            _activeCameraEngine.value = "camera2"
+
+            // Close UVC preview (but don't destroy the monitor)
+            try { cameraUVCManager.capturePhoto {} } catch (_: Exception) {}
+
+            camera2Manager.openCamera(cameraId)
+            _cameraConnected.value = true
+            _cameraSource.value = "builtin"
+        } else {
+            Log.i(TAG, "switchToCameraById: Switching to UVC camera $cameraId")
+            _activeCameraEngine.value = "uvc"
+
+            // Close Camera2
+            try { camera2Manager.closeCamera() } catch (_: Exception) {}
+
+            cameraUVCManager.switchCamera(cameraId)
+        }
     }
 
     /**
@@ -370,36 +476,92 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private fun doCapture() {
         Log.i(TAG, "doCapture: phase=${_capturePhase.value}, target=${_currentTarget.value?.nama}")
 
-        // Update camera config before capture (aspect ratio + filter + frame)
         val config = _project.value?.config
-        if (config != null) {
-            val aspectRatio = config.parseAspectRatio().toDouble()
-            cameraUVCManager.updateConfig(aspectRatio, config.preset ?: "original")
-        }
 
-        // Send frame overlay to JS if available
-        val frameBase64 = _project.value?.config?.frame
-        if (frameBase64 != null && frameBase64 != "__FRAME_SAVED__" && frameBase64.isNotEmpty()) {
-            cameraUVCManager.setFrameOverlay("data:image/png;base64,${if (frameBase64.contains(",")) frameBase64.substringAfter(",") else frameBase64}")
-        } else {
-            cameraUVCManager.setFrameOverlay(null)
-        }
-
-        cameraUVCManager.capturePhoto { base64DataUrl ->
+        // Capture from the currently active camera source
+        val captureCallback: (String?) -> Unit = { base64DataUrl ->
             if (base64DataUrl == null) {
                 Log.e(TAG, "Capture returned null from camera engine")
-                return@capturePhoto
+                return@captureCallback
             }
 
-            Log.i(TAG, "doCapture: Photo captured (${base64DataUrl.length} chars)")
-            handleCapturedPhoto(base64DataUrl)
+            Log.i(TAG, "doCapture: Raw photo captured (${base64DataUrl.length} chars)")
+
+            // ═══════════════════════════════════════════════════════
+            // POST-PROCESS: Apply frame overlay + filter + crop
+            // This processes the raw camera capture and applies:
+            // 1. Center-crop to project aspect ratio
+            // 2. Filter preset (studio, cinematic, etc.)
+            // 3. Frame overlay (if selected by admin)
+            // ═══════════════════════════════════════════════════════
+            val processedDataUrl = if (config != null) {
+                processPhotoWithFrame(base64DataUrl, config)
+            } else {
+                Log.w(TAG, "doCapture: No config — sending raw photo without frame")
+                base64DataUrl
+            }
+
+            handleCapturedPhoto(processedDataUrl)
+        }
+
+        if (_activeCameraEngine.value == "camera2") {
+            camera2Manager.capturePhoto(captureCallback)
+        } else {
+            cameraUVCManager.capturePhoto(captureCallback)
+        }
+    }
+
+    /**
+     * Process a raw captured photo:
+     * 1. Decode base64 → Bitmap
+     * 2. Center-crop to project aspect ratio
+     * 3. Apply filter preset (studio, cinematic, etc.)
+     * 4. Overlay frame bitmap (if any)
+     * 5. Encode back to base64 data URL
+     */
+    private fun processPhotoWithFrame(rawDataUrl: String, config: ProjectConfig): String {
+        try {
+            // Decode the raw photo
+            val pureBase64 = if (rawDataUrl.contains(",")) rawDataUrl.substringAfter(",") else rawDataUrl
+            val photoBytes = Base64.decode(pureBase64, Base64.DEFAULT)
+            val sourceBitmap = BitmapFactory.decodeByteArray(photoBytes, 0, photoBytes.size)
+
+            if (sourceBitmap == null) {
+                Log.e(TAG, "processPhotoWithFrame: Failed to decode raw photo bitmap")
+                return rawDataUrl
+            }
+
+            Log.i(TAG, "processPhotoWithFrame: source=${sourceBitmap.width}x${sourceBitmap.height}, frame=${_frameBitmap.value != null}, preset=${config.preset}")
+
+            // Process: crop + filter + frame overlay
+            val processedBitmap = CameraCapture.processFrame(
+                sourceBitmap = sourceBitmap,
+                config = config,
+                frameBitmap = _frameBitmap.value
+            )
+
+            // Convert back to base64 data URL
+            val resultDataUrl = CameraCapture.bitmapToBase64(processedBitmap, 95)
+
+            Log.i(TAG, "processPhotoWithFrame: output=${processedBitmap.width}x${processedBitmap.height} (${resultDataUrl.length} chars)")
+
+            // Recycle bitmaps
+            if (sourceBitmap != processedBitmap) {
+                sourceBitmap.recycle()
+            }
+            processedBitmap.recycle()
+
+            return resultDataUrl
+
+        } catch (e: Exception) {
+            Log.e(TAG, "processPhotoWithFrame: Failed — sending raw photo: ${e.message}")
+            return rawDataUrl
         }
     }
 
     /**
      * Handle a captured photo (base64 data URL from camera engine).
-     * v10: No WebView/JS processing — native capture returns base64 directly.
-     * v10: Photos NOT saved on operator device — only sent via socket.
+     * v31: Photos saved locally via PhotoSaver AND sent via socket.
      */
     private fun handleCapturedPhoto(base64DataUrl: String) {
         val mode = _project.value?.config?.mode
@@ -413,6 +575,37 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         val currentPhotos = _capturedPhotos.value.toMutableList()
         currentPhotos.add(base64DataUrl)
         _capturedPhotos.value = currentPhotos
+
+        // Save photo locally to Pictures/Saatiril/{folderName}/
+        val photoIndex = currentPhotos.size
+        val poseName = if (photosPerSession > 1) {
+            if (photoIndex == 1) "Toga" else "Ijazah"
+        } else ""
+        val filename = FilenameUtils.buildStandardFilename(
+            nim = target.nim,
+            nama = target.nama,
+            suffix = photoIndex,
+            type = poseName
+        )
+        val projectName = _project.value?.name ?: "Saatiril"
+        val targetFolder = _project.value?.config?.targetFolder ?: ""
+
+        try {
+            val savedName = PhotoSaver.savePhoto(
+                context = getApplication(),
+                base64Data = base64DataUrl,
+                filename = filename,
+                projectName = projectName,
+                targetFolder = targetFolder
+            )
+            if (savedName != null) {
+                Log.i(TAG, "handleCapturedPhoto: Photo saved locally as $savedName")
+            } else {
+                Log.w(TAG, "handleCapturedPhoto: Local save failed — photo still sent via socket")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "handleCapturedPhoto: Local save error: ${e.message}")
+        }
 
         Log.i(TAG, "handleCapturedPhoto: photo ${currentPhotos.size}/${photosPerSession} captured for ${target.nama}")
 
@@ -995,7 +1188,10 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         cancelTimer()
         cameraConnectedCollector?.cancel()
         cameraTypeCollector?.cancel()
+        camera2ConnectedCollector?.cancel()
+        camera2TypeCollector?.cancel()
         socketManager.destroy()
         cameraUVCManager.destroy()
+        camera2Manager.destroy()
     }
 }

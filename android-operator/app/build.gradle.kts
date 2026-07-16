@@ -11,8 +11,8 @@ android {
         applicationId = "com.saatiril.operator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 30
-        versionName = "1.0.30-exact-v18-revert"
+        versionCode = 31
+        versionName = "1.0.31-frame-filter-camera2-lan"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

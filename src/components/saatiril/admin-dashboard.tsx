@@ -873,34 +873,28 @@ export default function AdminDashboard() {
       <CardContent className="flex flex-col gap-3">
         {/* Chrome Flag instruction for Operator — ALWAYS shown (not just Electron) */}
         <div className="rounded-md p-3 text-xs" style={{ backgroundColor: '#f59e0b15', border: '1px solid #f59e0b33', color: '#fde68a' }}>
-          <p className="font-semibold mb-1.5" style={{ color: GOLD }}>📱 Instruksi Lengkap untuk Operator Kamera (HP + USB Capture Card):</p>
-          <p className="mb-1.5">Untuk menggunakan kamera USB HDMI capture card di HP Android via Chrome:</p>
+          <p className="font-semibold mb-1.5" style={{ color: GOLD }}>📱 Instruksi Lengkap untuk Operator Kamera (Android + USB Capture Card):</p>
+          <p className="mb-1.5">Untuk menggunakan kamera USB HDMI capture card di HP Android:</p>
           <ol className="space-y-1 pl-1">
-            <li><strong>1. Aktifkan USB OTG</strong> — Buka Pengaturan → Setelan tambahan → OTG → Aktifkan (Xiaomi/Redmi)</li>
+            <li><strong>1. Aktifkan USB OTG</strong> — Buka Pengaturan → Cari "OTG" → Aktifkan (beberapa HP menyebutnya "USB Host" atau "Koneksi USB")</li>
             <li><strong>2. Hubungkan USB capture card</strong> ke HP menggunakan kabel OTG. Pastikan HDMI terhubung ke kamera DSLR</li>
             <li><strong>3. Periksa notifikasi USB</strong> — Saat colok USB, akan muncul notifikasi. Tap dan izinkan akses</li>
-            <li><strong>4. Izinkan akses kamera Chrome</strong> — Pengaturan → Aplikasi → Chrome → Izin → Kamera → Izinkan</li>
-            <li><strong>5. Aktifkan Chrome Flag</strong> (wajib untuk HTTP LAN):
-              <br />Buka tab baru → ketik <code className="px-1.5 py-0.5 rounded font-mono" style={{ backgroundColor: '#00000044' }}>chrome://flags</code>
-              <br />Cari <code className="px-1.5 py-0.5 rounded font-mono" style={{ backgroundColor: '#00000044' }}>insecure origin</code>
-              <br />Pada "Insecure origins treated as secure", masukkan:
-              <br /><code className="px-1.5 py-0.5 rounded font-mono" style={{ backgroundColor: '#00000044', color: GOLD }}>http://{lanIP || window.location.hostname || '192.168.x.x'}:{lanInfo?.httpPort ?? 3000}</code>
-              <br />Pilih <strong>Enabled</strong> → Tap <strong>Relaunch</strong></li>
-            <li><strong>6. Buka link operator</strong> — Scan QR Code "🔌 Chrome + USB" di bawah, atau ketik link-nya</li>
-            <li><strong>7. Izinkan akses kamera</strong> — Saat diminta, tap "Izinkan" untuk akses kamera</li>
-            <li><strong>8. Pilih kamera USB</strong> — Di halaman operator, pilih kamera yang bertanda 🔌 USB</li>
+            <li><strong>4. Izinkan akses kamera</strong> — Pengaturan → Aplikasi → Saatiril Operator → Izin → Kamera → Izinkan</li>
+            <li><strong>5. Buka aplikasi Saatiril Operator</strong> — Scan QR Code "📱 APK Android" di bawah, atau download dan install APK-nya</li>
+            <li><strong>6. Pilih kamera USB</strong> — Di halaman operator, pilih kamera yang bertanda 🔌 USB dari daftar kamera yang tersedia</li>
           </ol>
           <div className="mt-2 p-2 rounded" style={{ backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
             <p className="font-semibold" style={{ color: '#f87171' }}>⚠️ Jika USB capture card tidak terdeteksi:</p>
             <ul className="space-y-0.5 mt-1 pl-3" style={{ color: '#fca5a5' }}>
-              <li>• Cek apakah kamera HP (bawaan) bisa melihat USB capture card → Buka app Kamera HP</li>
-              <li>• Jika muncul di Kamera HP tapi tidak di Chrome → Chrome Flag belum aktif atau belum relaunch</li>
+              <li>• Pastikan USB OTG sudah aktif di Pengaturan HP</li>
               <li>• Cabut dan pasang ulang USB capture card</li>
-              <li>• Tutup Chrome sepenuhnya (swipe close) lalu buka kembali</li>
-              <li>• Pastikan tidak ada app lain yang menggunakan USB camera</li>
+              <li>• Tutup aplikasi sepenuhnya (swipe close) lalu buka kembali</li>
+              <li>• Pastikan tidak ada aplikasi lain yang menggunakan USB camera</li>
+              <li>• Coba gunakan kabel OTG yang berbeda</li>
+              <li>• Jika masih tidak terdeteksi, gunakan kamera HP (depan/belakang) sebagai alternatif</li>
             </ul>
           </div>
-          <p className="mt-2 opacity-70">MC tidak perlu Chrome Flag (tidak butuh kamera). Hanya Operator yang perlu.</p>
+          <p className="mt-2 opacity-70">MC tidak perlu USB OTG (tidak butuh kamera). Hanya Operator yang perlu.</p>
         </div>
         {/* Session Password Display */}
         {currentProject?.config?.sessionPassword && currentProject.config.sessionPassword !== '__PASSWORD_SET__' && (
