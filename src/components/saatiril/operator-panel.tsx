@@ -557,7 +557,9 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   // ── Socket: MC_CALL ─────────────────────────────────────────────────────
   useEffect(() => {
     const handleMcCall = (data: McCallData) => {
-      if (data.channel !== myChannelRef.current) return
+      // In photoshoot mode: accept MC_CALL from ANY channel (both operators see it)
+      // In non-photoshoot mode: only accept MC_CALL for our channel
+      if (!photoshoot && data.channel !== myChannelRef.current) return
       console.log('[SAATIRIL OP] MC_CALL received:', data.student.nama, 'status:', data.student.status, 'Ch.', data.channel)
       if (photoshoot) {
         // REPLACE any existing buffer entry for this student instead of
@@ -582,7 +584,9 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   // photoHistory entry on this channel, and set status to 'pending' locally.
   useEffect(() => {
     const handleStudentReset = (data: { studentId: string; channel: number }) => {
-      if (data.channel !== myChannelRef.current) return
+      // In photoshoot mode: accept from any channel (matching APK behavior)
+      // In non-photoshoot mode: only accept for our channel
+      if (!photoshoot && data.channel !== myChannelRef.current) return
       console.log('[SAATIRIL OP] STUDENT_RESET received — clearing for retake:', data.studentId, 'Ch.', data.channel)
 
       // 1. Drop from mcCallBuffer

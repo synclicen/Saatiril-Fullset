@@ -852,6 +852,8 @@ let workingCameras = [] // cameras that produce non-black frames
 let capturePhase = 'standby' // standby | ready-1 | ready-2 | sending
 let currentTarget = null
 let capturedPhotos = [] // { label: string, dataUrl: string }
+let mcCallBuffer = [] // Buffer for MC_CALL in photoshoot mode (operator selects manually)
+let photoHistory = [] // Track which students have been photographed by this operator
 let shutterMode = 'manual'
 let timerCountdown = 0
 let timerInterval = null
@@ -870,6 +872,13 @@ let pingInterval = null
 
 // USB detection
 let usbCameraDetected = false
+
+// Capture mode helpers (matching APK's CameraModes)
+function isPhotoshootMode(mode) { return mode === 'single-photoshoot' || mode === 'dual-photoshoot' }
+function isDualMode(mode) { return mode === 'dual' || mode === 'dual-photoshoot' }
+function photosPerSession(mode) { return isPhotoshootMode(mode) ? 1 : 2 }
+function channelCount(mode) { return isDualMode(mode) ? 2 : 1 }
+function isActiveStatus(status) { return status?.startsWith('active') }
 
 // ── SHA-256 Hash ─────────────────────────────────────────────────────────
 async function sha256(text) {
@@ -2413,6 +2422,8 @@ function handleDisconnect() {
     socket = null
   }
   stopLatencyPing()
+  mcCallBuffer = [] // Clear buffer on disconnect
+  photoHistory = [] // Clear photo history on disconnect
   document.getElementById('connectionScreen').classList.remove('hidden')
   document.getElementById('operatorScreen').classList.remove('active')
   setConnectionState('disconnected')
@@ -2437,31 +2448,68 @@ function handleLanMessage(payload) {
     case 'MC_CALL': {
       const data = payload.data
       console.log('[OP] MC_CALL received:', data)
-      if (data.channel === myChannel) {
-        // If camera is not available, try auto-detect
-        if (!cameraAvailable || !currentStream) {
-          console.log('[OP] Camera not ready when MC_CALL received — triggering auto-detect')
-          autoDetectBestCamera()
+      const mode = currentProject?.config?.mode
+      const isPs = isPhotoshootMode(mode)
+      
+      // In photoshoot mode: accept MC_CALL from ANY channel (both operators see it)
+      // In non-photoshoot mode: only accept MC_CALL for our channel
+      if (!isPs && data.channel !== myChannel) break
+      
+      // If camera is not available, try auto-detect
+      if (!cameraAvailable || !currentStream) {
+        console.log('[OP] Camera not ready when MC_CALL received — triggering auto-detect')
+        autoDetectBestCamera()
+      }
+      
+      if (isPs) {
+        // Photoshoot mode: add to buffer — operator selects manually
+        const student = data.student || data
+        if (student && student.id) {
+          // Remove duplicate, then add to front
+          const buffer = mcCallBuffer.filter(s => s.id !== student.id)
+          mcCallBuffer = [student, ...buffer]
+          console.log('[OP] MC_CALL added to mcCallBuffer, buffer size:', mcCallBuffer.length)
         }
+      } else {
+        // Non-photoshoot mode: auto-set target
         currentTarget = data.student || data
         capturedPhotos = []
         capturePhase = 'ready-1'
-        updateTargetDisplay()
-        updateCaptureButton()
       }
+      updateQueueList()
+      updateTargetDisplay()
+      updateCaptureButton()
       break
     }
     
     case 'STUDENT_RESET': {
       const data = payload.data
       console.log('[OP] STUDENT_RESET received:', data)
-      if (data.channel === myChannel || (currentTarget && currentTarget.id === data.studentId)) {
+      const mode = currentProject?.config?.mode
+      const isPs = isPhotoshootMode(mode)
+      
+      // In photoshoot mode: accept from any channel
+      // In non-photoshoot mode: only accept for our channel
+      if (!isPs && data.channel !== myChannel) break
+      
+      if (currentTarget && currentTarget.id === data.studentId) {
         currentTarget = null
         capturedPhotos = []
         capturePhase = 'standby'
-        updateTargetDisplay()
-        updateCaptureButton()
       }
+      
+      // Remove from mcCallBuffer
+      mcCallBuffer = mcCallBuffer.filter(s => s.id !== data.studentId)
+      
+      // Update local DB status
+      if (currentProject?.database) {
+        const student = currentProject.database.find(s => s.id === data.studentId)
+        if (student) student.status = 'pending'
+      }
+      
+      updateQueueList()
+      updateTargetDisplay()
+      updateCaptureButton()
       break
     }
     
@@ -2482,19 +2530,35 @@ function handleLanMessage(payload) {
             frameImg.classList.add('hidden')
           }
         }
+        
+        // Clean mcCallBuffer: only keep students that still exist in DB with 'sent' status
+        if (project.database) {
+          const dbIds = new Set(project.database.map(s => s.id))
+          mcCallBuffer = mcCallBuffer.filter(s => dbIds.has(s.id))
+          // Also remove students already done or already photographed
+          mcCallBuffer = mcCallBuffer.filter(s => {
+            const dbStudent = project.database.find(db => db.id === s.id)
+            if (!dbStudent) return false
+            if (dbStudent.status === 'done') return false
+            if (photoHistory.some(ph => ph.studentId === s.id)) return false
+            return true
+          })
+        }
+        
         updateQueueList()
         
-        // Recover target if there's an active student on our channel
-        const activeStudent = project.database?.find(s => 
-          s.assignedChannel === myChannel && 
-          (s.status === `active_${myChannel}` || s.status?.startsWith('active'))
-        )
-        if (activeStudent && !currentTarget) {
-          currentTarget = activeStudent
-          capturePhase = capturedPhotos.length === 0 ? 'ready-1' : 
-                         capturedPhotos.length === 1 ? 'ready-2' : 'standby'
-          updateTargetDisplay()
-          updateCaptureButton()
+        // Recover target if there's an active student on our channel (NON-PHOTOSHOOT only)
+        if (!isPhotoshootMode(project.config?.mode)) {
+          const activeStudent = project.database?.find(s => 
+            s.assignedChannel === myChannel && isActiveStatus(s.status)
+          )
+          if (activeStudent && !currentTarget) {
+            currentTarget = activeStudent
+            capturedPhotos = []
+            capturePhase = 'ready-1'
+            updateTargetDisplay()
+            updateCaptureButton()
+          }
         }
       }
       break
@@ -2517,7 +2581,7 @@ function handleLanMessage(payload) {
 function updateTargetDisplay() {
   const info = document.getElementById('targetInfo')
   const dots = document.getElementById('photoDots')
-  const isPhotoshoot = currentProject?.config?.mode?.includes('photoshoot')
+  const isPs = isPhotoshootMode(currentProject?.config?.mode)
   
   if (currentTarget && capturePhase !== 'standby') {
     info.classList.remove('hidden')
@@ -2525,7 +2589,7 @@ function updateTargetDisplay() {
     document.getElementById('targetNim').textContent = currentTarget.nim || '-'
     const phaseEl = document.getElementById('targetPhase')
     // In photoshoot mode: just "SIAP FOTO", non-photoshoot: "SIAP FOTO 1/2"
-    if (isPhotoshoot) {
+    if (isPs) {
       phaseEl.textContent = capturePhase === 'ready-1' ? 'SIAP FOTO' :
                             capturePhase === 'sending' ? 'MENGIRIM...' : 'STANDBY'
     } else {
@@ -2538,7 +2602,7 @@ function updateTargetDisplay() {
     info.classList.add('hidden')
   }
   
-  if (currentTarget && !isPhotoshoot && capturePhase !== 'standby') {
+  if (currentTarget && !isPs && capturePhase !== 'standby') {
     dots.classList.remove('hidden')
     document.getElementById('dot1').className = 'photo-dot' + (capturedPhotos.length >= 1 ? ' done' : (capturePhase === 'ready-1' ? ' current' : ''))
     document.getElementById('dot2').className = 'photo-dot' + (capturedPhotos.length >= 2 ? ' done' : (capturePhase === 'ready-2' ? ' current' : ''))
@@ -2568,8 +2632,8 @@ function updateTopBarDisplay() {
   modeEl.textContent = modeNames[mode] || mode
   
   if (currentTarget && capturePhase !== 'standby') {
-    const isPhotoshoot = mode?.includes('photoshoot')
-    const phaseText = isPhotoshoot ? 'Siap Foto' : 
+    const isPs = isPhotoshootMode(mode)
+    const phaseText = isPs ? 'Siap Foto' : 
                      (capturePhase === 'ready-1' ? 'Toga' : 
                       capturePhase === 'ready-2' ? 'Ijazah' : 
                       capturePhase === 'sending' ? 'Kirim' : '')
@@ -2585,11 +2649,11 @@ function updateCaptureButton() {
   const barBtn = document.getElementById('captureBarBtn')
   if (!barBtn) return
   
-  const isPhotoshoot = currentProject?.config?.mode?.includes('photoshoot')
+  const isPs = isPhotoshootMode(currentProject?.config?.mode)
   const progressDots = document.getElementById('progressDots')
   
   // Show progress dots for non-photoshoot modes
-  if (!isPhotoshoot && capturePhase !== 'standby') {
+  if (!isPs && capturePhase !== 'standby') {
     progressDots.style.display = 'flex'
     document.getElementById('pdot1').className = 'progress-dot' + (capturedPhotos.length >= 1 ? ' done' : (capturePhase === 'ready-1' ? ' current' : ''))
     document.getElementById('pdot2').className = 'progress-dot' + (capturedPhotos.length >= 2 ? ' done' : (capturePhase === 'ready-2' ? ' current' : ''))
@@ -2606,13 +2670,13 @@ function updateCaptureButton() {
     barBtn.innerHTML = '✕ BATAL (' + timerCountdown + ')'
     barBtn.disabled = false
   } else if (capturePhase === 'ready-1') {
-    const isPhotoshoot = currentProject?.config?.mode?.includes('photoshoot')
+    const isPsReady = isPhotoshootMode(currentProject?.config?.mode)
     barBtn.className = 'capture-bar-btn ready-1'
-    const label = isPhotoshoot ? '📷 FOTO' : '📷 FOTO 1 — TOGA'
+    const label = isPsReady ? '📷 FOTO' : '📷 FOTO 1 — TOGA'
     barBtn.textContent = label
     barBtn.disabled = false
     // In photoshoot mode, make the button green (like APK)
-    if (isPhotoshoot) {
+    if (isPsReady) {
       barBtn.style.background = '#22c55e'
       barBtn.style.color = '#fff'
     } else {
@@ -2741,16 +2805,17 @@ function doCapture() {
   
   triggerFlash()
   
-  const isPhotoshoot = currentProject?.config?.mode?.includes('photoshoot')
-  const photosPerSession = isPhotoshoot ? 1 : 2  // Match APK: CameraModes.photosPerSession()
-  const label = isPhotoshoot ? 'photo' : 
+  const mode = currentProject?.config?.mode
+  const isPsCapture = isPhotoshootMode(mode)
+  const pps = photosPerSession(mode)  // Match APK: CameraModes.photosPerSession()
+  const label = isPsCapture ? 'photo' : 
                 (capturePhase === 'ready-1' ? 'toga' : 'ijazah')
   
   capturedPhotos.push({ label, dataUrl })
   
   // After capture: if non-photoshoot and only first photo done, advance to READY_2
   // In photoshoot mode, always finalize after 1 photo
-  if (photosPerSession > 1 && capturePhase === 'ready-1') {
+  if (pps > 1 && capturePhase === 'ready-1') {
     capturePhase = 'ready-2'
     updateTargetDisplay()
     updateCaptureButton()
@@ -2773,12 +2838,13 @@ async function sendPhotos() {
   
   const nim = currentTarget.nim || currentTarget.id
   const nama = currentTarget.nama || 'Unknown'
-  const isPhotoshoot = currentProject?.config?.mode?.includes('photoshoot')
+  const mode = currentProject?.config?.mode
+  const isPsSend = isPhotoshootMode(mode)
   const channel = myChannel
   
   const photos = capturedPhotos.map((p, i) => {
     let filename
-    if (isPhotoshoot) {
+    if (isPsSend) {
       filename = channel === 1 ? `${nim}_${nama}.jpg` : `${nim}_${nama}_Ch${channel}.jpg`
     } else {
       const suffix = p.label === 'toga' ? '1_Toga' : '2_Ijazah'
@@ -2828,9 +2894,28 @@ async function sendPhotos() {
     }
   })
   
+  // Update photoHistory
+  photoHistory.push({
+    studentId: currentTarget.id,
+    nim: nim,
+    nama: nama,
+    channel: channel,
+    timestamp: Date.now()
+  })
+  
+  // Remove from mcCallBuffer
+  mcCallBuffer = mcCallBuffer.filter(s => s.id !== currentTarget.id)
+  
+  // Update local DB status to done
+  if (currentProject?.database) {
+    const dbStudent = currentProject.database.find(s => s.id === currentTarget.id)
+    if (dbStudent) dbStudent.status = 'done'
+  }
+  
   capturedPhotos = []
   currentTarget = null
   capturePhase = 'standby'
+  updateQueueList()
   updateTargetDisplay()
   updateCaptureButton()
 }
@@ -2880,12 +2965,31 @@ function renderGridline() {
 function updateQueueList() {
   if (!currentProject?.database) return
   
-  const isPhotoshoot = currentProject.config?.mode?.includes('photoshoot')
+  const mode = currentProject.config?.mode
+  const isPs = isPhotoshootMode(mode)
   
-  const relevant = currentProject.database.filter(s => {
-    if (isPhotoshoot) return true
-    return s.assignedChannel === myChannel || s.status === `active_${myChannel}`
-  })
+  let relevant = []
+  
+  if (isPs) {
+    // Photoshoot mode: combine "sent" students from DB + mcCallBuffer
+    // Exclude already-photographed (photoHistory) and done students
+    const sentStudents = currentProject.database.filter(s => {
+      if (s.status === 'done') return false
+      if (photoHistory.some(ph => ph.studentId === s.id)) return false
+      // Include students with 'sent' status (MC called them)
+      return s.status === 'sent' || isActiveStatus(s.status)
+    })
+    // Add mcCallBuffer students (may overlap with DB — dedupe)
+    const sentIds = new Set(sentStudents.map(s => s.id))
+    const bufferOnly = mcCallBuffer.filter(s => !sentIds.has(s.id))
+    // Merge: DB students first, then buffer-only
+    relevant = [...sentStudents, ...bufferOnly]
+  } else {
+    // Non-photoshoot mode: just show channel students
+    relevant = currentProject.database.filter(s => 
+      s.assignedChannel === myChannel || s.status === `active_${myChannel}`
+    )
+  }
   
   const statusPriority = { active_1: 0, active_2: 0, sent: 1, pending: 2, done: 3 }
   relevant.sort((a, b) => (statusPriority[a.status] ?? 9) - (statusPriority[b.status] ?? 9))
@@ -2894,7 +2998,11 @@ function updateQueueList() {
   const titleEl = document.getElementById('queuePanelTitle')
   if (titleEl) {
     const remaining = relevant.filter(s => s.status !== 'done').length
-    titleEl.textContent = `Antrean: ${remaining} • Ch.${myChannel}`
+    if (isPs) {
+      titleEl.textContent = `Antre dari MC (${mcCallBuffer.length + relevant.filter(s => s.status === 'sent').length})`
+    } else {
+      titleEl.textContent = `Cari Antrean (${remaining}) • Ch.${myChannel}`
+    }
   }
   
   // Render tabular queue (like APK)
@@ -3055,9 +3163,15 @@ function renderOpSearchResults() {
     return
   }
   
-  const isPhotoshoot = currentProject.config?.mode?.includes('photoshoot')
+  const mode = currentProject.config?.mode
+  const isPsSearch = isPhotoshootMode(mode)
   let students = currentProject.database.filter(s => {
-    if (isPhotoshoot) return true
+    if (isPsSearch) {
+      // In photoshoot mode, show all students except done
+      if (s.status === 'done') return false
+      if (photoHistory.some(ph => ph.studentId === s.id)) return false
+      return true
+    }
     return s.assignedChannel === myChannel || s.status === `active_${myChannel}`
   })
   
@@ -3082,7 +3196,7 @@ function renderOpSearchResults() {
     
     let statusLabel = ''
     let statusColor = 'var(--muted)'
-    if (!isPhotoshoot) {
+    if (!isPsSearch) {
       if (isActive) { statusLabel = 'Foto'; statusColor = 'var(--gold)' }
       else if (isSent) { statusLabel = 'Kirim'; statusColor = 'rgba(212,175,55,0.7)' }
       else if (isDone) { statusLabel = 'OK'; statusColor = 'var(--success)' }
@@ -3101,9 +3215,12 @@ function selectOpSearchItem(studentId) {
   if (!currentProject?.database) return
   const student = currentProject.database.find(s => s.id === studentId)
   if (student && student.status !== 'done') {
+    // Remove from mcCallBuffer when selected (like APK)
+    mcCallBuffer = mcCallBuffer.filter(s => s.id !== studentId)
     currentTarget = student
     capturedPhotos = []
     capturePhase = 'ready-1'
+    updateQueueList()
     updateTargetDisplay()
     updateCaptureButton()
     updateTargetInfoPanel()
@@ -3121,10 +3238,10 @@ function updateTargetInfoPanel() {
     if (tbName) tbName.textContent = currentTarget.nama || '-'
     if (tbNim) tbNim.textContent = currentTarget.nim || '-'
     
-    const isPhotoshoot = currentProject?.config?.mode?.includes('photoshoot')
+    const isPsPanel = isPhotoshootMode(currentProject?.config?.mode)
     
     if (capturePhase === 'ready-1') {
-      if (tbBadge) { tbBadge.className = 'tb-badge toga'; tbBadge.textContent = isPhotoshoot ? 'Siap Foto' : 'Toga'; }
+      if (tbBadge) { tbBadge.className = 'tb-badge toga'; tbBadge.textContent = isPsPanel ? 'Siap Foto' : 'Toga'; }
     } else if (capturePhase === 'ready-2') {
       if (tbBadge) { tbBadge.className = 'tb-badge ijazah'; tbBadge.textContent = 'Ijazah'; }
     } else if (capturePhase === 'sending') {
@@ -3141,14 +3258,18 @@ function updateTargetInfoPanel() {
 
 function selectQueueItem(studentId) {
   if (!currentProject?.database) return
-  const isPhotoshoot = currentProject.config?.mode?.includes('photoshoot')
-  if (!isPhotoshoot) return
+  const mode = currentProject.config?.mode
+  const isPsQueue = isPhotoshootMode(mode)
+  if (!isPsQueue) return
   
   const student = currentProject.database.find(s => s.id === studentId)
   if (student && student.status !== 'done') {
+    // Remove from mcCallBuffer when selected (like APK)
+    mcCallBuffer = mcCallBuffer.filter(s => s.id !== studentId)
     currentTarget = student
     capturedPhotos = []
     capturePhase = 'ready-1'
+    updateQueueList()
     updateTargetDisplay()
     updateCaptureButton()
   }
