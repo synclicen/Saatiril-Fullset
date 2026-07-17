@@ -398,11 +398,10 @@ export default function AdminDashboard() {
     [lanInfo],
   )
 
-  // ── Generate operator.html link (for Chrome on Android with USB capture card) ──
-  // This generates a direct link to /operator.html which works in Chrome
-  // and supports USB HDMI video capture cards natively via getUserMedia.
-  const generateOperatorHtmlLink = useCallback(
-    async (channel: number): Promise<string> => {
+  // ── Generate APK download link ──────────────────────────────────
+  // Provides a direct download link for the Saatiril Operator Android APK.
+  const generateApkLink = useCallback(
+    async (): Promise<string> => {
       const api = window.saatirilAPI
       const isElectron = api?.isElectron
 
@@ -411,14 +410,12 @@ export default function AdminDashboard() {
           const info = lanInfo || (await api.getLanInfo())
           const ips = info.ips
           const lanIP = ips.length > 0 ? ips[0].address : 'localhost'
-          return `http://${lanIP}:${info.httpPort}/operator.html?role=operator&channel=${channel}&socketPort=${info.socketPort}`
+          return `http://${lanIP}:${info.httpPort}/saatiril-operator.apk`
         } catch {
           const hostname = window.location.hostname
-          const socketPort = new URLSearchParams(window.location.search).get('socketPort') || '3003'
-          return `http://${hostname}:3000/operator.html?role=operator&channel=${channel}&socketPort=${socketPort}`
+          return `http://${hostname}:3000/saatiril-operator.apk`
         }
       } else {
-        const socketPort = new URLSearchParams(window.location.search).get('socketPort') || '3003'
         let origin = window.location.origin
 
         const hostname = window.location.hostname
@@ -452,7 +449,7 @@ export default function AdminDashboard() {
           }
         }
 
-        return `${origin}/operator.html?role=operator&channel=${channel}&socketPort=${socketPort}`
+        return `${origin}/saatiril-operator.apk`
       }
     },
     [lanInfo],
@@ -470,21 +467,21 @@ export default function AdminDashboard() {
     [generateLink],
   )
 
-  // ── Show operator.html QR code (Chrome + USB capture card) ─────────
-  const showOperatorHtmlQrCode = useCallback(
-    async (channel: number) => {
-      const url = await generateOperatorHtmlLink(channel)
+  // ── Show APK download QR code ────────────────────────────────────
+  const showApkQrCode = useCallback(
+    async () => {
+      const url = await generateApkLink()
       setQrLink(url)
-      setQrLabel(`Operator ${channel} (Chrome + USB)`)
+      setQrLabel('APK Saatiril Android')
       setQrDialogOpen(true)
     },
-    [generateOperatorHtmlLink],
+    [generateApkLink],
   )
 
-  // ── Copy operator.html link ────────────────────────────────────────
-  const copyOperatorHtmlLink = useCallback(
-    async (channel: number) => {
-      const url = await generateOperatorHtmlLink(channel)
+  // ── Copy APK download link ────────────────────────────────────────
+  const copyApkLink = useCallback(
+    async () => {
+      const url = await generateApkLink()
       try {
         if (navigator.clipboard) {
           await navigator.clipboard.writeText(url)
@@ -497,8 +494,8 @@ export default function AdminDashboard() {
           document.body.removeChild(textarea)
         }
         toast({
-          title: 'Link Chrome Operator disalin!',
-          description: `Operator ${channel} (Chrome + USB) — ${url}`,
+          title: 'Link APK disalin!',
+          description: `APK Saatiril Android — ${url}`,
         })
       } catch {
         toast({
@@ -508,7 +505,7 @@ export default function AdminDashboard() {
         })
       }
     },
-    [toast, generateOperatorHtmlLink],
+    [toast, generateApkLink],
   )
 
   // ── Copy link handler ────────────────────────────────────────────
@@ -873,14 +870,14 @@ export default function AdminDashboard() {
       <CardContent className="flex flex-col gap-3">
         {/* ── Section A: APK Android (Native App) ── */}
         <div className="rounded-md p-3 text-xs" style={{ backgroundColor: '#22c55e15', border: '1px solid #22c55e33', color: '#86efac' }}>
-          <p className="font-semibold mb-1.5" style={{ color: '#4ade80' }}>📱 Opsi 1 — APK Android (Native App):</p>
-          <p className="mb-1.5 opacity-80">Cara paling mudah. Tidak perlu Chrome Flag. Langsung install dan jalankan.</p>
+          <p className="font-semibold mb-1.5" style={{ color: '#4ade80' }}>📱 Operator Android — APK Saatiril:</p>
+          <p className="mb-1.5 opacity-80">Cara paling mudah untuk operator kamera di HP Android. Tidak perlu Chrome Flag. Langsung install dan jalankan.</p>
           <ol className="space-y-1 pl-1">
-            <li><strong>1. Aktifkan USB OTG</strong> — Buka Pengaturan → Cari "OTG" → Aktifkan (beberapa HP menyebutnya "USB Host" atau "Koneksi USB")</li>
-            <li><strong>2. Hubungkan USB capture card</strong> ke HP menggunakan kabel OTG. Pastikan HDMI terhubung ke kamera DSLR</li>
-            <li><strong>3. Periksa notifikasi USB</strong> — Saat colok USB, akan muncul notifikasi. Tap dan izinkan akses</li>
-            <li><strong>4. Izinkan akses kamera</strong> — Pengaturan → Aplikasi → Saatiril Operator → Izin → Kamera → Izinkan</li>
-            <li><strong>5. Download & install APK</strong> — Scan QR Code "📱 APK Android" di bawah, atau download dan install APK-nya</li>
+            <li><strong>1. Download & install APK</strong> — Gunakan tombol "📱 APK Android" di bawah untuk download, salin link, atau scan QR Code</li>
+            <li><strong>2. Aktifkan USB OTG</strong> — Buka Pengaturan → Cari "OTG" → Aktifkan (beberapa HP menyebutnya "USB Host" atau "Koneksi USB")</li>
+            <li><strong>3. Hubungkan USB capture card</strong> ke HP menggunakan kabel OTG. Pastikan HDMI terhubung ke kamera DSLR</li>
+            <li><strong>4. Periksa notifikasi USB</strong> — Saat colok USB, akan muncul notifikasi. Tap dan izinkan akses</li>
+            <li><strong>5. Izinkan akses kamera</strong> — Pengaturan → Aplikasi → Saatiril Operator → Izin → Kamera → Izinkan</li>
             <li><strong>6. Buka aplikasi Saatiril Operator</strong> — Pilih kamera USB dari daftar kamera yang tersedia</li>
           </ol>
           <div className="mt-2 p-2 rounded" style={{ backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
@@ -898,7 +895,7 @@ export default function AdminDashboard() {
 
         {/* ── Section B: Google Chrome Browser ── */}
         <div className="rounded-md p-3 text-xs" style={{ backgroundColor: '#f59e0b15', border: '1px solid #f59e0b33', color: '#fde68a' }}>
-          <p className="font-semibold mb-1.5" style={{ color: GOLD }}>💻 Opsi 2 — Google Chrome (PC / Laptop / Android):</p>
+          <p className="font-semibold mb-1.5" style={{ color: GOLD }}>💻 Operator Chrome (PC / Laptop / Android):</p>
           <p className="mb-1.5 opacity-80">Jika menggunakan browser Chrome, WAJIB aktifkan Chrome Flag agar kamera bisa diakses melalui HTTP.</p>
           <ol className="space-y-1 pl-1">
             <li><strong>1. Buka Chrome</strong> — Di PC, laptop, atau HP Android</li>
@@ -912,7 +909,7 @@ export default function AdminDashboard() {
             </li>
             <li><strong>3. Jika di Android</strong> — Aktifkan USB OTG, hubungkan USB capture card via kabel OTG, izinkan akses kamera Chrome di Pengaturan</li>
             <li><strong>4. Jika di PC/Laptop</strong> — Hubungkan USB capture card langsung ke port USB, Chrome akan otomatis mendeteksi</li>
-            <li><strong>5. Buka link Operator</strong> — Gunakan tombol "🔌 Chrome + USB" di bawah untuk mendapatkan link</li>
+            <li><strong>5. Buka link Operator</strong> — Gunakan tombol "Copy Link Operator" di bawah untuk mendapatkan link</li>
             <li><strong>6. Izinkan akses kamera</strong> — Saat diminta oleh Chrome, klik/tap "Izinkan"</li>
           </ol>
           <div className="mt-2 p-2 rounded" style={{ backgroundColor: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)' }}>
@@ -975,21 +972,36 @@ export default function AdminDashboard() {
                 <QrCode className="size-3.5" />
               </Button>
             </div>
-            {/* Chrome + USB Capture Card operator link */}
+            {/* APK Android download section */}
+            <Separator className="bg-[#533485]/40" />
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wider" style={{ color: '#4ade80' }}>
+              APK Saatiril Android
+            </div>
             <div className="flex gap-2">
               <Button
                 variant="outline"
-                className="flex-1 justify-start gap-2 border-[#d4af37]/40 bg-[#2a164a]/80 text-[#d4af37] hover:bg-[#3b2263] hover:text-[#fbbf24]"
-                onClick={() => copyOperatorHtmlLink(1)}
+                className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                onClick={async () => {
+                  const url = await generateApkLink()
+                  window.open(url, '_blank')
+                }}
               >
-                <Camera className="size-3.5" />
-                🔌 Chrome + USB
+                <Download className="size-3.5" />
+                Download APK
               </Button>
               <Button
                 variant="outline"
-                className="shrink-0 gap-1.5 border-[#d4af37]/40 bg-[#2a164a]/80 text-[#d4af37] hover:bg-[#3b2263] hover:text-[#fbbf24]"
-                onClick={() => showOperatorHtmlQrCode(1)}
-                title="QR Code Operator (Chrome + USB Capture Card)"
+                className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                onClick={copyApkLink}
+                title="Salin Link APK"
+              >
+                <Copy className="size-3.5" />
+              </Button>
+              <Button
+                variant="outline"
+                className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                onClick={showApkQrCode}
+                title="QR Code APK Android"
               >
                 <QrCode className="size-3.5" />
               </Button>
@@ -1028,43 +1040,23 @@ export default function AdminDashboard() {
               <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: GOLD }}>
                 Operator Kamera 1
               </div>
-              <div className="flex flex-col gap-2">
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    className="flex-1 justify-start gap-2 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
-                    onClick={() => copyLink('operator', 1)}
-                  >
-                    <Copy className="size-3.5" />
-                    Operator 1
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="shrink-0 gap-1.5 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
-                    onClick={() => showQrCode('operator', 1)}
-                    title="QR Code Operator 1"
-                  >
-                    <QrCode className="size-3.5" />
-                  </Button>
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    className="flex-1 justify-start gap-2 border-[#d4af37]/40 bg-[#2a164a]/80 text-[#d4af37] hover:bg-[#3b2263] hover:text-[#fbbf24]"
-                    onClick={() => copyOperatorHtmlLink(1)}
-                  >
-                    <Camera className="size-3.5" />
-                    🔌 Chrome + USB
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="shrink-0 gap-1.5 border-[#d4af37]/40 bg-[#2a164a]/80 text-[#d4af37] hover:bg-[#3b2263] hover:text-[#fbbf24]"
-                    onClick={() => showOperatorHtmlQrCode(1)}
-                    title="QR Code Operator 1 (Chrome + USB)"
-                  >
-                    <QrCode className="size-3.5" />
-                  </Button>
-                </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1 justify-start gap-2 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
+                  onClick={() => copyLink('operator', 1)}
+                >
+                  <Copy className="size-3.5" />
+                  Operator 1
+                </Button>
+                <Button
+                  variant="outline"
+                  className="shrink-0 gap-1.5 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
+                  onClick={() => showQrCode('operator', 1)}
+                  title="QR Code Operator 1"
+                >
+                  <QrCode className="size-3.5" />
+                </Button>
               </div>
             </div>
 
@@ -1072,43 +1064,61 @@ export default function AdminDashboard() {
               <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: CYAN }}>
                 Operator Kamera 2
               </div>
-              <div className="flex flex-col gap-2">
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    className="flex-1 justify-start gap-2 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
-                    onClick={() => copyLink('operator', 2)}
-                  >
-                    <Copy className="size-3.5" />
-                    Operator 2
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="shrink-0 gap-1.5 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
-                    onClick={() => showQrCode('operator', 2)}
-                    title="QR Code Operator 2"
-                  >
-                    <QrCode className="size-3.5" />
-                  </Button>
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    className="flex-1 justify-start gap-2 border-[#06b6d4]/40 bg-[#2a164a]/80 text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#22d3ee]"
-                    onClick={() => copyOperatorHtmlLink(2)}
-                  >
-                    <Camera className="size-3.5" />
-                    🔌 Chrome + USB
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="shrink-0 gap-1.5 border-[#06b6d4]/40 bg-[#2a164a]/80 text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#22d3ee]"
-                    onClick={() => showOperatorHtmlQrCode(2)}
-                    title="QR Code Operator 2 (Chrome + USB)"
-                  >
-                    <QrCode className="size-3.5" />
-                  </Button>
-                </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1 justify-start gap-2 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
+                  onClick={() => copyLink('operator', 2)}
+                >
+                  <Copy className="size-3.5" />
+                  Operator 2
+                </Button>
+                <Button
+                  variant="outline"
+                  className="shrink-0 gap-1.5 border-[#06b6d4]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#06b6d4]"
+                  onClick={() => showQrCode('operator', 2)}
+                  title="QR Code Operator 2"
+                >
+                  <QrCode className="size-3.5" />
+                </Button>
+              </div>
+            </div>
+
+            <Separator className="bg-[#533485]/40" />
+
+            {/* APK Android download section */}
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: '#4ade80' }}>
+                APK Saatiril Android
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                  onClick={async () => {
+                    const url = await generateApkLink()
+                    window.open(url, '_blank')
+                  }}
+                >
+                  <Download className="size-3.5" />
+                  Download APK
+                </Button>
+                <Button
+                  variant="outline"
+                  className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                  onClick={copyApkLink}
+                  title="Salin Link APK"
+                >
+                  <Copy className="size-3.5" />
+                </Button>
+                <Button
+                  variant="outline"
+                  className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                  onClick={showApkQrCode}
+                  title="QR Code APK Android"
+                >
+                  <QrCode className="size-3.5" />
+                </Button>
               </div>
             </div>
           </div>
@@ -1152,24 +1162,6 @@ export default function AdminDashboard() {
                     className="shrink-0 gap-1.5 border-[#d4af37]/30 bg-[#1a0b2e]/60 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37]"
                     onClick={() => showQrCode('operator', 1)}
                     title="QR Code Operator 1"
-                  >
-                    <QrCode className="size-3.5" />
-                  </Button>
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    className="flex-1 justify-start gap-2 border-[#d4af37]/40 bg-[#2a164a]/80 text-[#d4af37] hover:bg-[#3b2263] hover:text-[#fbbf24]"
-                    onClick={() => copyOperatorHtmlLink(1)}
-                  >
-                    <Camera className="size-3.5" />
-                    🔌 Chrome + USB
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="shrink-0 gap-1.5 border-[#d4af37]/40 bg-[#2a164a]/80 text-[#d4af37] hover:bg-[#3b2263] hover:text-[#fbbf24]"
-                    onClick={() => showOperatorHtmlQrCode(1)}
-                    title="QR Code Operator 1 (Chrome + USB)"
                   >
                     <QrCode className="size-3.5" />
                   </Button>
@@ -1221,24 +1213,44 @@ export default function AdminDashboard() {
                     <QrCode className="size-3.5" />
                   </Button>
                 </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    className="flex-1 justify-start gap-2 border-[#06b6d4]/40 bg-[#2a164a]/80 text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#22d3ee]"
-                    onClick={() => copyOperatorHtmlLink(2)}
-                  >
-                    <Camera className="size-3.5" />
-                    🔌 Chrome + USB
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="shrink-0 gap-1.5 border-[#06b6d4]/40 bg-[#2a164a]/80 text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#22d3ee]"
-                    onClick={() => showOperatorHtmlQrCode(2)}
-                    title="QR Code Operator 2 (Chrome + USB)"
-                  >
-                    <QrCode className="size-3.5" />
-                  </Button>
-                </div>
+              </div>
+            </div>
+
+            <Separator className="bg-[#533485]/40" />
+
+            {/* APK Android download section */}
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: '#4ade80' }}>
+                APK Saatiril Android
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                  onClick={async () => {
+                    const url = await generateApkLink()
+                    window.open(url, '_blank')
+                  }}
+                >
+                  <Download className="size-3.5" />
+                  Download APK
+                </Button>
+                <Button
+                  variant="outline"
+                  className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                  onClick={copyApkLink}
+                  title="Salin Link APK"
+                >
+                  <Copy className="size-3.5" />
+                </Button>
+                <Button
+                  variant="outline"
+                  className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                  onClick={showApkQrCode}
+                  title="QR Code APK Android"
+                >
+                  <QrCode className="size-3.5" />
+                </Button>
               </div>
             </div>
           </div>
