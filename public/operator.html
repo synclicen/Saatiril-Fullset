@@ -209,6 +209,7 @@
     .camera-area {
       flex: 1; position: relative; background: #000; overflow: hidden;
       display: flex; align-items: center; justify-content: center;
+      min-height: 0;
     }
     .camera-area video {
       width: 100%; height: 100%; object-fit: cover;
@@ -287,69 +288,205 @@
     .photo-dot.done { background: var(--gold); }
     .photo-dot.current { background: #facc15; animation: pulse 1s infinite; }
 
-    /* ── Bottom Panel ── */
-    .bottom-panel {
-      flex-shrink: 0; background: var(--panel); border-top: 1px solid var(--border);
-      padding: 8px 12px; display: flex; flex-direction: column; gap: 8px;
+    /* ── Draggable Divider ── */
+    .drag-divider {
+      height: 20px; background: var(--panel); border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border); cursor: ns-resize;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
-    
-    /* Capture controls row */
-    .capture-row { display: flex; align-items: center; gap: 8px; }
-    .shutter-mode-btns { display: flex; gap: 4px; }
-    .shutter-btn {
-      padding: 5px 8px; border-radius: 6px; font-size: 10px; font-weight: 700;
-      background: var(--card); border: 1px solid var(--border); color: var(--muted);
-      cursor: pointer;
+    .drag-divider::after {
+      content: '···'; color: var(--muted); font-size: 12px; letter-spacing: 4px;
     }
-    .shutter-btn.active { border-color: var(--gold); color: var(--gold); background: rgba(212,175,55,0.1); }
-    
-    /* Capture button */
-    .capture-btn {
-      width: 56px; height: 56px; border-radius: 50%; border: 3px solid var(--gold);
-      background: transparent; cursor: pointer; position: relative;
+
+    /* ── Capture bar (full-width button) ── */
+    .capture-bar {
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 8px; background: rgba(42,22,74,0.8); flex-shrink: 0;
+    }
+    .capture-bar-btn {
+      flex: 1; height: 40px; border-radius: 8px; border: none;
+      font-weight: 700; font-size: 13px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 4px;
+      transition: all 0.15s;
+    }
+    .capture-bar-btn.standby {
+      background: rgba(42,22,74,0.5); color: var(--muted); border: 1px solid var(--border);
+      cursor: not-allowed;
+    }
+    .capture-bar-btn.ready-1 {
+      background: var(--gold); color: var(--bg);
+    }
+    .capture-bar-btn.ready-2 {
+      background: #166534; color: #fff;
+    }
+    .capture-bar-btn.sending {
+      background: rgba(42,22,74,0.5); color: var(--muted); border: 1px solid var(--border);
+      cursor: not-allowed;
+    }
+    .capture-bar-btn.cancel-timer {
+      background: var(--danger); color: #fff;
+    }
+    .progress-dots {
+      display: flex; gap: 3px; flex-shrink: 0;
+    }
+    .progress-dot {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--border);
+    }
+    .progress-dot.done { background: var(--success); }
+    .progress-dot.current { background: #facc15; animation: pulse 1s infinite; }
+
+    /* ── Panel area ── */
+    .panel-area {
+      flex: 1; overflow-y: auto; min-height: 0;
+      display: flex; flex-direction: column;
+    }
+    .panel-selector {
+      display: flex; align-items: center; gap: 4px;
+      padding: 2px 8px; flex-shrink: 0; flex-wrap: wrap;
+      border-bottom: 1px solid var(--border);
+    }
+    .panel-selector-label {
+      font-size: 9px; font-weight: 700; color: var(--muted); margin-right: 2px;
+    }
+    .panel-chip {
+      display: flex; align-items: center; gap: 2px;
+      padding: 1px 4px; border-radius: 4px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--card);
+      font-size: 7px; font-weight: 700; color: var(--muted);
+      transition: all 0.15s;
+    }
+    .panel-chip.active {
+      border-color: var(--gold); color: var(--gold); background: rgba(212,175,55,0.2);
+    }
+    .panel-chip .chip-check {
+      font-size: 8px;
+    }
+
+    /* ── Collapsible panel ── */
+    .cpanel {
+      background: var(--card); border: 1px solid var(--border); border-radius: 6px;
+      margin: 4px 8px; overflow: hidden;
+    }
+    .cpanel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 2px 6px; background: rgba(42,22,74,0.5);
+    }
+    .cpanel-title { font-size: 9px; font-weight: 700; color: var(--gold); }
+    .cpanel-close {
+      width: 16px; height: 16px; border: none; background: none;
+      color: var(--muted); font-size: 10px; cursor: pointer; padding: 0;
       display: flex; align-items: center; justify-content: center;
-      transition: all 0.15s; margin: 0 auto;
     }
-    .capture-btn:active { transform: scale(0.92); }
-    .capture-btn.disabled { border-color: var(--border); opacity: 0.4; cursor: not-allowed; }
-    .capture-btn-inner {
-      width: 42px; height: 42px; border-radius: 50%;
-      background: var(--gold); transition: all 0.15s;
+    .cpanel-close:hover { color: var(--danger); }
+    .cpanel-body { padding: 4px; }
+
+    /* ── Target info panel content ── */
+    .target-info-panel .tip-row {
+      display: flex; align-items: center; gap: 6px;
     }
-    .capture-btn.disabled .capture-btn-inner { background: var(--border); }
-    .capture-btn.sending .capture-btn-inner { background: var(--success); }
-    
-    /* Quick toggles row */
-    .toggle-row { display: flex; gap: 6px; justify-content: center; }
-    .toggle-btn {
-      padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 600;
-      background: var(--card); border: 1px solid var(--border); color: var(--muted);
-      cursor: pointer;
+    .target-info-panel .tip-avatar {
+      width: 28px; height: 28px; border-radius: 50%; background: var(--panel);
+      border: 1px solid var(--gold); display: flex; align-items: center; justify-content: center;
+      font-size: 12px; flex-shrink: 0;
     }
-    .toggle-btn.active { border-color: var(--gold); color: var(--gold); }
-    
-    /* Queue list */
-    .queue-section { 
-      max-height: 120px; overflow-y: auto; 
-      background: var(--card); border-radius: 8px; border: 1px solid var(--border);
+    .target-info-panel .tip-name { font-weight: 700; font-size: 12px; color: #fff; }
+    .target-info-panel .tip-nim { font-size: 9px; color: var(--muted); font-family: monospace; }
+    .target-info-panel .tip-badge {
+      font-size: 8px; font-weight: 700; padding: 1px 4px; border-radius: 3px;
     }
-    .queue-header { 
-      padding: 6px 10px; font-size: 10px; font-weight: 700; color: var(--muted);
-      border-bottom: 1px solid var(--border); position: sticky; top: 0;
-      background: var(--card);
+    .tip-badge.toga { background: rgba(212,175,55,0.15); color: var(--gold); }
+    .tip-badge.ijazah { background: rgba(34,197,94,0.15); color: var(--success); }
+    .tip-badge.sending { background: rgba(196,181,253,0.15); color: var(--muted); }
+    .tip-badge.standby { background: rgba(196,181,253,0.15); color: var(--muted); }
+
+    /* ── Shutter mode panel ── */
+    .shutter-panel .shutter-row { display: flex; gap: 2px; flex-wrap: wrap; }
+    .shutter-chip {
+      display: flex; align-items: center; gap: 1px;
+      padding: 2px 4px; border-radius: 4px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--panel);
+      font-size: 8px; font-weight: 700; color: var(--muted);
     }
-    .queue-item {
-      padding: 5px 10px; font-size: 11px; border-bottom: 1px solid rgba(83,52,133,0.3);
-      display: flex; align-items: center; gap: 8px; cursor: pointer;
+    .shutter-chip.active { border-color: var(--gold); color: var(--gold); background: rgba(212,175,55,0.2); }
+
+    /* ── Gridline panel ── */
+    .gridline-panel .gridline-toggle {
+      display: flex; align-items: center; justify-content: space-between;
     }
-    .queue-item:active { background: rgba(212,175,55,0.1); }
-    .queue-item.active-item { background: rgba(212,175,55,0.1); }
-    .queue-item .q-nama { flex: 1; font-weight: 600; color: #fff; }
-    .queue-item .q-nim { font-size: 9px; color: var(--muted); }
-    .queue-item .q-status { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; }
-    .queue-item .q-status.pending { background: rgba(196,181,253,0.15); color: var(--muted); }
-    .queue-item .q-status.active { background: rgba(212,175,55,0.2); color: var(--gold); }
-    .queue-item .q-status.done { background: rgba(34,197,94,0.15); color: #4ade80; }
+    .gridline-panel .gridline-toggle label { font-size: 10px; color: #fff; }
+    .gridline-panel .gridline-toggle .switch {
+      width: 36px; height: 20px; border-radius: 10px; background: var(--border);
+      position: relative; cursor: pointer; transition: background 0.2s;
+    }
+    .gridline-panel .gridline-toggle .switch.on { background: var(--gold); }
+    .gridline-panel .gridline-toggle .switch::after {
+      content: ''; position: absolute; width: 16px; height: 16px; border-radius: 50%;
+      background: #fff; top: 2px; left: 2px; transition: transform 0.2s;
+    }
+    .gridline-panel .gridline-toggle .switch.on::after { transform: translateX(16px); }
+
+    /* ── OP Search panel ── */
+    .opsearch-panel .opsearch-input {
+      width: 100%; height: 32px; border-radius: 4px;
+      background: var(--panel); border: 1px solid var(--border);
+      color: #fff; font-size: 10px; padding: 0 8px 0 28px; outline: none;
+    }
+    .opsearch-panel .opsearch-input:focus { border-color: var(--gold); }
+    .opsearch-panel .opsearch-input::placeholder { color: rgba(83,52,133,0.8); }
+    .opsearch-panel .opsearch-wrap { position: relative; }
+    .opsearch-panel .opsearch-icon {
+      position: absolute; left: 8px; top: 50%; transform: translateY(-50%);
+      font-size: 12px; color: var(--muted);
+    }
+    .opsearch-results {
+      max-height: 80px; overflow-y: auto; margin-top: 3px;
+    }
+    .opsearch-item {
+      display: flex; align-items: center; gap: 4px;
+      padding: 2px 4px; cursor: pointer; font-size: 9px;
+    }
+    .opsearch-item:hover { background: rgba(212,175,55,0.1); }
+    .opsearch-item .os-nim { width: 45px; color: var(--muted); font-family: monospace; font-size: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .opsearch-item .os-nama { flex: 1; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
+    .opsearch-item .os-nama.active { color: var(--gold); font-weight: 700; }
+    .opsearch-item .os-status { font-size: 6px; font-weight: 700; width: 25px; text-align: right; }
+    .opsearch-empty { font-size: 8px; color: var(--muted); text-align: center; padding: 4px 0; }
+
+    /* ── Queue list panel (tabular like APK) ── */
+    .queue-panel .queue-table {
+      max-height: 120px; overflow-y: auto;
+    }
+    .queue-panel .queue-row {
+      display: flex; align-items: center; gap: 2px;
+      padding: 1px 3px; font-size: 8px;
+    }
+    .queue-panel .queue-row.active-row { background: rgba(212,175,55,0.12); }
+    .queue-panel .queue-row.sent-row { background: rgba(212,175,55,0.04); }
+    .queue-panel .queue-row.done-row { background: rgba(196,181,253,0.02); }
+    .queue-panel .q-idx { width: 18px; color: var(--muted); font-family: monospace; font-size: 7px; }
+    .queue-panel .q-nim-col { width: 45px; color: var(--muted); font-family: monospace; font-size: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .queue-panel .q-nama-col { flex: 1; color: #fff; font-size: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .queue-panel .q-nama-col.active-name { color: var(--gold); font-weight: 700; }
+    .queue-panel .q-nama-col.done-name { color: var(--muted); text-decoration: line-through; }
+    .queue-panel .q-status-col { width: 35px; font-size: 6px; font-weight: 700; }
+    .queue-panel .queue-empty { font-size: 9px; color: var(--muted); text-align: center; padding: 4px 0; }
+
+    /* ── Bottom panel area (resizable) ── */
+    .bottom-area {
+      background: var(--panel); border-top: 1px solid var(--border);
+      display: flex; flex-direction: column; flex-shrink: 0;
+      overflow: hidden;
+    }
+    .bottom-area .panel-scroll {
+      flex: 1; overflow-y: auto; min-height: 0;
+    }
+
+    /* ── Mirror toggle in gridline panel ── */
+    .mirror-toggle {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border);
+    }
+    .mirror-toggle label { font-size: 10px; color: #fff; }
 
     /* Session password prompt */
     .password-overlay {
@@ -545,7 +682,7 @@
   </div>
   
   <!-- Camera Area -->
-  <div class="camera-area">
+  <div id="cameraArea" class="camera-area">
     <video id="videoPreview" autoplay playsinline muted></video>
     <canvas id="captureCanvas"></canvas>
     
@@ -588,29 +725,123 @@
     </div>
   </div>
   
-  <!-- Bottom Panel -->
-  <div class="bottom-panel">
-    <!-- Capture row -->
-    <div class="capture-row">
-      <div class="shutter-mode-btns">
-        <button class="shutter-btn active" data-mode="manual" onclick="setShutterMode('manual')">📷</button>
-        <button class="shutter-btn" data-mode="timer-3" onclick="setShutterMode('timer-3')">3s</button>
-        <button class="shutter-btn" data-mode="timer-5" onclick="setShutterMode('timer-5')">5s</button>
-        <button class="shutter-btn" data-mode="timer-10" onclick="setShutterMode('timer-10')">10s</button>
+  <!-- Draggable Divider -->
+  <div id="dragDivider" class="drag-divider"></div>
+  
+  <!-- Bottom Area (resizable) -->
+  <div id="bottomArea" class="bottom-area">
+    <!-- Capture Bar (full-width button like APK) -->
+    <div class="capture-bar">
+      <div id="progressDots" class="progress-dots" style="display:none;">
+        <div id="pdot1" class="progress-dot"></div>
+        <div id="pdot2" class="progress-dot"></div>
       </div>
-      <button id="captureBtn" class="capture-btn disabled" onclick="handleCaptureClick()">
-        <div class="capture-btn-inner"></div>
+      <button id="captureBarBtn" class="capture-bar-btn standby" onclick="handleCaptureClick()">
+        STANDBY
       </button>
-      <div class="shutter-mode-btns">
-        <button class="toggle-btn" id="gridToggle" onclick="toggleGridline()">📐 Grid</button>
-        <button class="toggle-btn" id="mirrorToggle" onclick="toggleMirror()">↔️ Mirror</button>
+    </div>
+    
+    <!-- Panel Selector Row -->
+    <div class="panel-selector">
+      <span class="panel-selector-label">▼ Panel</span>
+      <div class="panel-chip active" data-panel="target-info" onclick="togglePanel('target-info')">
+        <span class="chip-check">✓</span> Info
+      </div>
+      <div class="panel-chip active" data-panel="shutter-mode" onclick="togglePanel('shutter-mode')">
+        <span class="chip-check">✓</span> Mode
+      </div>
+      <div class="panel-chip" data-panel="gridline" onclick="togglePanel('gridline')">
+        <span class="chip-check">✓</span> Grid
+      </div>
+      <div class="panel-chip active" data-panel="op-search" onclick="togglePanel('op-search')">
+        <span class="chip-check">✓</span> Cari
+      </div>
+      <div class="panel-chip active" data-panel="queue-list" onclick="togglePanel('queue-list')">
+        <span class="chip-check">✓</span> Antrean
       </div>
     </div>
     
-    <!-- Queue -->
-    <div id="queueSection" class="queue-section">
-      <div class="queue-header">📋 Antrian Peserta</div>
-      <div id="queueList"></div>
+    <!-- Scrollable Panel Content -->
+    <div class="panel-scroll">
+      <!-- Target Info Panel -->
+      <div id="panel-target-info" class="cpanel">
+        <div class="cpanel-header">
+          <span class="cpanel-title">Info Target</span>
+          <button class="cpanel-close" onclick="togglePanel('target-info')">✕</button>
+        </div>
+        <div class="cpanel-body target-info-panel">
+          <div id="targetInfoPanel">
+            <div class="tip-row">
+              <div class="tip-avatar">🧑</div>
+              <div style="flex:1;min-width:0;">
+                <div id="tipName" class="tip-name">-</div>
+                <div id="tipNim" class="tip-nim">-</div>
+              </div>
+              <span id="tipBadge" class="tip-badge standby">STANDBY</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Shutter Mode Panel -->
+      <div id="panel-shutter-mode" class="cpanel">
+        <div class="cpanel-header">
+          <span class="cpanel-title">Mode Shutter</span>
+          <button class="cpanel-close" onclick="togglePanel('shutter-mode')">✕</button>
+        </div>
+        <div class="cpanel-body shutter-panel">
+          <div class="shutter-row">
+            <div class="shutter-chip active" data-mode="manual" onclick="setShutterMode('manual')">📷 Manual</div>
+            <div class="shutter-chip" data-mode="timer-3" onclick="setShutterMode('timer-3')">⏱ 3s</div>
+            <div class="shutter-chip" data-mode="timer-5" onclick="setShutterMode('timer-5')">⏱ 5s</div>
+            <div class="shutter-chip" data-mode="timer-10" onclick="setShutterMode('timer-10')">⏱ 10s</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Gridline Panel -->
+      <div id="panel-gridline" class="cpanel" style="display:none;">
+        <div class="cpanel-header">
+          <span class="cpanel-title">Gridline</span>
+          <button class="cpanel-close" onclick="togglePanel('gridline')">✕</button>
+        </div>
+        <div class="cpanel-body gridline-panel">
+          <div class="gridline-toggle">
+            <label>Aktifkan</label>
+            <div id="gridlineSwitch" class="switch" onclick="toggleGridline()"></div>
+          </div>
+          <div class="mirror-toggle">
+            <label>↔️ Mirror</label>
+            <div id="mirrorSwitch" class="switch on" onclick="toggleMirror()"></div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- OP Search Panel -->
+      <div id="panel-op-search" class="cpanel">
+        <div class="cpanel-header">
+          <span class="cpanel-title" id="opSearchTitle">Cari Antrean</span>
+          <button class="cpanel-close" onclick="togglePanel('op-search')">✕</button>
+        </div>
+        <div class="cpanel-body opsearch-panel">
+          <div class="opsearch-wrap">
+            <span class="opsearch-icon">🔍</span>
+            <input id="opSearchInput" class="opsearch-input" type="text" placeholder="Cari NIM / Nama..." oninput="handleOpSearch(this.value)">
+          </div>
+          <div id="opSearchResults" class="opsearch-results"></div>
+        </div>
+      </div>
+      
+      <!-- Queue List Panel -->
+      <div id="panel-queue-list" class="cpanel">
+        <div class="cpanel-header">
+          <span class="cpanel-title" id="queuePanelTitle">Daftar Antrean</span>
+          <button class="cpanel-close" onclick="togglePanel('queue-list')">✕</button>
+        </div>
+        <div class="cpanel-body queue-panel">
+          <div id="queueTable" class="queue-table"></div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -1858,7 +2089,9 @@ function toggleMirror() {
   isMirrored = !isMirrored
   const video = document.getElementById('videoPreview')
   video.style.transform = isMirrored ? 'scaleX(-1)' : 'none'
-  document.getElementById('mirrorToggle').classList.toggle('active', isMirrored)
+  // Update new switch
+  const mirrorSwitch = document.getElementById('mirrorSwitch')
+  if (mirrorSwitch) mirrorSwitch.classList.toggle('on', isMirrored)
 }
 
 // ── Device change listener (USB hot-plug) ────────────────────────────────
@@ -2339,14 +2572,51 @@ function updateTargetDisplay() {
   } else {
     dots.classList.add('hidden')
   }
+  
+  // Update target info panel (bottom panels)
+  updateTargetInfoPanel()
 }
 
 // ── Capture Logic ────────────────────────────────────────────────────────
 function updateCaptureButton() {
-  const btn = document.getElementById('captureBtn')
-  const canCapture = currentTarget && (capturePhase === 'ready-1' || capturePhase === 'ready-2')
-  btn.classList.toggle('disabled', !canCapture)
-  btn.classList.toggle('sending', capturePhase === 'sending')
+  // Capture bar button
+  const barBtn = document.getElementById('captureBarBtn')
+  if (!barBtn) return
+  
+  const isPhotoshoot = currentProject?.config?.mode?.includes('photoshoot')
+  const progressDots = document.getElementById('progressDots')
+  
+  // Show progress dots for non-photoshoot modes
+  if (!isPhotoshoot && capturePhase !== 'standby') {
+    progressDots.style.display = 'flex'
+    document.getElementById('pdot1').className = 'progress-dot' + (capturedPhotos.length >= 1 ? ' done' : (capturePhase === 'ready-1' ? ' current' : ''))
+    document.getElementById('pdot2').className = 'progress-dot' + (capturedPhotos.length >= 2 ? ' done' : (capturePhase === 'ready-2' ? ' current' : ''))
+  } else {
+    progressDots.style.display = 'none'
+  }
+  
+  if (capturePhase === 'standby') {
+    barBtn.className = 'capture-bar-btn standby'
+    barBtn.textContent = 'STANDBY'
+    barBtn.disabled = true
+  } else if (timerCountdown > 0) {
+    barBtn.className = 'capture-bar-btn cancel-timer'
+    barBtn.innerHTML = '✕ BATAL (' + timerCountdown + ')'
+    barBtn.disabled = false
+  } else if (capturePhase === 'ready-1') {
+    barBtn.className = 'capture-bar-btn ready-1'
+    const label = isPhotoshoot ? '📷 FOTO' : '📷 FOTO 1 — TOGA'
+    barBtn.textContent = label
+    barBtn.disabled = false
+  } else if (capturePhase === 'ready-2') {
+    barBtn.className = 'capture-bar-btn ready-2'
+    barBtn.textContent = '📷 FOTO 2 — IJAZAH'
+    barBtn.disabled = false
+  } else if (capturePhase === 'sending') {
+    barBtn.className = 'capture-bar-btn sending'
+    barBtn.innerHTML = '⏳ MENGIRIM...'
+    barBtn.disabled = true
+  }
 }
 
 function handleCaptureClick() {
@@ -2368,6 +2638,7 @@ function startTimer(seconds) {
   timerCountdown = seconds
   document.getElementById('timerOverlay').classList.remove('hidden')
   document.getElementById('timerNumber').textContent = seconds
+  updateCaptureButton()
   
   timerInterval = setInterval(() => {
     timerCountdown--
@@ -2376,6 +2647,7 @@ function startTimer(seconds) {
       doCapture()
     } else {
       document.getElementById('timerNumber').textContent = timerCountdown
+      updateCaptureButton()
     }
   }, 1000)
 }
@@ -2387,6 +2659,7 @@ function cancelTimer() {
   }
   timerCountdown = 0
   document.getElementById('timerOverlay').classList.add('hidden')
+  updateCaptureButton()
 }
 
 function doCapture() {
@@ -2553,7 +2826,7 @@ async function sendPhotos() {
 // ── Shutter Mode ─────────────────────────────────────────────────────────
 function setShutterMode(mode) {
   shutterMode = mode
-  document.querySelectorAll('.shutter-btn').forEach(b => {
+  document.querySelectorAll('.shutter-chip').forEach(b => {
     b.classList.toggle('active', b.dataset.mode === mode)
   })
   cancelTimer()
@@ -2562,7 +2835,9 @@ function setShutterMode(mode) {
 // ── Gridline ─────────────────────────────────────────────────────────────
 function toggleGridline() {
   gridlineEnabled = !gridlineEnabled
-  document.getElementById('gridToggle').classList.toggle('active', gridlineEnabled)
+  // Update new switch
+  const gridSwitch = document.getElementById('gridlineSwitch')
+  if (gridSwitch) gridSwitch.classList.toggle('on', gridlineEnabled)
   const overlay = document.getElementById('gridlineOverlay')
   
   if (gridlineEnabled) {
@@ -2593,33 +2868,261 @@ function renderGridline() {
 function updateQueueList() {
   if (!currentProject?.database) return
   
-  const list = document.getElementById('queueList')
-  const db = currentProject.database
   const isPhotoshoot = currentProject.config?.mode?.includes('photoshoot')
   
-  const relevant = db.filter(s => {
+  const relevant = currentProject.database.filter(s => {
     if (isPhotoshoot) return true
     return s.assignedChannel === myChannel || s.status === `active_${myChannel}`
   })
   
   const statusPriority = { active_1: 0, active_2: 0, sent: 1, pending: 2, done: 3 }
-  relevant.sort((a, b) => {
-    const pa = statusPriority[a.status] ?? 9
-    const pb = statusPriority[b.status] ?? 9
-    return pa - pb
+  relevant.sort((a, b) => (statusPriority[a.status] ?? 9) - (statusPriority[b.status] ?? 9))
+  
+  // Update queue panel title
+  const titleEl = document.getElementById('queuePanelTitle')
+  if (titleEl) {
+    const remaining = relevant.filter(s => s.status !== 'done').length
+    titleEl.textContent = `Antrean: ${remaining} • Ch.${myChannel}`
+  }
+  
+  // Render tabular queue (like APK)
+  const tableEl = document.getElementById('queueTable')
+  if (tableEl) {
+    if (relevant.length === 0) {
+      tableEl.innerHTML = '<div class="queue-empty">Tidak ada mahasiswa</div>'
+    } else {
+      tableEl.innerHTML = relevant.slice(0, 30).map((s, idx) => {
+        const isActive = s.status?.startsWith('active')
+        const isDone = s.status === 'done'
+        const isSent = s.status === 'sent'
+        
+        let rowClass = ''
+        if (isActive) rowClass = 'active-row'
+        else if (isSent) rowClass = 'sent-row'
+        else if (isDone) rowClass = 'done-row'
+        
+        let nameClass = 'q-nama-col'
+        if (isActive) nameClass += ' active-name'
+        if (isDone) nameClass += ' done-name'
+        
+        let statusLabel, statusColor
+        if (isActive) { statusLabel = 'Foto'; statusColor = 'var(--gold)' }
+        else if (isSent) { statusLabel = 'Kirim'; statusColor = 'rgba(212,175,55,0.6)' }
+        else if (isDone) { statusLabel = 'Selesai'; statusColor = 'var(--muted)' }
+        else { statusLabel = 'Tunggu'; statusColor = 'var(--border)' }
+        
+        return `<div class="queue-row ${rowClass}" onclick="selectQueueItem('${s.id}')">
+          <span class="q-idx">${idx + 1}</span>
+          <span class="q-nim-col">${s.nim || '-'}</span>
+          <span class="${nameClass}">${s.nama || '-'}</span>
+          <span class="q-status-col" style="color:${statusColor}">${statusLabel}</span>
+        </div>`
+      }).join('')
+    }
+  }
+  
+  // Also update OP search results
+  renderOpSearchResults()
+}
+
+// ── Panel Toggle System ────────────────────────────────────────────────
+let visiblePanels = new Set(['target-info', 'shutter-mode', 'op-search', 'queue-list'])
+
+function togglePanel(panelId) {
+  const panelEl = document.getElementById('panel-' + panelId)
+  const chipEl = document.querySelector(`.panel-chip[data-panel="${panelId}"]`)
+  
+  if (visiblePanels.has(panelId)) {
+    visiblePanels.delete(panelId)
+    if (panelEl) panelEl.style.display = 'none'
+    if (chipEl) chipEl.classList.remove('active')
+  } else {
+    visiblePanels.add(panelId)
+    if (panelEl) panelEl.style.display = ''
+    if (chipEl) chipEl.classList.add('active')
+  }
+}
+
+// ── Draggable Divider ─────────────────────────────────────────────────
+function initDragDivider() {
+  const divider = document.getElementById('dragDivider')
+  const cameraArea = document.getElementById('cameraArea')
+  const bottomArea = document.getElementById('bottomArea')
+  const operatorScreen = document.getElementById('operatorScreen')
+  
+  if (!divider || !cameraArea || !bottomArea || !operatorScreen) return
+  
+  let isDragging = false
+  let startY = 0
+  let startBottomHeight = 0
+  
+  // Default: bottom area = 40% of screen
+  const defaultPercent = 40
+  const minPercent = 15
+  const maxPercent = 65
+  let currentPercent = defaultPercent
+  
+  function setLayout(percent) {
+    currentPercent = Math.max(minPercent, Math.min(maxPercent, percent))
+    const screenH = operatorScreen.offsetHeight
+    const topBarH = operatorScreen.querySelector('.top-bar').offsetHeight
+    const dividerH = divider.offsetHeight
+    const availH = screenH - topBarH - dividerH
+    const bottomH = Math.round(availH * currentPercent / 100)
+    bottomArea.style.height = bottomH + 'px'
+    cameraArea.style.flex = '1'
+  }
+  
+  // Set initial layout
+  setLayout(defaultPercent)
+  
+  divider.addEventListener('touchstart', (e) => {
+    isDragging = true
+    startY = e.touches[0].clientY
+    startBottomHeight = bottomArea.offsetHeight
+    e.preventDefault()
+  }, { passive: false })
+  
+  divider.addEventListener('mousedown', (e) => {
+    isDragging = true
+    startY = e.clientY
+    startBottomHeight = bottomArea.offsetHeight
+    e.preventDefault()
   })
   
-  list.innerHTML = relevant.slice(0, 30).map(s => {
-    const isActive = s.status === `active_${myChannel}` || s.status?.startsWith('active')
+  document.addEventListener('touchmove', (e) => {
+    if (!isDragging) return
+    const dy = startY - e.touches[0].clientY
+    const screenH = operatorScreen.offsetHeight
+    const topBarH = operatorScreen.querySelector('.top-bar').offsetHeight
+    const dividerH = divider.offsetHeight
+    const availH = screenH - topBarH - dividerH
+    const newBottomH = startBottomHeight + dy
+    const newPercent = (newBottomH / availH) * 100
+    setLayout(newPercent)
+  }, { passive: true })
+  
+  document.addEventListener('mousemove', (e) => {
+    if (!isDragging) return
+    const dy = startY - e.clientY
+    const screenH = operatorScreen.offsetHeight
+    const topBarH = operatorScreen.querySelector('.top-bar').offsetHeight
+    const dividerH = divider.offsetHeight
+    const availH = screenH - topBarH - dividerH
+    const newBottomH = startBottomHeight + dy
+    const newPercent = (newBottomH / availH) * 100
+    setLayout(newPercent)
+  })
+  
+  document.addEventListener('touchend', () => { isDragging = false })
+  document.addEventListener('mouseup', () => { isDragging = false })
+  
+  // Handle resize
+  window.addEventListener('resize', () => setLayout(currentPercent))
+}
+
+// ── OP Search ─────────────────────────────────────────────────────────
+let opSearchQuery = ''
+
+function handleOpSearch(query) {
+  opSearchQuery = query.toLowerCase().trim()
+  renderOpSearchResults()
+}
+
+function renderOpSearchResults() {
+  const container = document.getElementById('opSearchResults')
+  if (!container) return
+  if (!currentProject?.database) {
+    container.innerHTML = '<div class="opsearch-empty">Belum ada peserta dikirim MC</div>'
+    return
+  }
+  
+  const isPhotoshoot = currentProject.config?.mode?.includes('photoshoot')
+  let students = currentProject.database.filter(s => {
+    if (isPhotoshoot) return true
+    return s.assignedChannel === myChannel || s.status === `active_${myChannel}`
+  })
+  
+  // Filter by search query
+  if (opSearchQuery) {
+    students = students.filter(s => 
+      (s.nama && s.nama.toLowerCase().includes(opSearchQuery)) || 
+      (s.nim && s.nim.toLowerCase().includes(opSearchQuery))
+    )
+  }
+  
+  if (students.length === 0) {
+    container.innerHTML = '<div class="opsearch-empty">' + (opSearchQuery ? 'Tidak ditemukan' : 'Belum ada peserta dikirim MC') + '</div>'
+    return
+  }
+  
+  container.innerHTML = students.slice(0, 20).map(s => {
+    const isCurrent = currentTarget && currentTarget.id === s.id
+    const isActive = s.status?.startsWith('active')
     const isDone = s.status === 'done'
-    const statusClass = isDone ? 'done' : isActive ? 'active' : 'pending'
-    const statusText = isDone ? '✓' : isActive ? '►' : '—'
+    const isSent = s.status === 'sent'
     
-    return `<div class="queue-item ${isActive ? 'active-item' : ''}" onclick="selectQueueItem('${s.id}')">
-      <div><div class="q-nama">${s.nama || '-'}</div><div class="q-nim">${s.nim || '-'}</div></div>
-      <span class="q-status ${statusClass}">${statusText}</span>
+    let statusLabel = ''
+    let statusColor = 'var(--muted)'
+    if (!isPhotoshoot) {
+      if (isActive) { statusLabel = 'Foto'; statusColor = 'var(--gold)' }
+      else if (isSent) { statusLabel = 'Kirim'; statusColor = 'rgba(212,175,55,0.7)' }
+      else if (isDone) { statusLabel = 'OK'; statusColor = 'var(--success)' }
+    }
+    
+    return `<div class="opsearch-item" onclick="selectOpSearchItem('${s.id}')">
+      <span class="os-nim">${s.nim || '-'}</span>
+      <span class="os-nama ${isCurrent ? 'active' : ''}">${s.nama || '-'}</span>
+      ${statusLabel ? `<span class="os-status" style="color:${statusColor}">${statusLabel}</span>` : ''}
+      ${isCurrent ? '📷' : ''}
     </div>`
   }).join('')
+}
+
+function selectOpSearchItem(studentId) {
+  if (!currentProject?.database) return
+  const student = currentProject.database.find(s => s.id === studentId)
+  if (student && student.status !== 'done') {
+    currentTarget = student
+    capturedPhotos = []
+    capturePhase = 'ready-1'
+    updateTargetDisplay()
+    updateCaptureButton()
+    updateTargetInfoPanel()
+  }
+}
+
+// ── Target Info Panel ─────────────────────────────────────────────────
+function updateTargetInfoPanel() {
+  const tipName = document.getElementById('tipName')
+  const tipNim = document.getElementById('tipNim')
+  const tipBadge = document.getElementById('tipBadge')
+  if (!tipName) return
+  
+  if (currentTarget && capturePhase !== 'standby') {
+    tipName.textContent = currentTarget.nama || '-'
+    tipNim.textContent = currentTarget.nim || '-'
+    const isPhotoshoot = currentProject?.config?.mode?.includes('photoshoot')
+    
+    if (capturePhase === 'ready-1') {
+      tipBadge.className = 'tip-badge toga'
+      tipBadge.textContent = isPhotoshoot ? 'Siap Foto' : 'Toga'
+    } else if (capturePhase === 'ready-2') {
+      tipBadge.className = 'tip-badge ijazah'
+      tipBadge.textContent = 'Ijazah'
+    } else if (capturePhase === 'sending') {
+      tipBadge.className = 'tip-badge sending'
+      tipBadge.textContent = 'Kirim'
+    } else {
+      tipBadge.className = 'tip-badge standby'
+      tipBadge.textContent = 'Standby'
+    }
+  } else {
+    tipName.textContent = '-'
+    tipNim.textContent = '-'
+    tipBadge.className = 'tip-badge standby'
+    tipBadge.textContent = 'STANDBY'
+  }
 }
 
 function selectQueueItem(studentId) {
@@ -2693,8 +3196,12 @@ document.addEventListener('DOMContentLoaded', () => {
     flagUrlPcEl.textContent = `http://${currentHost}:${currentPort}`
   }
   
-  // Mirror toggle default
-  document.getElementById('mirrorToggle').classList.add('active')
+  // Mirror toggle default (new switch)
+  const mirrorSwitch = document.getElementById('mirrorSwitch')
+  if (mirrorSwitch) mirrorSwitch.classList.add('on')
+  
+  // Initialize drag divider
+  initDragDivider()
   
   // Check if camera permission is already granted
   checkExistingPermission()
