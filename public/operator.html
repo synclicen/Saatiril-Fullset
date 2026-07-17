@@ -165,6 +165,8 @@
       min-height: 44px; flex-shrink: 0;
     }
     .top-bar-title { font-size: 12px; font-weight: 700; color: var(--gold); letter-spacing: 1px; }
+    .top-bar-mode { font-size: 9px; font-weight: 700; color: var(--gold); margin: 0 4px; }
+    .top-bar-target { font-size: 9px; color: #fff; margin-right: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
     .top-bar-sep { width: 1px; height: 20px; background: var(--border); }
     .camera-selector {
       display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0;
@@ -670,6 +672,8 @@
   <div class="top-bar">
     <span class="top-bar-title">SAATIRIL</span>
     <div class="top-bar-sep"></div>
+    <span id="topBarMode" class="top-bar-mode"></span>
+    <span id="topBarTarget" class="top-bar-target"></span>
     <div class="camera-selector">
       <select id="cameraSelect" class="camera-select" onchange="handleCameraChange()">
         <option value="">Memuat kamera...</option>
@@ -2463,11 +2467,13 @@ function handleLanMessage(payload) {
     
     case 'SYNC_DB': {
       const data = payload.data
-      console.log('[OP] SYNC_DB received, project:', data?.name)
-      if (data) {
-        currentProject = data
-        if (data.config?.frame) {
-          frameData = data.config.frame
+      console.log('[OP] SYNC_DB received, project:', data?.project?.name || data?.name)
+      // Data structure: { project: {...} } — the actual project is nested
+      const project = data?.project || data
+      if (project) {
+        currentProject = project
+        if (project.config?.frame) {
+          frameData = project.config.frame
           const frameImg = document.getElementById('frameOverlay')
           if (frameData && frameData !== '__FRAME_SAVED__') {
             frameImg.src = frameData
@@ -2479,7 +2485,7 @@ function handleLanMessage(payload) {
         updateQueueList()
         
         // Recover target if there's an active student on our channel
-        const activeStudent = data.database?.find(s => 
+        const activeStudent = project.database?.find(s => 
           s.assignedChannel === myChannel && 
           (s.status === `active_${myChannel}` || s.status?.startsWith('active'))
         )
@@ -2518,9 +2524,15 @@ function updateTargetDisplay() {
     document.getElementById('targetNama').textContent = currentTarget.nama || '-'
     document.getElementById('targetNim').textContent = currentTarget.nim || '-'
     const phaseEl = document.getElementById('targetPhase')
-    phaseEl.textContent = capturePhase === 'ready-1' ? 'SIAP FOTO 1' : 
-                          capturePhase === 'ready-2' ? 'SIAP FOTO 2' : 
-                          capturePhase === 'sending' ? 'MENGIRIM...' : 'STANDBY'
+    // In photoshoot mode: just "SIAP FOTO", non-photoshoot: "SIAP FOTO 1/2"
+    if (isPhotoshoot) {
+      phaseEl.textContent = capturePhase === 'ready-1' ? 'SIAP FOTO' :
+                            capturePhase === 'sending' ? 'MENGIRIM...' : 'STANDBY'
+    } else {
+      phaseEl.textContent = capturePhase === 'ready-1' ? 'SIAP FOTO 1' : 
+                            capturePhase === 'ready-2' ? 'SIAP FOTO 2' : 
+                            capturePhase === 'sending' ? 'MENGIRIM...' : 'STANDBY'
+    }
     phaseEl.className = 'target-phase ' + capturePhase
   } else {
     info.classList.add('hidden')
@@ -2536,6 +2548,35 @@ function updateTargetDisplay() {
   
   // Update target info panel (bottom panels)
   updateTargetInfoPanel()
+  // Update top bar mode + target display (like APK)
+  updateTopBarDisplay()
+}
+
+// ── Top Bar Display (mode + target, like APK) ─────────────────────────────
+function updateTopBarDisplay() {
+  const modeEl = document.getElementById('topBarMode')
+  const targetEl = document.getElementById('topBarTarget')
+  if (!modeEl || !targetEl) return
+  
+  const mode = currentProject?.config?.mode || ''
+  const modeNames = {
+    'single': 'single',
+    'dual': 'dual shot',
+    'single-photoshoot': 'single shot',
+    'dual-photoshoot': 'dual shot'
+  }
+  modeEl.textContent = modeNames[mode] || mode
+  
+  if (currentTarget && capturePhase !== 'standby') {
+    const isPhotoshoot = mode?.includes('photoshoot')
+    const phaseText = isPhotoshoot ? 'Siap Foto' : 
+                     (capturePhase === 'ready-1' ? 'Toga' : 
+                      capturePhase === 'ready-2' ? 'Ijazah' : 
+                      capturePhase === 'sending' ? 'Kirim' : '')
+    targetEl.textContent = `${currentTarget.nama || ''} ${phaseText}`
+  } else {
+    targetEl.textContent = ''
+  }
 }
 
 // ── Capture Logic ────────────────────────────────────────────────────────
@@ -2565,10 +2606,19 @@ function updateCaptureButton() {
     barBtn.innerHTML = '✕ BATAL (' + timerCountdown + ')'
     barBtn.disabled = false
   } else if (capturePhase === 'ready-1') {
+    const isPhotoshoot = currentProject?.config?.mode?.includes('photoshoot')
     barBtn.className = 'capture-bar-btn ready-1'
     const label = isPhotoshoot ? '📷 FOTO' : '📷 FOTO 1 — TOGA'
     barBtn.textContent = label
     barBtn.disabled = false
+    // In photoshoot mode, make the button green (like APK)
+    if (isPhotoshoot) {
+      barBtn.style.background = '#22c55e'
+      barBtn.style.color = '#fff'
+    } else {
+      barBtn.style.background = ''
+      barBtn.style.color = ''
+    }
   } else if (capturePhase === 'ready-2') {
     barBtn.className = 'capture-bar-btn ready-2'
     barBtn.textContent = '📷 FOTO 2 — IJAZAH'
@@ -2692,14 +2742,15 @@ function doCapture() {
   triggerFlash()
   
   const isPhotoshoot = currentProject?.config?.mode?.includes('photoshoot')
+  const photosPerSession = isPhotoshoot ? 1 : 2  // Match APK: CameraModes.photosPerSession()
   const label = isPhotoshoot ? 'photo' : 
                 (capturePhase === 'ready-1' ? 'toga' : 'ijazah')
   
   capturedPhotos.push({ label, dataUrl })
   
-  const isDualMode = !isPhotoshoot && currentProject?.config?.mode?.includes('dual') !== false
-  
-  if (isDualMode && capturePhase === 'ready-1') {
+  // After capture: if non-photoshoot and only first photo done, advance to READY_2
+  // In photoshoot mode, always finalize after 1 photo
+  if (photosPerSession > 1 && capturePhase === 'ready-1') {
     capturePhase = 'ready-2'
     updateTargetDisplay()
     updateCaptureButton()
