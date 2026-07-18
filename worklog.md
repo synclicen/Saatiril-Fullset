@@ -111,3 +111,38 @@ Stage Summary:
 - Uses ML Kit (native, offline) instead of MediaPipe JS
 - Same behavior: any hand detected = trigger shutter
 - UI consistent: green toggle + indicator overlay
+
+---
+Task ID: 5
+Agent: main
+Task: Fix APK build failure — replace non-existent ML Kit hand-detection dependency
+
+Work Log:
+- User reported "BUILD FAILED in 16s, Process completed with exit code 1"
+- Investigated build failure: com.google.mlkit:hand-detection:16.3.0 does NOT exist on Maven
+- Verified by checking Google Maven repository master-index.xml — no hand-detection artifact exists
+- Searched Maven Central (search.maven.org) — also returns 0 results
+- Google's hand detection is ONLY available via MediaPipe Tasks Vision (com.google.mediapipe:tasks-vision)
+- Also found API class name errors in HandTriggerDetector.kt:
+  - HandLandmarkingOptions → should be HandLandmarkerOptions (doesn't exist in ML Kit either)
+  - Synchronous API usage was wrong: process() returns Task<>, not direct result
+  - RunningMode import path was incorrect
+- Downloaded and inspected tasks-vision AAR to verify correct API:
+  - HandLandmarker.createFromOptions(context, options) for init
+  - BitmapImageBuilder for MPImage creation
+  - RunningMode from com.google.mediapipe.tasks.vision.core.RunningMode
+  - NormalizedLandmark from com.google.mediapipe.tasks.components.containers.NormalizedLandmark
+  - detect() is synchronous in IMAGE mode (returns HandLandmarkerResult directly)
+- Downloaded hand_landmarker.task model (7.8MB) to assets folder
+- Rewrote HandTriggerDetector.kt completely with MediaPipe API
+- Updated OperatorViewModel.kt: pass Application context to initialize()
+- Updated build.gradle.kts: replaced hand-detection with tasks-vision:0.10.14
+- Bumped version to 32 (1.0.32-mediapipe-hand-trigger)
+- Committed and pushed to GitHub (1048243)
+
+Stage Summary:
+- Root cause: com.google.mlkit:hand-detection:16.3.0 does NOT exist — the entire dependency was wrong
+- Fix: Replace with com.google.mediapipe:tasks-vision:0.10.14 (the actual working library)
+- HandTriggerDetector.kt fully rewritten with correct MediaPipe Tasks Vision API
+- Model file (hand_landmarker.task) added to assets
+- Version bumped to 32
