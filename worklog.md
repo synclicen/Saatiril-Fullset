@@ -23,3 +23,35 @@ Stage Summary:
 - Files changed: electron/main.ts, electron/preload.ts, admin-dashboard.tsx, .gitignore
 - Commit: c70537c "fix: use Electron IPC for GitHub Release info instead of client-side fetch"
 - User needs to push to GitHub manually (no credentials available)
+
+---
+Task ID: 2
+Agent: main
+Task: Fix palm trigger mode to detect ANY hand (open or closed) instead of requiring 5 fingers
+
+Work Log:
+- Analyzed user screenshot: "Trigger Telapak" mode active but unresponsive
+- Read use-palm-detection.ts: found PALM_FINGER_THRESHOLD=5 (all 5 fingers must be extended)
+- Read use-finger-detection.ts: found similar issue with 5-finger requirement
+- Root cause: palm detection only triggers when ALL 5 fingers are extended, not for closed fist/palm
+- Rewrote use-palm-detection.ts: trigger on ANY hand presence (multiHandLandmarks.length > 0)
+- Key changes in use-palm-detection.ts:
+  - Removed PALM_FINGER_THRESHOLD constant entirely
+  - Changed trigger logic: any hand in frame = trigger (open OR closed)
+  - modelComplexity: 0→1 (better detection at all angles)
+  - minDetectionConfidence: 0.6→0.5 (more responsive)
+  - HAND_CONFIRM_SUSTAIN_MS: 500→300ms (faster trigger)
+  - fingersExtended still computed for visual indicator but NOT used for triggering
+- Updated operator-panel.tsx UI labels:
+  - "Trigger Telapak" → "Trigger Tangan"
+  - "Telapak terdeteksi" → "Tangan terdeteksi"
+  - "Mencari telapak tangan" → "Mencari tangan"
+  - Removed "/5" indicator, replaced with "✋" emoji
+  - Tooltip updated: "tunjukkan tangan (terbuka/tertutup) ke kamera"
+- Pushed commit caa912e to GitHub, builds triggered (#104 APK, #158 Electron)
+
+Stage Summary:
+- Palm trigger now detects ANY hand visible, regardless of finger state
+- More responsive: lower confidence threshold, faster sustain timer
+- Better model: complexity 1 for more robust detection
+- UI updated to reflect new behavior
