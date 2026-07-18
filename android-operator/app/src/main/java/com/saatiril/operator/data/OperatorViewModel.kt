@@ -9,6 +9,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.saatiril.operator.camera.Camera2Manager
 import com.saatiril.operator.camera.CameraCapture
+import com.saatiril.operator.camera.HandTriggerDetector
 import com.saatiril.operator.camera.UVCCameraManager
 import com.saatiril.operator.util.FilenameUtils
 import kotlinx.coroutines.Job
@@ -115,6 +116,19 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     val timerCountdown: StateFlow<Int> = _timerCountdown.asStateFlow()
 
     private var timerJob: Job? = null
+
+    // ─── Hand Trigger (Trigger Tangan) ──────────────────────────
+
+    private val _handTriggerEnabled = MutableStateFlow(false)
+    val handTriggerEnabled: StateFlow<Boolean> = _handTriggerEnabled.asStateFlow()
+
+    private val _handState = MutableStateFlow(HandTriggerDetector.HandState.NONE)
+    val handState: StateFlow<HandTriggerDetector.HandState> = _handState.asStateFlow()
+
+    private val _fingersExtended = MutableStateFlow(0)
+    val fingersExtended: StateFlow<Int> = _fingersExtended.asStateFlow()
+
+    private var handDetectionJob: Job? = null
 
     // ─── Op Search ──────────────────────────────────────────────
 
@@ -1067,6 +1081,94 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     fun setShutterMode(mode: String) {
         _shutterMode.value = mode
         cancelTimer()
+    }
+
+    // ─── Hand Trigger (Trigger Tangan) ──────────────────────────
+
+    /**
+     * Toggle hand trigger on/off.
+     * When enabled, detects any hand (open or closed) in the camera preview
+     * and triggers capture automatically. Matches Chrome version behavior.
+     */
+    fun setHandTriggerEnabled(enabled: Boolean) {
+        _handTriggerEnabled.value = enabled
+        if (enabled) {
+            startHandDetection()
+        } else {
+            stopHandDetection()
+        }
+    }
+
+    private fun startHandDetection() {
+        if (!HandTriggerDetector.initialize()) {
+            Log.e(TAG, "Failed to initialize hand trigger detector")
+            _handTriggerEnabled.value = false
+            return
+        }
+
+        HandTriggerDetector.onHandConfirmed = {
+            Log.i(TAG, "Hand trigger: confirmed — triggering capture")
+            viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                triggerCapture()
+            }
+        }
+        HandTriggerDetector.onHandReleased = {
+            Log.i(TAG, "Hand trigger: hand released — cancelling timer")
+            cancelTimerCapture()
+        }
+
+        HandTriggerDetector.start()
+
+        // Start detection loop — sample preview frames periodically
+        handDetectionJob?.cancel()
+        handDetectionJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            while (isActive) {
+                if (!_handTriggerEnabled.value) break
+
+                // Get preview bitmap from the active camera
+                val bitmap = getPreviewBitmap()
+                if (bitmap != null) {
+                    HandTriggerDetector.processFrame(bitmap)
+
+                    // Update UI state
+                    _handState.value = HandTriggerDetector.handState
+                    _fingersExtended.value = HandTriggerDetector.fingersExtended
+
+                    // Recycle only if we created it (getBitmap returns a copy)
+                    if (!bitmap.isRecycled) bitmap.recycle()
+                }
+
+                delay(100) // ~10 fps detection (enough for hand trigger, saves CPU)
+            }
+        }
+
+        Log.i(TAG, "Hand trigger detection started")
+    }
+
+    private fun stopHandDetection() {
+        handDetectionJob?.cancel()
+        handDetectionJob = null
+        HandTriggerDetector.stop()
+        _handState.value = HandTriggerDetector.HandState.NONE
+        _fingersExtended.value = 0
+        Log.i(TAG, "Hand trigger detection stopped")
+    }
+
+    /**
+     * Get a bitmap from the current camera preview.
+     * Uses TextureView.getBitmap() from the active camera manager.
+     */
+    private fun getPreviewBitmap(): Bitmap? {
+        return try {
+            // Try UVC camera first (external capture card)
+            val uvcBitmap = cameraUVCManager.getPreviewBitmap()
+            if (uvcBitmap != null) return uvcBitmap
+
+            // Fallback to Camera2 (built-in camera)
+            camera2Manager.getPreviewBitmap()
+        } catch (e: Exception) {
+            null
+        }
     }
 
     fun setOpSearchQuery(query: String) {

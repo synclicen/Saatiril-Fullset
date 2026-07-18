@@ -682,6 +682,25 @@ class UVCCameraManager(private val context: Context) {
     // Photo Capture
     // ═══════════════════════════════════════════════════════════════
 
+    /**
+     * Get a bitmap from the current camera preview (for hand detection).
+     * Returns a downscaled bitmap to save CPU, or null if not available.
+     */
+    fun getPreviewBitmap(): Bitmap? {
+        val tv = textureView ?: return null
+        return try {
+            if (tv.isAvailable && tv.width > 0 && tv.height > 0) {
+                // Downscale to 320px width for hand detection (saves CPU)
+                val scale = 320f / tv.width
+                val w = 320
+                val h = (tv.height * scale).toInt()
+                tv.getBitmap(w, h)
+            } else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     fun capturePhoto(onResult: (String?) -> Unit) {
         val camera = uvcCamera
         if (camera == null) {

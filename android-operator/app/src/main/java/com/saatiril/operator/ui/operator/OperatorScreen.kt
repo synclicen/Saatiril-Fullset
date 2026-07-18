@@ -42,6 +42,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.PermissionChecker
 import androidx.lifecycle.LifecycleOwner
+import com.saatiril.operator.camera.HandTriggerDetector
 import com.saatiril.operator.data.*
 import com.saatiril.operator.ui.gridline.GridlineOverlay
 
@@ -122,6 +123,9 @@ fun OperatorScreen(
     val cameraSource by viewModel.cameraSource.collectAsState()
     val shutterMode by viewModel.shutterMode.collectAsState()
     val timerCountdown by viewModel.timerCountdown.collectAsState()
+    val handTriggerEnabled by viewModel.handTriggerEnabled.collectAsState()
+    val handState by viewModel.handState.collectAsState()
+    val fingersExtended by viewModel.fingersExtended.collectAsState()
     val opSearchQuery by viewModel.opSearchQuery.collectAsState()
     val frameBitmap by viewModel.frameBitmap.collectAsState()
     val mcCallBuffer by viewModel.mcCallBuffer.collectAsState()
@@ -373,6 +377,65 @@ fun OperatorScreen(
                             }
                         }
                     }
+
+                    // Hand Trigger Indicator (top-right corner)
+                    if (handTriggerEnabled) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .background(
+                                        when (handState) {
+                                            HandTriggerDetector.HandState.CONFIRMED -> Color(0x8822c55e)
+                                            HandTriggerDetector.HandState.HELD -> Color(0x88d4af37)
+                                            else -> Color(0xAA000000)
+                                        },
+                                        RoundedCornerShape(12.dp)
+                                    )
+                                    .border(
+                                        1.dp,
+                                        when (handState) {
+                                            HandTriggerDetector.HandState.CONFIRMED -> Color(0xFF22c55e)
+                                            HandTriggerDetector.HandState.HELD -> GOLD
+                                            else -> BORDER
+                                        },
+                                        RoundedCornerShape(12.dp)
+                                    )
+                                    .padding(horizontal = 6.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.PanTool,
+                                    contentDescription = null,
+                                    tint = when (handState) {
+                                        HandTriggerDetector.HandState.CONFIRMED -> Color(0xFF4ade80)
+                                        HandTriggerDetector.HandState.HELD -> GOLD
+                                        else -> MUTED
+                                    },
+                                    modifier = Modifier.size(10.dp)
+                                )
+                                Text(
+                                    when (handState) {
+                                        HandTriggerDetector.HandState.CONFIRMED -> "OK"
+                                        HandTriggerDetector.HandState.HELD -> "..."
+                                        else -> if (fingersExtended > 0) "$fingersExtended✋" else "Tangan"
+                                    },
+                                    style = TextStyle(
+                                        color = when (handState) {
+                                            HandTriggerDetector.HandState.CONFIRMED -> Color(0xFF4ade80)
+                                            else -> MUTED
+                                        },
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -602,6 +665,53 @@ fun OperatorScreen(
                                     onModeChange = { viewModel.setShutterMode(it) },
                                     cameraMode = mode
                                 )
+                                // ── Hand trigger toggle ──
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(
+                                            if (handTriggerEnabled) Color(0x224ade80) else PANEL,
+                                            RoundedCornerShape(4.dp)
+                                        )
+                                        .border(
+                                            BorderStroke(1.dp, if (handTriggerEnabled) Color(0xFF4ade80) else BORDER),
+                                            RoundedCornerShape(4.dp)
+                                        )
+                                        .clickable { viewModel.setHandTriggerEnabled(!handTriggerEnabled) }
+                                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.PanTool,
+                                        contentDescription = null,
+                                        tint = if (handTriggerEnabled) Color(0xFF4ade80) else MUTED,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Text(
+                                        "Trigger Tangan",
+                                        style = TextStyle(
+                                            color = if (handTriggerEnabled) Color(0xFF4ade80) else MUTED,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    )
+                                    if (handTriggerEnabled && handState != HandTriggerDetector.HandState.NONE) {
+                                        Text(
+                                            when (handState) {
+                                                HandTriggerDetector.HandState.CONFIRMED -> " OK"
+                                                HandTriggerDetector.HandState.HELD -> " ..."
+                                                else -> if (fingersExtended > 0) " $fingersExtended✋" else ""
+                                            },
+                                            style = TextStyle(
+                                                color = if (handState == HandTriggerDetector.HandState.CONFIRMED) Color(0xFF4ade80) else GOLD,
+                                                fontSize = 8.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

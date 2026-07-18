@@ -109,4 +109,11 @@ dependencies {
 
     // DataStore for preferences
     implementation("androidx.datastore:datastore-preferences:1.0.0")
+
+    // ═══════════════════════════════════════════════════════════════
+    // ML Kit Hand Detection — for "Trigger Tangan" palm/hand trigger
+    // Detects any hand (open or closed) in the camera preview frame.
+    // Offline model, no network required.
+    // ═══════════════════════════════════════════════════════════════
+    implementation("com.google.mlkit:hand-detection:16.3.0")
 }
