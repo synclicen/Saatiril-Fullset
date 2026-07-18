@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-windows:
@@ -163,3 +163,41 @@ jobs:
           name: SAATIRIL-Fullset-All-Artifacts
           path: dist-electron/*
           if-no-files-found: warn
+
+      # ── Auto-publish Portable to GitHub Releases (tag: latest) ──
+      - name: Rename Portable exe for release
+        shell: pwsh
+        run: |
+          $portable = Get-ChildItem "dist-electron\SAATIRIL-Fullset-*-Portable.exe" | Select-Object -First 1
+          if ($portable) {
+            Copy-Item $portable.FullName "dist-electron\saatiril-portable.exe"
+            $size = [math]::Round($portable.Length / 1MB, 1)
+            Write-Host "Portable renamed: saatiril-portable.exe ($size MB)"
+          } else {
+            Write-Error "Portable exe not found!"
+            exit 1
+          }
+
+      - name: Upload Portable to latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          # Try to upload to existing 'latest' release (created by APK build)
+          # If release doesn't exist yet, create it
+          $releaseExists = $false
+          try {
+            gh release view latest 2>$null
+            if ($LASTEXITCODE -eq 0) { $releaseExists = $true }
+          } catch {}
+
+          if ($releaseExists) {
+            # Delete old portable asset if exists, then upload new one
+            gh release delete-asset latest saatiril-portable.exe --yes 2>$null || true
+            gh release upload latest dist-electron/saatiril-portable.exe --clobber
+            Write-Host "Portable uploaded to existing 'latest' release"
+          } else {
+            # Create release with portable only (APK build will add APK later)
+            gh release create latest dist-electron/saatiril-portable.exe --title "Saatiril Operator - Latest" --notes "Portable Windows terbaru dari build #${{ github.run_number }} (${{ github.sha }})" --prerelease
+            Write-Host "Created 'latest' release with Portable"
+          }
