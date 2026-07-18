@@ -11,8 +11,8 @@ android {
         applicationId = "com.saatiril.operator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 31
-        versionName = "1.0.31-frame-filter-camera2-lan"
+        versionCode = 32
+        versionName = "1.0.32-mediapipe-hand-trigger"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -111,9 +111,12 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.0.0")
 
     // ═══════════════════════════════════════════════════════════════
-    // ML Kit Hand Detection — for "Trigger Tangan" palm/hand trigger
-    // Detects any hand (open or closed) in the camera preview frame.
-    // Offline model, no network required.
+    // MediaPipe Tasks Vision — for "Trigger Tangan" hand trigger
+    // Detects any hand (open or closed) with 21 landmarks per hand.
+    // Offline model (hand_landmarker.task in assets), no network required.
+    //
+    // NOTE: com.google.mlkit:hand-detection does NOT exist on Maven!
+    // Google's hand detection is only available via MediaPipe Tasks Vision.
     // ═══════════════════════════════════════════════════════════════
-    implementation("com.google.mlkit:hand-detection:16.3.0")
+    implementation("com.google.mediapipe:tasks-vision:0.10.14")
 }

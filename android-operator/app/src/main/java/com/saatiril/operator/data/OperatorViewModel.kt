@@ -1100,7 +1100,7 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun startHandDetection() {
-        if (!HandTriggerDetector.initialize()) {
+        if (!HandTriggerDetector.initialize(getApplication<Application>())) {
             Log.e(TAG, "Failed to initialize hand trigger detector")
             _handTriggerEnabled.value = false
             return

@@ -1,17 +1,19 @@
 package com.saatiril.operator.camera
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.handlandmarks.HandLandmark
-import com.google.mlkit.vision.handlandmarks.HandLandmarker
-import com.google.mlkit.vision.handlandmarks.HandLandmarkingOptions
-import com.google.mlkit.vision.handlandmarks.HandLandmarks
+import com.google.mediapipe.framework.image.BitmapImageBuilder
+import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
+import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.vision.core.RunningMode
+import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
+import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
 
 /**
  * Hand Trigger Detector — "Trigger Tangan"
  *
- * Uses ML Kit Hand Landmarker to detect ANY hand in the camera frame
+ * Uses MediaPipe Hand Landmarker to detect ANY hand in the camera frame
  * (open palm or closed fist) and trigger the camera shutter.
  *
  * This matches the Chrome/Electron version's use-palm-detection.ts behavior:
@@ -20,8 +22,12 @@ import com.google.mlkit.vision.handlandmarks.HandLandmarks
  * - onHandConfirmed fires ONCE → triggers capture
  * - onHandReleased fires when hand leaves frame → cancels countdown
  *
- * ML Kit processes camera preview bitmaps (from TextureView.getBitmap())
- * on a background thread — no JS/MediaPipe scripts needed.
+ * MediaPipe processes camera preview bitmaps (from TextureView.getBitmap())
+ * on a background thread — no JavaScript/MediaPipe scripts needed.
+ *
+ * NOTE: com.google.mlkit:hand-detection does NOT exist on Maven.
+ * Google's hand detection is only available via MediaPipe Tasks Vision
+ * (com.google.mediapipe:tasks-vision).
  */
 object HandTriggerDetector {
     private const val TAG = "HandTrigger"
@@ -31,6 +37,9 @@ object HandTriggerDetector {
 
     // Minimum detection confidence
     private const val MIN_CONFIDENCE = 0.5f
+
+    // Model file in assets folder
+    private const val MODEL_PATH = "hand_landmarker.task"
 
     private var handLandmarker: HandLandmarker? = null
     private var isInitialized = false
@@ -57,23 +66,31 @@ object HandTriggerDetector {
     }
 
     /**
-     * Initialize the ML Kit Hand Landmarker.
+     * Initialize the MediaPipe Hand Landmarker.
      * Call once before starting detection.
+     *
+     * @param context Application context (needed for asset loading)
      */
-    fun initialize(): Boolean {
+    fun initialize(context: Context): Boolean {
         if (isInitialized) return true
 
         return try {
-            val options = HandLandmarkingOptions.Builder()
-                .setMinHandDetectionConfidence(MIN_CONFIDENCE)
-                .setMinHandTrackingConfidence(MIN_CONFIDENCE)
-                .setMinHandPresenceConfidence(MIN_CONFIDENCE)
-                .setRunningMode(com.google.mlkit.vision.handlandmarks.RunningMode.IMAGE)
+            val baseOptions = BaseOptions.builder()
+                .setModelAssetPath(MODEL_PATH)
                 .build()
 
-            handLandmarker = HandLandmarker.getClient(options)
+            val options = HandLandmarker.HandLandmarkerOptions.builder()
+                .setBaseOptions(baseOptions)
+                .setMinHandDetectionConfidence(MIN_CONFIDENCE)
+                .setMinTrackingConfidence(MIN_CONFIDENCE)
+                .setMinHandPresenceConfidence(MIN_CONFIDENCE)
+                .setNumHands(1)
+                .setRunningMode(RunningMode.IMAGE)
+                .build()
+
+            handLandmarker = HandLandmarker.createFromOptions(context, options)
             isInitialized = true
-            Log.i(TAG, "ML Kit Hand Landmarker initialized successfully")
+            Log.i(TAG, "MediaPipe Hand Landmarker initialized successfully")
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize Hand Landmarker: ${e.message}")
@@ -113,6 +130,9 @@ object HandTriggerDetector {
      * Process a camera preview bitmap.
      * Call this from a background thread/coroutine with each preview frame.
      *
+     * MediaPipe's IMAGE mode detect() is synchronous (blocking) —
+     * it returns the result directly without needing Tasks.await().
+     *
      * @param bitmap Camera preview frame (from TextureView.getBitmap())
      * @return true if a hand was detected in this frame
      */
@@ -120,15 +140,20 @@ object HandTriggerDetector {
         if (!isRunning || !isInitialized) return false
 
         try {
-            val inputImage = InputImage.fromBitmap(bitmap, 0)
-            val result = handLandmarker?.process(inputImage) ?: return false
+            // Build MediaPipe image from bitmap
+            val mpImage = BitmapImageBuilder(bitmap).build()
 
-            val hands = result.handLandmarks
-            val handDetected = hands.isNotEmpty()
+            // Synchronous detection in IMAGE mode
+            val result: HandLandmarkerResult? = handLandmarker?.detect(mpImage)
+            if (result == null) return false
+
+            // Check if any hands detected
+            val landmarks = result.landmarks()
+            val handDetected = landmarks.isNotEmpty()
 
             // Count extended fingers for UI indicator (first hand only)
             fingersExtended = if (handDetected) {
-                countExtendedFingers(hands[0])
+                countExtendedFingers(landmarks[0])
             } else {
                 0
             }
@@ -160,7 +185,7 @@ object HandTriggerDetector {
 
             return handDetected
         } catch (e: Exception) {
-            // ML Kit can occasionally throw on bad frames — skip silently
+            // MediaPipe can occasionally throw on bad frames — skip silently
             return false
         }
     }
@@ -168,9 +193,14 @@ object HandTriggerDetector {
     /**
      * Count extended fingers from hand landmarks (for UI indicator only).
      * Returns 0–5. This is NOT used for triggering — any hand triggers.
+     *
+     * Each NormalizedLandmark has .x, .y, .z (normalized 0-1).
+     * 21 landmarks per hand:
+     *   0: WRIST, 1-4: THUMB (CMC,MCP,IP,TIP), 5-8: INDEX (MCP,PIP,DIP,TIP),
+     *   9-12: MIDDLE, 13-16: RING, 17-20: PINKY
      */
-    private fun countExtendedFingers(landmarks: List<HandLandmark>): Int {
-        if (landmarks.size < 21) return 0
+    private fun countExtendedFingers(handLandmarks: List<NormalizedLandmark>): Int {
+        if (handLandmarks.size < 21) return 0
 
         val tipIds = listOf(4, 8, 12, 16, 20)
         val pipIds = listOf(3, 6, 10, 14, 18)
@@ -178,23 +208,23 @@ object HandTriggerDetector {
         var fingersUp = 0
 
         // Thumb: compare x position relative to hand orientation
-        val thumbTip = landmarks[tipIds[0]]
-        val thumbIp = landmarks[pipIds[0]]
-        val wrist = landmarks[0]
-        val middleMcp = landmarks[9]
-        val isRightHand = wrist.position.x < middleMcp.position.x
+        val thumbTip = handLandmarks[tipIds[0]]
+        val thumbIp = handLandmarks[pipIds[0]]
+        val wrist = handLandmarks[0]
+        val middleMcp = handLandmarks[9]
+        val isRightHand = wrist.x < middleMcp.x
 
         if (isRightHand) {
-            if (thumbTip.position.x < thumbIp.position.x) fingersUp++
+            if (thumbTip.x < thumbIp.x) fingersUp++
         } else {
-            if (thumbTip.position.x > thumbIp.position.x) fingersUp++
+            if (thumbTip.x > thumbIp.x) fingersUp++
         }
 
         // Other 4 fingers: tip above PIP (lower y = higher) means extended
         for (i in 1..4) {
-            val tip = landmarks[tipIds[i]]
-            val pip = landmarks[pipIds[i]]
-            if (tip.position.y < pip.position.y) fingersUp++
+            val tip = handLandmarks[tipIds[i]]
+            val pip = handLandmarks[pipIds[i]]
+            if (tip.y < pip.y) fingersUp++
         }
 
         return fingersUp
