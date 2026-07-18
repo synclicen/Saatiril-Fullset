@@ -266,3 +266,59 @@ Stage Summary:
 - Layout fixed: Trigger Tangan in its own row, no longer overlapping mode buttons
 - Both Android and Electron now have consistent photobooth behavior
 - Works across all camera modes (front, back, UVC/external)
+
+---
+Task ID: 10
+Agent: main
+Task: Fix timer still cancelling on hand release + replace static hand detection with waving gesture
+
+Work Log:
+- User reported: "TIMERMASIH DIBATALKAN SAAT TANGAN DILEPAS" + "trigger tangan juga sangat tidak responsif"
+- User requested: "Ganti dengan tangan waving agar lebih mudah"
+- Root cause 1: Previous fix (Task 9) wasn't pushed to GitHub — APK still had old code
+- Root cause 2: Static hand detection was unresponsive — person must hold hand perfectly still
+- Solution: Complete rewrite of hand detection to use WAVING GESTURE detection
+
+- ANDROID (HandTriggerDetector.kt) — FULL REWRITE:
+  - New state machine: NONE → HAND_VISIBLE → WAVING → CONFIRMED
+  - Track wrist (landmark 0) X position across frames
+  - Detect direction changes: hand moving left→right or right→left
+  - MIN_WAVE_AMPLITUDE = 0.06 (6% of frame width per direction)
+  - MIN_DIRECTION_CHANGES = 2 (one full back-and-forth)
+  - WAVE_WINDOW_MS = 2000ms (direction changes must be within 2 seconds)
+  - CONFIRM_COOLDOWN_MS = 5000ms (prevent re-trigger after capture)
+  - Sampling: every 80ms (~12fps) for smooth wave tracking
+  - Lowered detection confidence: 0.5 → 0.4 for better responsiveness
+  - Removed old static hand detection code entirely
+
+- ELECTRON (use-palm-detection.ts) — FULL REWRITE:
+  - Same waving algorithm as Android
+  - New PalmState values: 'hand_visible' | 'waving' (replaces 'held')
+  - Same parameters: MIN_WAVE_AMPLITUDE=0.06, MIN_DIRECTION_CHANGES=2, etc.
+  - Lowered detection confidence: 0.5 → 0.4
+  - onPalmReleased callback is a NO-OP (timer never cancelled)
+
+- PHOTOBOOTH BEHAVIOR (both platforms):
+  - Wave detected → timer starts → timer ALWAYS completes
+  - Hand leaving frame does NOT cancel timer
+  - Person can stop waving and pose during countdown
+  - Verified in code: Android onHandReleased = no-op, Electron onPalmReleased = no-op
+
+- UI updates (both platforms):
+  - "Trigger Tangan" → "Trigger Waving"
+  - Camera overlay: "OK ✓" / "Waving..." / "Tangan" / "Wave"
+  - Shutter panel: "Wave terdeteksi ✓" / "Mendeteksi wave..." / "Menunggu wave..."
+  - Progress badge: "Wave terdeteksi — timer berjalan..."
+  - Title/tooltip: "Trigger Waving — lambaikan tangan ke kamera untuk memulai timer/foto"
+
+- OperatorViewModel.kt: detection loop speed 100ms → 80ms for better wave tracking
+- Committed: d72f0e3, pushed to GitHub
+- APK build: ✅ SUCCESS
+- Electron build: ✅ SUCCESS
+
+Stage Summary:
+- Waving gesture detection replaces static hand detection — much more responsive
+- Timer is NEVER cancelled when hand leaves frame (photobooth behavior)
+- Lower confidence threshold (0.4) + faster sampling (80ms) = more responsive
+- Both APK and Electron builds pass successfully
+- Works across all camera modes (front, back, UVC/external)
