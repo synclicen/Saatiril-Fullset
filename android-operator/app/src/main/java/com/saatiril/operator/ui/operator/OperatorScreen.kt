@@ -1176,7 +1176,6 @@ private fun TargetInfoContent(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ShutterModeContent(
     currentMode: String,
@@ -1187,34 +1186,40 @@ private fun ShutterModeContent(
     fingersExtended: Int,
     onHandTriggerToggle: () -> Unit
 ) {
-    // All mode buttons + Trigger Tangan in a single FlowRow
+    // Layout: Row 1 = shutter mode buttons, Row 2 = Trigger Tangan toggle
     // This prevents Trigger Tangan from overlapping/covering other buttons
-    FlowRow(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-        verticalArrangement = Arrangement.spacedBy(3.dp)
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        // Shutter mode buttons
-        SHUTTER_MODES.forEach { (id, label) ->
-            if (id == "ai" && cameraMode != CameraModes.SINGLE && cameraMode != CameraModes.DUAL) return@forEach
-            val isActive = currentMode == id
-            Row(
-                modifier = Modifier
-                    .background(if (isActive) GOLD.copy(alpha = 0.2f) else PANEL, RoundedCornerShape(4.dp))
-                    .border(BorderStroke(1.dp, if (isActive) GOLD else BORDER), RoundedCornerShape(4.dp))
-                    .clickable { onModeChange(id) }
-                    .padding(horizontal = 5.dp, vertical = 3.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                Icon(when (id) { "ai" -> Icons.Default.AutoAwesome; "manual" -> Icons.Default.Camera; else -> Icons.Default.Timer },
-                    contentDescription = null, tint = if (isActive) GOLD else MUTED, modifier = Modifier.size(10.dp))
-                Text(label, style = TextStyle(color = if (isActive) GOLD else MUTED, fontSize = 8.sp, fontWeight = FontWeight.Bold))
+        // Row 1: Shutter mode buttons
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SHUTTER_MODES.forEach { (id, label) ->
+                if (id == "ai" && cameraMode != CameraModes.SINGLE && cameraMode != CameraModes.DUAL) return@forEach
+                val isActive = currentMode == id
+                Row(
+                    modifier = Modifier
+                        .background(if (isActive) GOLD.copy(alpha = 0.2f) else PANEL, RoundedCornerShape(4.dp))
+                        .border(BorderStroke(1.dp, if (isActive) GOLD else BORDER), RoundedCornerShape(4.dp))
+                        .clickable { onModeChange(id) }
+                        .padding(horizontal = 5.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Icon(when (id) { "ai" -> Icons.Default.AutoAwesome; "manual" -> Icons.Default.Camera; else -> Icons.Default.Timer },
+                        contentDescription = null, tint = if (isActive) GOLD else MUTED, modifier = Modifier.size(10.dp))
+                    Text(label, style = TextStyle(color = if (isActive) GOLD else MUTED, fontSize = 8.sp, fontWeight = FontWeight.Bold))
+                }
             }
         }
 
-        // Trigger Tangan toggle — same row flow as mode buttons
+        // Row 2: Trigger Tangan toggle (separate row for clarity)
         Row(
             modifier = Modifier
+                .fillMaxWidth()
                 .background(
                     if (handTriggerEnabled) Color(0x224ade80) else PANEL,
                     RoundedCornerShape(4.dp)
@@ -1226,7 +1231,7 @@ private fun ShutterModeContent(
                 .clickable { onHandTriggerToggle() }
                 .padding(horizontal = 5.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Icon(
                 Icons.Default.PanTool,
@@ -1242,17 +1247,25 @@ private fun ShutterModeContent(
                     fontWeight = FontWeight.Bold
                 )
             )
-            if (handTriggerEnabled && handState != HandTriggerDetector.HandState.NONE) {
+            if (handTriggerEnabled) {
+                Text(
+                    "•",
+                    style = TextStyle(color = MUTED, fontSize = 8.sp)
+                )
                 Text(
                     when (handState) {
-                        HandTriggerDetector.HandState.CONFIRMED -> " OK"
-                        HandTriggerDetector.HandState.HELD -> " ..."
-                        else -> if (fingersExtended > 0) " $fingersExtended✋" else ""
+                        HandTriggerDetector.HandState.CONFIRMED -> "Tangan terdeteksi ✓"
+                        HandTriggerDetector.HandState.HELD -> "Mendeteksi..."
+                        else -> if (fingersExtended > 0) "$fingersExtended✋" else "Menunggu tangan..."
                     },
                     style = TextStyle(
-                        color = if (handState == HandTriggerDetector.HandState.CONFIRMED) Color(0xFF4ade80) else GOLD,
-                        fontSize = 8.sp,
-                        fontWeight = FontWeight.Bold
+                        color = when (handState) {
+                            HandTriggerDetector.HandState.CONFIRMED -> Color(0xFF4ade80)
+                            HandTriggerDetector.HandState.HELD -> GOLD
+                            else -> MUTED
+                        },
+                        fontSize = 7.sp,
+                        fontWeight = FontWeight.Normal
                     )
                 )
             }

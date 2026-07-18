@@ -19,8 +19,10 @@ import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
  * This matches the Chrome/Electron version's use-palm-detection.ts behavior:
  * - ANY hand visible = trigger (not just 5 fingers extended)
  * - 300ms sustain required before confirming (debounce against flicker)
- * - onHandConfirmed fires ONCE → triggers capture
- * - onHandReleased fires when hand leaves frame → cancels countdown
+ * - onHandConfirmed fires ONCE → triggers capture (starts timer or direct capture)
+ * - onHandReleased fires when hand leaves frame → does NOT cancel timer
+ *   (photobooth behavior: once hand confirms, timer always completes so the
+ *   person being photographed can pose while the countdown runs)
  *
  * MediaPipe processes camera preview bitmaps (from TextureView.getBitmap())
  * on a background thread — no JavaScript/MediaPipe scripts needed.
@@ -35,6 +37,10 @@ object HandTriggerDetector {
     // How long the hand must be visible before confirming (ms)
     private const val CONFIRM_SUSTAIN_MS = 300L
 
+    // Cooldown after a confirmation before another can fire (ms)
+    // Prevents re-triggering while the capture/timer flow is still running
+    private const val CONFIRM_COOLDOWN_MS = 5000L
+
     // Minimum detection confidence
     private const val MIN_CONFIDENCE = 0.5f
 
@@ -48,6 +54,7 @@ object HandTriggerDetector {
     // State tracking
     private var handVisibleSince = 0L
     private var isConfirmed = false
+    private var lastConfirmTime = 0L  // Cooldown tracking
 
     // Callbacks
     var onHandConfirmed: (() -> Unit)? = null
@@ -109,6 +116,7 @@ object HandTriggerDetector {
         isRunning = true
         handVisibleSince = 0L
         isConfirmed = false
+        lastConfirmTime = 0L
         handState = HandState.NONE
         fingersExtended = 0
         Log.i(TAG, "Hand trigger detection started")
@@ -121,6 +129,7 @@ object HandTriggerDetector {
         isRunning = false
         handVisibleSince = 0L
         isConfirmed = false
+        lastConfirmTime = 0L
         handState = HandState.NONE
         fingersExtended = 0
         Log.i(TAG, "Hand trigger detection stopped")
@@ -132,6 +141,12 @@ object HandTriggerDetector {
      *
      * MediaPipe's IMAGE mode detect() is synchronous (blocking) —
      * it returns the result directly without needing Tasks.await().
+     *
+     * PHOTOBOOTH BEHAVIOR:
+     * Once a hand is confirmed and triggers capture (timer or direct),
+     * the timer/capture ALWAYS runs to completion — removing the hand
+     * does NOT cancel it. This allows the person being photographed to
+     * remove their hand and pose while the countdown runs.
      *
      * @param bitmap Camera preview frame (from TextureView.getBitmap())
      * @return true if a hand was detected in this frame
@@ -161,6 +176,13 @@ object HandTriggerDetector {
             val now = System.currentTimeMillis()
 
             if (handDetected) {
+                // Check cooldown — skip detection if recently confirmed
+                if (lastConfirmTime > 0 && now - lastConfirmTime < CONFIRM_COOLDOWN_MS) {
+                    // Still in cooldown period — keep state as NONE
+                    handState = HandState.NONE
+                    return true
+                }
+
                 if (handVisibleSince == 0L) {
                     // Hand just appeared
                     handVisibleSince = now
@@ -168,14 +190,18 @@ object HandTriggerDetector {
                 } else if (!isConfirmed && now - handVisibleSince >= CONFIRM_SUSTAIN_MS) {
                     // Sustained long enough → confirm
                     isConfirmed = true
+                    lastConfirmTime = now
                     handState = HandState.CONFIRMED
                     Log.i(TAG, "Hand confirmed — triggering shutter")
                     onHandConfirmed?.invoke()
                 }
             } else {
-                // No hand
+                // No hand in frame
                 if (isConfirmed) {
-                    Log.i(TAG, "Hand left frame — cancelling")
+                    // Hand was confirmed and now left — photobooth behavior:
+                    // Do NOT cancel the timer. Just reset detection state so
+                    // the next hand can trigger a new capture later.
+                    Log.i(TAG, "Hand left frame after confirmation — timer continues")
                     onHandReleased?.invoke()
                 }
                 handVisibleSince = 0L

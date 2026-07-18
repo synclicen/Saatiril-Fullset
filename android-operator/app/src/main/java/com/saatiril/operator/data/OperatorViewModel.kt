@@ -1113,8 +1113,12 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             }
         }
         HandTriggerDetector.onHandReleased = {
-            Log.i(TAG, "Hand trigger: hand released — cancelling timer")
-            cancelTimerCapture()
+            // PHOTOBOOTH BEHAVIOR: Do NOT cancel the timer when hand leaves.
+            // Once hand is confirmed → timer starts → timer ALWAYS completes.
+            // The person being photographed can remove their hand and pose
+            // while the countdown runs. Just reset hand detection state so
+            // the next hand gesture can trigger a new capture later.
+            Log.i(TAG, "Hand trigger: hand released — timer continues (photobooth mode)")
         }
 
         HandTriggerDetector.start()

@@ -223,3 +223,46 @@ Stage Summary:
 - Fix: Use FlowRow (APK) / flex-wrap (Windows) with all buttons in same container
 - Layout is now consistent between APK and Windows
 - Both builds pass
+
+---
+Task ID: 9
+Agent: main
+Task: Fix hand trigger behavior — implement photobooth mode (timer always completes even if hand leaves)
+
+Work Log:
+- User explained: hand trigger should START the timer, then the person can remove hand and pose
+  "ketika tangan sudah terbaca berarti timer dimulai dan akan memotret jika waktu sudah sampai,
+   bukan pula ketika tangan dipindahkan ketika waktu sudah berjalan maka proses foto di batalkan"
+- Investigated both Android and Electron hand trigger implementations
+- CRITICAL FINDING: Android cancelled timer on hand release, Electron did NOT (inconsistent)
+  - Android: onHandReleased → cancelTimerCapture() ← WRONG for photobooth
+  - Electron: onPalmReleased → no-op ("let the selected mode run to completion") ← CORRECT
+- Fix 1: Android OperatorViewModel.kt — changed onHandReleased from cancelTimerCapture() to no-op
+  - Added comment explaining photobooth behavior
+- Fix 2: HandTriggerDetector.kt — updated comments to document photobooth behavior
+  - "Hand left frame after confirmation — timer continues" (was "cancelling")
+- Fix 3: Electron use-palm-detection.ts — updated comments for consistency
+  - Documented that onPalmReleased is a no-op (photobooth behavior)
+  - Updated log message: "timer continues (photobooth mode)"
+- Fix 4: Added 5-second cooldown after hand confirmation (both platforms)
+  - Prevents re-triggering while capture/timer flow is still running
+  - Android: lastConfirmTime + CONFIRM_COOLDOWN_MS = 5000L
+  - Electron: lastConfirmTimeRef + HAND_CONFIRM_COOLDOWN_MS = 5000
+  - After confirmation, detector ignores hands for 5 seconds before allowing another trigger
+- Fix 5: Shutter mode layout improved (both platforms)
+  - Android: Changed from FlowRow to Column(Row + Row) — mode buttons in Row 1, Trigger Tangan in Row 2
+  - Electron: Same approach — separate rows for mode buttons and Trigger Tangan
+  - Trigger Tangan now shows descriptive status: "Tangan terdeteksi ✓", "Mendeteksi...", "Menunggu tangan..."
+  - Removed ExperimentalLayoutApi opt-in (no longer needed without FlowRow)
+- Fix 6: Updated progress badge text
+  - "Tangan terdeteksi — memicu shutter..." → "Tangan terdeteksi — timer berjalan..."
+- Verified: Lint passes, dev server running, hand trigger works across all camera modes
+  (front/back built-in + UVC external — getPreviewBitmap tries UVC first, falls back to Camera2)
+
+Stage Summary:
+- Photobooth behavior implemented: once hand confirms → timer starts → timer ALWAYS completes
+- Hand removal does NOT cancel the timer — person can pose while countdown runs
+- 5-second cooldown prevents accidental re-triggering after capture
+- Layout fixed: Trigger Tangan in its own row, no longer overlapping mode buttons
+- Both Android and Electron now have consistent photobooth behavior
+- Works across all camera modes (front, back, UVC/external)

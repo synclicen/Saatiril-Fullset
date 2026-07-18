@@ -9,13 +9,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  * are open (5 extended) or closed (fist). This is "telapak tangan" mode:
  * the mere presence of a hand/palm facing the camera is the trigger.
  *
- * Flow:
+ * PHOTOBOOTH BEHAVIOR:
  *   1. Operator shows their hand/palm to the camera (open OR closed).
  *   2. Hand must be held ~300ms to be "confirmed" (debounce against flicker).
- *   3. onPalmConfirmed fires ONCE → operator-panel triggers capture.
- *   4. If the hand leaves the frame while a countdown is still running,
- *      onPalmReleased fires → countdown cancels.
- *   5. If the hand stays through the countdown → photo is taken.
+ *   3. onPalmConfirmed fires ONCE → starts timer (or direct capture).
+ *   4. The person being photographed can REMOVE their hand and pose —
+ *      the timer ALWAYS completes. onPalmReleased does NOT cancel it.
+ *   5. When the countdown reaches 0 → photo is taken automatically.
  *
  * This is NOT the old "count fingers 1→5" or "open palm only" gesture.
  * ANY visible hand = trigger.
@@ -36,7 +36,7 @@ export type PalmState = 'none' | 'searching' | 'held' | 'confirmed'
 export interface PalmDetectionCallbacks {
   /** Fires once when a hand has been held long enough to confirm */
   onPalmConfirmed: () => void
-  /** Fires when the confirmed hand leaves the frame (cancels countdown) */
+  /** Fires when the confirmed hand leaves the frame (NO-OP: timer continues — photobooth behavior) */
   onPalmReleased: () => void
 }
 
@@ -133,6 +133,10 @@ function countExtendedFingers(landmarks: any[]): number {
 // Shorter than before (was 500ms) because any-hand detection is more stable
 const HAND_CONFIRM_SUSTAIN_MS = 300
 
+// Cooldown after a confirmation before another can fire (ms)
+// Prevents re-triggering while the capture/timer flow is still running
+const HAND_CONFIRM_COOLDOWN_MS = 5000
+
 export function usePalmDetection(): UsePalmDetectionReturn {
   const [status, setStatus] = useState<PalmDetectionStatus>('unloaded')
   const [palmState, setPalmState] = useState<PalmState>('none')
@@ -150,6 +154,8 @@ export function usePalmDetection(): UsePalmDetectionReturn {
   const confirmedRef = useRef<boolean>(false)
   // Timestamp when hand first appeared (0 = not currently held)
   const handSinceRef = useRef<number>(0)
+  // Timestamp of last confirmation — used for cooldown
+  const lastConfirmTimeRef = useRef<number>(0)
 
   const processResults = useCallback((results: any) => {
     if (!isDetectingRef.current) return
@@ -170,6 +176,13 @@ export function usePalmDetection(): UsePalmDetectionReturn {
     const handVisible = multiHandLandmarks.length > 0
 
     if (handVisible) {
+      // Check cooldown — skip detection if recently confirmed
+      if (lastConfirmTimeRef.current > 0 && now - lastConfirmTimeRef.current < HAND_CONFIRM_COOLDOWN_MS) {
+        // Still in cooldown period — keep state as none
+        setPalmState('none')
+        return
+      }
+
       if (handSinceRef.current === 0) {
         // Hand just appeared — start the sustain clock
         handSinceRef.current = now
@@ -177,6 +190,7 @@ export function usePalmDetection(): UsePalmDetectionReturn {
       } else if (!confirmedRef.current && now - handSinceRef.current >= HAND_CONFIRM_SUSTAIN_MS) {
         // Sustained long enough → confirm (fires capture trigger)
         confirmedRef.current = true
+        lastConfirmTimeRef.current = now
         setPalmState('confirmed')
         console.log('[SAATIRIL Palm] Hand confirmed — triggering shutter')
         callbacksRef.current?.onPalmConfirmed?.()
@@ -184,8 +198,9 @@ export function usePalmDetection(): UsePalmDetectionReturn {
     } else {
       // No hand in frame right now
       if (confirmedRef.current) {
-        // Was confirmed, now hand gone → release (cancels countdown)
-        console.log('[SAATIRIL Palm] Hand left frame — cancelling countdown')
+        // Was confirmed, now hand gone → photobooth behavior:
+        // Timer continues to completion. The person can pose while countdown runs.
+        console.log('[SAATIRIL Palm] Hand left frame — timer continues (photobooth mode)')
         callbacksRef.current?.onPalmReleased?.()
       }
       handSinceRef.current = 0
@@ -270,6 +285,7 @@ export function usePalmDetection(): UsePalmDetectionReturn {
       isDetectingRef.current = true
       confirmedRef.current = false
       handSinceRef.current = 0
+      lastConfirmTimeRef.current = 0
 
       setIsRunning(true)
       setPalmState('searching')
@@ -292,6 +308,7 @@ export function usePalmDetection(): UsePalmDetectionReturn {
     setStatus('model_ready')
     confirmedRef.current = false
     handSinceRef.current = 0
+    lastConfirmTimeRef.current = 0
   }, [])
 
   const dispose = useCallback(() => {
