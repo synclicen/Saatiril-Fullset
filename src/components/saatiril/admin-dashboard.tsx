@@ -331,18 +331,46 @@ export default function AdminDashboard() {
   const [qrLabel, setQrLabel] = useState('')
 
   // ── Release download state (from GitHub Releases) ──────────────────
-  const [apkInfo, setApkInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; error?: string } | null>(null)
-  const [portableInfo, setPortableInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; error?: string } | null>(null)
+  const GITHUB_REPO = 'synclicen/Saatiril-Fullset'
+  const [apkInfo, setApkInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string } | null>(null)
+  const [portableInfo, setPortableInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string } | null>(null)
 
-  // Check release status from GitHub Releases on mount
+  // Check release status from GitHub Releases on mount — client-side fetch
+  // This works in BOTH dev mode and portable Electron build (no server API needed)
   useEffect(() => {
-    fetch('/api/apk-download').then(r => r.json()).then(data => {
-      setApkInfo(data.apk ?? data)
-      setPortableInfo(data.portable ?? { available: false, error: 'Not found' })
-    }).catch(() => {
-      setApkInfo({ available: false, error: 'Network error' })
-      setPortableInfo({ available: false, error: 'Network error' })
-    })
+    const fetchReleaseInfo = async () => {
+      try {
+        const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/tags/latest`, {
+          headers: { Accept: 'application/vnd.github+json' },
+        })
+        if (!res.ok) throw new Error(`GitHub API returned ${res.status}`)
+        const release = await res.json()
+        const assets = release.assets || []
+
+        const apkAsset = assets.find((a: { name: string }) => a.name.endsWith('.apk'))
+        const portableAsset = assets.find((a: { name: string }) => a.name.endsWith('-portable.exe') || a.name === 'saatiril-portable.exe')
+
+        setApkInfo(apkAsset ? {
+          available: true,
+          sizeMB: (apkAsset.size / (1024 * 1024)).toFixed(1),
+          assetName: apkAsset.name,
+          lastModified: apkAsset.updated_at || release.published_at,
+          downloadUrl: apkAsset.browser_download_url,
+        } : { available: false, error: 'No APK asset found in latest release' })
+
+        setPortableInfo(portableAsset ? {
+          available: true,
+          sizeMB: (portableAsset.size / (1024 * 1024)).toFixed(1),
+          assetName: portableAsset.name,
+          lastModified: portableAsset.updated_at || release.published_at,
+          downloadUrl: portableAsset.browser_download_url,
+        } : { available: false, error: 'No Portable asset found in latest release' })
+      } catch {
+        setApkInfo({ available: false, error: 'GitHub API error' })
+        setPortableInfo({ available: false, error: 'GitHub API error' })
+      }
+    }
+    fetchReleaseInfo()
   }, [])
 
   useEffect(() => {
@@ -416,61 +444,19 @@ export default function AdminDashboard() {
   )
 
   // ── Generate download link helper ────────────────────────────────
-  // Generates a LAN-reachable URL for either APK or Portable download.
+  // Uses direct GitHub Release URL — works in both dev and portable Electron
+  // (no server-side API route needed)
   const generateDownloadLink = useCallback(
-    async (type: 'apk' | 'portable'): Promise<string> => {
-      const api = window.saatirilAPI
-      const isElectron = api?.isElectron
-      const param = type === 'portable' ? '?type=portable' : ''
-
-      if (isElectron) {
-        try {
-          const info = lanInfo || (await api.getLanInfo())
-          const ips = info.ips
-          const lanIP = ips.length > 0 ? ips[0].address : 'localhost'
-          return `http://${lanIP}:${info.httpPort}/api/apk-download${param}`
-        } catch {
-          const hostname = window.location.hostname
-          return `http://${hostname}:3000/api/apk-download${param}`
-        }
-      } else {
-        let origin = window.location.origin
-
-        const hostname = window.location.hostname
-        if (hostname === 'localhost' || hostname === '127.0.0.1') {
-          try {
-            const pc = new RTCPeerConnection({ iceServers: [] })
-            pc.createDataChannel('')
-            const offer = await pc.createOffer()
-            await pc.setLocalDescription(offer)
-
-            const lanIP = await new Promise<string | null>((resolve) => {
-              const timeout = setTimeout(() => { pc.close(); resolve(null) }, 3000)
-              pc.onicecandidate = (e) => {
-                if (!e.candidate) return
-                const parts = e.candidate.candidate.split(' ')
-                const ip = parts[4]
-                if (ip && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip) && !ip.startsWith('0.') && ip !== '0.0.0.0') {
-                  clearTimeout(timeout)
-                  pc.close()
-                  resolve(ip)
-                }
-              }
-            })
-
-            if (lanIP) {
-              const port = window.location.port || '3000'
-              origin = `http://${lanIP}:${port}`
-            }
-          } catch {
-            // WebRTC not available — keep localhost URL
-          }
-        }
-
-        return `${origin}/api/apk-download${param}`
-      }
+    (type: 'apk' | 'portable'): string => {
+      const info = type === 'portable' ? portableInfo : apkInfo
+      if (info?.downloadUrl) return info.downloadUrl
+      // Fallback: construct the GitHub Release URL directly using the tag name
+      // NOTE: Use /releases/download/{tag}/ not /releases/latest/download/
+      // because the latter only works for non-prerelease releases.
+      const filename = type === 'portable' ? 'saatiril-portable.exe' : 'saatiril-operator.apk'
+      return `https://github.com/${GITHUB_REPO}/releases/download/latest/${filename}`
     },
-    [lanInfo],
+    [apkInfo, portableInfo],
   )
 
   // Convenience wrappers
@@ -491,8 +477,8 @@ export default function AdminDashboard() {
 
   // ── Show APK download QR code ────────────────────────────────────
   const showApkQrCode = useCallback(
-    async () => {
-      const url = await generateApkLink()
+    () => {
+      const url = generateApkLink()
       setQrLink(url)
       setQrLabel('APK Saatiril Android')
       setQrDialogOpen(true)
@@ -502,8 +488,8 @@ export default function AdminDashboard() {
 
   // ── Show Portable download QR code ───────────────────────────────
   const showPortableQrCode = useCallback(
-    async () => {
-      const url = await generatePortableLink()
+    () => {
+      const url = generatePortableLink()
       setQrLink(url)
       setQrLabel('Saatiril Portable Windows')
       setQrDialogOpen(true)
@@ -514,7 +500,7 @@ export default function AdminDashboard() {
   // ── Copy APK download link ────────────────────────────────────────
   const copyApkLink = useCallback(
     async () => {
-      const url = await generateApkLink()
+      const url = generateApkLink()
       try {
         if (navigator.clipboard) {
           await navigator.clipboard.writeText(url)
@@ -544,7 +530,7 @@ export default function AdminDashboard() {
   // ── Copy Portable download link ──────────────────────────────────
   const copyPortableLink = useCallback(
     async () => {
-      const url = await generatePortableLink()
+      const url = generatePortableLink()
       try {
         if (navigator.clipboard) {
           await navigator.clipboard.writeText(url)
@@ -1049,19 +1035,9 @@ export default function AdminDashboard() {
                   <Button
                     variant="outline"
                     className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
-                    onClick={async () => {
-                      try {
-                        const res = await fetch('/api/apk-download', { method: 'POST' })
-                        if (!res.ok) throw new Error('Download failed')
-                        const blob = await res.blob()
-                        const url = URL.createObjectURL(blob)
-                        const a = document.createElement('a')
-                        a.href = url; a.download = 'saatiril-operator.apk'
-                        document.body.appendChild(a); a.click()
-                        document.body.removeChild(a); URL.revokeObjectURL(url)
-                      } catch {
-                        toast({ title: 'Download gagal', description: 'Tidak dapat mengunduh APK', variant: 'destructive' })
-                      }
+                    onClick={() => {
+                      const url = apkInfo?.downloadUrl || generateApkLink()
+                      if (url) window.open(url, '_blank')
                     }}
                   >
                     <Download className="size-3.5" />
@@ -1105,19 +1081,9 @@ export default function AdminDashboard() {
                   <Button
                     variant="outline"
                     className="flex-1 justify-start gap-2 border-[#06b6d4]/40 bg-[#06b6d410] text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#67e8f9]"
-                    onClick={async () => {
-                      try {
-                        const res = await fetch('/api/apk-download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'portable' }) })
-                        if (!res.ok) throw new Error('Download failed')
-                        const blob = await res.blob()
-                        const url = URL.createObjectURL(blob)
-                        const a = document.createElement('a')
-                        a.href = url; a.download = 'saatiril-portable.exe'
-                        document.body.appendChild(a); a.click()
-                        document.body.removeChild(a); URL.revokeObjectURL(url)
-                      } catch {
-                        toast({ title: 'Download gagal', description: 'Tidak dapat mengunduh Portable', variant: 'destructive' })
-                      }
+                    onClick={() => {
+                      const url = portableInfo?.downloadUrl || generatePortableLink()
+                      if (url) window.open(url, '_blank')
                     }}
                   >
                     <Download className="size-3.5" />
@@ -1240,19 +1206,9 @@ export default function AdminDashboard() {
                     <Button
                       variant="outline"
                       className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
-                      onClick={async () => {
-                        try {
-                          const res = await fetch('/api/apk-download', { method: 'POST' })
-                          if (!res.ok) throw new Error('Download failed')
-                          const blob = await res.blob()
-                          const url = URL.createObjectURL(blob)
-                          const a = document.createElement('a')
-                          a.href = url; a.download = 'saatiril-operator.apk'
-                          document.body.appendChild(a); a.click()
-                          document.body.removeChild(a); URL.revokeObjectURL(url)
-                        } catch {
-                          toast({ title: 'Download gagal', description: 'Tidak dapat mengunduh APK', variant: 'destructive' })
-                        }
+                      onClick={() => {
+                        const url = apkInfo?.downloadUrl || generateApkLink()
+                        if (url) window.open(url, '_blank')
                       }}
                     >
                       <Download className="size-3.5" />
@@ -1297,19 +1253,9 @@ export default function AdminDashboard() {
                     <Button
                       variant="outline"
                       className="flex-1 justify-start gap-2 border-[#06b6d4]/40 bg-[#06b6d410] text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#67e8f9]"
-                      onClick={async () => {
-                        try {
-                          const res = await fetch('/api/apk-download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'portable' }) })
-                          if (!res.ok) throw new Error('Download failed')
-                          const blob = await res.blob()
-                          const url = URL.createObjectURL(blob)
-                          const a = document.createElement('a')
-                          a.href = url; a.download = 'saatiril-portable.exe'
-                          document.body.appendChild(a); a.click()
-                          document.body.removeChild(a); URL.revokeObjectURL(url)
-                        } catch {
-                          toast({ title: 'Download gagal', description: 'Tidak dapat mengunduh Portable', variant: 'destructive' })
-                        }
+                      onClick={() => {
+                        const url = portableInfo?.downloadUrl || generatePortableLink()
+                        if (url) window.open(url, '_blank')
                       }}
                     >
                       <Download className="size-3.5" />
@@ -1450,19 +1396,9 @@ export default function AdminDashboard() {
                     <Button
                       variant="outline"
                       className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
-                      onClick={async () => {
-                        try {
-                          const res = await fetch('/api/apk-download', { method: 'POST' })
-                          if (!res.ok) throw new Error('Download failed')
-                          const blob = await res.blob()
-                          const url = URL.createObjectURL(blob)
-                          const a = document.createElement('a')
-                          a.href = url; a.download = 'saatiril-operator.apk'
-                          document.body.appendChild(a); a.click()
-                          document.body.removeChild(a); URL.revokeObjectURL(url)
-                        } catch {
-                          toast({ title: 'Download gagal', description: 'Tidak dapat mengunduh APK', variant: 'destructive' })
-                        }
+                      onClick={() => {
+                        const url = apkInfo?.downloadUrl || generateApkLink()
+                        if (url) window.open(url, '_blank')
                       }}
                     >
                       <Download className="size-3.5" />
@@ -1507,19 +1443,9 @@ export default function AdminDashboard() {
                     <Button
                       variant="outline"
                       className="flex-1 justify-start gap-2 border-[#06b6d4]/40 bg-[#06b6d410] text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#67e8f9]"
-                      onClick={async () => {
-                        try {
-                          const res = await fetch('/api/apk-download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'portable' }) })
-                          if (!res.ok) throw new Error('Download failed')
-                          const blob = await res.blob()
-                          const url = URL.createObjectURL(blob)
-                          const a = document.createElement('a')
-                          a.href = url; a.download = 'saatiril-portable.exe'
-                          document.body.appendChild(a); a.click()
-                          document.body.removeChild(a); URL.revokeObjectURL(url)
-                        } catch {
-                          toast({ title: 'Download gagal', description: 'Tidak dapat mengunduh Portable', variant: 'destructive' })
-                        }
+                      onClick={() => {
+                        const url = portableInfo?.downloadUrl || generatePortableLink()
+                        if (url) window.open(url, '_blank')
                       }}
                     >
                       <Download className="size-3.5" />

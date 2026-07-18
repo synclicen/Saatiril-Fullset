@@ -33,9 +33,273 @@ const DEFAULT_SOCKET_PORT = 3003
 const MAX_HTTP_BUFFER = 20e6 // 20MB for large photo payloads
 const isDev = process.env.SAATIRIL_DEV === '1'
 
+// ─── GitHub Releases (for APK/Portable download) ───────────────────────────
+const GITHUB_REPO = 'synclicen/Saatiril-Fullset'
+const RELEASE_TAG = 'latest'
+
+interface ReleaseAssetInfo {
+  url: string
+  browserUrl: string
+  size: number
+  sizeMB: string
+  lastModified: string
+  assetName: string
+}
+
+interface CachedRelease {
+  apk: ReleaseAssetInfo | null
+  portable: ReleaseAssetInfo | null
+}
+
+let cachedRelease: CachedRelease | null = null
+let cacheTime = 0
+const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+
+async function getGitHubToken(): Promise<string> {
+  // Try env variable first
+  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN
+
+  // Try to get token from git remote in the project directory
+  try {
+    const { execSync } = await import('child_process')
+    // Try multiple possible project directories
+    const possibleDirs = [
+      path.join(__dirname, '..'),
+      process.cwd(),
+    ]
+    for (const dir of possibleDirs) {
+      try {
+        const remoteUrl = execSync('git remote get-url origin', {
+          encoding: 'utf-8',
+          cwd: dir,
+        }).trim()
+        const match = remoteUrl.match(/:\/\/[^:]*:([^@]*)@/)
+        if (match?.[1]) return match[1]
+      } catch {
+        // No git repo in this directory, try next
+      }
+    }
+  } catch {
+    // child_process not available
+  }
+
+  return ''
+}
+
+async function fetchLatestReleaseInfo(): Promise<CachedRelease> {
+  const now = Date.now()
+  if (cachedRelease && (now - cacheTime) < CACHE_TTL) {
+    return cachedRelease
+  }
+
+  try {
+    const token = await getGitHubToken()
+    const headers: Record<string, string> = {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'Saatiril-Electron-App',
+    }
+    if (token) {
+      headers.Authorization = `Bearer ${token}`
+    }
+
+    const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${RELEASE_TAG}`, { headers })
+
+    if (!res.ok) {
+      throw new Error(`GitHub API returned ${res.status}`)
+    }
+
+    const release = await res.json()
+    const assets = release.assets || []
+
+    const apkAsset = assets.find((a: { name: string }) => a.name.endsWith('.apk'))
+    const portableAsset = assets.find((a: { name: string }) =>
+      a.name.endsWith('-portable.exe') || a.name === 'saatiril-portable.exe'
+    )
+
+    const toAssetInfo = (a: { url: string; browser_download_url: string; size: number; updated_at: string; name: string }): ReleaseAssetInfo => ({
+      url: a.url,
+      browserUrl: a.browser_download_url,
+      size: a.size,
+      sizeMB: (a.size / (1024 * 1024)).toFixed(1),
+      lastModified: a.updated_at || release.published_at,
+      assetName: a.name,
+    })
+
+    cachedRelease = {
+      apk: apkAsset ? toAssetInfo(apkAsset) : null,
+      portable: portableAsset ? toAssetInfo(portableAsset) : null,
+    }
+    cacheTime = now
+
+    console.log(`[SAATIRIL] GitHub Releases: APK=${cachedRelease.apk ? cachedRelease.apk.assetName : 'none'}, Portable=${cachedRelease.portable ? cachedRelease.portable.assetName : 'none'}`)
+  } catch (err: any) {
+    console.error('[SAATIRIL] Failed to fetch GitHub Releases:', err.message)
+    // Return empty cache if fetch fails
+    if (!cachedRelease) {
+      cachedRelease = { apk: null, portable: null }
+    }
+  }
+
+  return cachedRelease
+}
+
 // Actual ports (may differ from defaults if ports are in use)
 let httpPort = DEFAULT_HTTP_PORT
 let socketPort = DEFAULT_SOCKET_PORT
+
+// ─── API Route Handlers (for Electron portable build) ─────────────────────
+// In the Electron portable version, the app is served as a static export.
+// Next.js API routes don't exist in the static export, so we must handle
+// them here in the Electron main process's HTTP server.
+
+/**
+ * Handle /api/apk-download requests
+ * GET  → Returns release info (APK + Portable availability, size, etc.)
+ * POST → Proxies the binary download from GitHub Releases
+ */
+function handleApkDownloadApi(
+  req: import('http').IncomingMessage,
+  res: import('http').ServerResponse,
+  urlQuery: string,
+) {
+  if (req.method === 'GET') {
+    // Return release info
+    fetchLatestReleaseInfo()
+      .then((info) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          apk: info.apk ? {
+            available: true,
+            sizeMB: info.apk.sizeMB,
+            assetName: info.apk.assetName,
+            lastModified: info.apk.lastModified,
+          } : {
+            available: false,
+            error: 'No APK asset found in latest release',
+          },
+          portable: info.portable ? {
+            available: true,
+            sizeMB: info.portable.sizeMB,
+            assetName: info.portable.assetName,
+            lastModified: info.portable.lastModified,
+          } : {
+            available: false,
+            error: 'No Portable asset found in latest release',
+          },
+        }))
+      })
+      .catch((err: any) => {
+        const message = err instanceof Error ? err.message : 'Unknown error'
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          apk: { available: false, error: message },
+          portable: { available: false, error: message },
+        }))
+      })
+    return
+  }
+
+  if (req.method === 'POST') {
+    // Proxy binary download from GitHub Releases
+    let body = ''
+    req.on('data', (chunk: Buffer) => { body += chunk.toString() })
+    req.on('end', () => {
+      let type = 'apk'
+      try {
+        const parsed = JSON.parse(body)
+        type = parsed.type || 'apk'
+      } catch { /* default to apk */ }
+
+      // Also check URL query param for type (e.g. ?type=portable)
+      if (type === 'apk' && urlQuery.includes('type=portable')) {
+        type = 'portable'
+      }
+
+      fetchLatestReleaseInfo()
+        .then(async (info) => {
+          const assetInfo = type === 'portable' ? info.portable : info.apk
+          if (!assetInfo) {
+            res.writeHead(404, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({
+              error: `${type === 'portable' ? 'Portable' : 'APK'} not available in latest release`,
+            }))
+            return
+          }
+
+          const token = await getGitHubToken()
+          const headers: Record<string, string> = {
+            Accept: 'application/octet-stream',
+            'User-Agent': 'Saatiril-Electron-App',
+          }
+          if (token) {
+            headers.Authorization = `Bearer ${token}`
+          }
+
+          const response = await fetch(assetInfo.url, { headers })
+
+          if (!response.ok) {
+            throw new Error(`GitHub download returned ${response.status}`)
+          }
+
+          const buffer = await response.arrayBuffer()
+
+          const contentType = type === 'portable'
+            ? 'application/x-msdownload'
+            : 'application/vnd.android.package-archive'
+          const filename = type === 'portable'
+            ? 'saatiril-portable.exe'
+            : 'saatiril-operator.apk'
+
+          res.writeHead(200, {
+            'Content-Type': contentType,
+            'Content-Disposition': `attachment; filename="${filename}"`,
+            'Content-Length': buffer.byteLength.toString(),
+          })
+          res.end(Buffer.from(buffer))
+        })
+        .catch((err: any) => {
+          const message = err instanceof Error ? err.message : 'Download failed'
+          console.error('[SAATIRIL] APK download proxy error:', message)
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: message }))
+        })
+    })
+    return
+  }
+
+  // Method not allowed
+  res.writeHead(405, { 'Content-Type': 'text/plain' })
+  res.end('Method Not Allowed')
+}
+
+/**
+ * Handle /api/generate-license requests
+ * POST → Generates a license activation code (same logic as Next.js API route)
+ */
+function handleGenerateLicenseApi(
+  req: import('http').IncomingMessage,
+  res: import('http').ServerResponse,
+) {
+  if (req.method !== 'POST') {
+    res.writeHead(405, { 'Content-Type': 'text/plain' })
+    res.end('Method Not Allowed')
+    return
+  }
+
+  let body = ''
+  req.on('data', (chunk: Buffer) => { body += chunk.toString() })
+  req.on('end', () => {
+    try {
+      const { machineId, adminKey } = JSON.parse(body)
+      const result = generateLicenseCode(machineId, adminKey)
+      res.writeHead(result.success ? 200 : 403, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(result))
+    } catch (err: any) {
+      res.writeHead(500, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ success: false, error: 'Invalid request body' }))
+    }
+  })
+}
 
 // ─── Resource path resolution ──────────────────────────────────────────────
 // With asar:true, files are inside resources/app.asar
@@ -123,7 +387,35 @@ function startStaticServer(outDir: string): Promise<void> {
     }
 
     httpServer = createServer((req, res) => {
+      // ── CORS headers for all responses ──────────────────────────────────
+      res.setHeader('Access-Control-Allow-Origin', '*')
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+
+      // Handle OPTIONS preflight for API routes
+      if (req.method === 'OPTIONS') {
+        res.writeHead(200)
+        res.end()
+        return
+      }
+
       let urlPath = req.url?.split('?')[0] || '/'
+      const urlQuery = req.url?.split('?')[1] || ''
+
+      // ── API Routes (dynamic — NOT in static export) ─────────────────────
+      // These must be handled here because the static export doesn't include
+      // Next.js API routes. The Electron portable version runs a simple
+      // HTTP file server, so we intercept API requests and handle them directly.
+      if (urlPath === '/api/apk-download') {
+        handleApkDownloadApi(req, res, urlQuery)
+        return
+      }
+
+      if (urlPath === '/api/generate-license') {
+        handleGenerateLicenseApi(req, res)
+        return
+      }
+
       if (urlPath === '/') urlPath = '/index.html'
 
       // ── API route: /api/apk-download ──────────────────────────────
@@ -224,17 +516,6 @@ function startStaticServer(outDir: string): Promise<void> {
       if (cachedPath) {
         const ext = path.extname(cachedPath).toLowerCase()
         const contentType = mimeTypes[ext] || 'application/octet-stream'
-
-        res.setHeader('Access-Control-Allow-Origin', '*')
-        res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
-
-        if (req.method === 'OPTIONS') {
-          res.writeHead(200)
-          res.end()
-          return
-        }
-
         res.writeHead(200, { 'Content-Type': contentType })
         fs.createReadStream(cachedPath).pipe(res)
         return
@@ -251,17 +532,6 @@ function startStaticServer(outDir: string): Promise<void> {
         if (cachedTry) {
           const ext = path.extname(cachedTry).toLowerCase()
           const contentType = mimeTypes[ext] || 'application/octet-stream'
-
-          res.setHeader('Access-Control-Allow-Origin', '*')
-          res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
-
-          if (req.method === 'OPTIONS') {
-            res.writeHead(200)
-            res.end()
-            return
-          }
-
           res.writeHead(200, { 'Content-Type': contentType })
           fs.createReadStream(cachedTry).pipe(res)
           return
@@ -271,7 +541,6 @@ function startStaticServer(outDir: string): Promise<void> {
       // Final fallback to index.html for SPA routing
       const indexCached = filePathCache.get('/index.html')
       if (indexCached) {
-        res.setHeader('Access-Control-Allow-Origin', '*')
         res.writeHead(200, { 'Content-Type': 'text/html' })
         fs.createReadStream(indexCached).pipe(res)
         return
@@ -804,6 +1073,8 @@ app.whenReady().then(async () => {
 
     // Start both servers IN PARALLEL instead of sequentially
     // This saves 2-5 seconds of startup time
+    // Also pre-warm GitHub Releases cache in the background so APK info
+    // is available by the time the admin dashboard loads
     try {
       await Promise.all([
         fs.existsSync(outDir)
@@ -811,6 +1082,12 @@ app.whenReady().then(async () => {
           : Promise.reject(new Error('No out/ directory')),
         startSocketServer().then(() => { console.log('[SAATIRIL] Socket server is ready.') }),
       ])
+      // Pre-warm GitHub Releases cache (non-blocking — don't wait for it)
+      fetchLatestReleaseInfo().then(() => {
+        console.log('[SAATIRIL] GitHub Releases cache pre-warmed.')
+      }).catch(() => {
+        console.warn('[SAATIRIL] GitHub Releases cache pre-warm failed (will retry on first request).')
+      })
     } catch (err: any) {
       console.error('[SAATIRIL] Server startup error:', err.message)
     }
