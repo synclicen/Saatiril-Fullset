@@ -20,6 +20,7 @@
 
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import * as path from 'path'
+import * as https from 'https'
 import * as fs from 'fs'
 import * as os from 'os'
 import { createServer } from 'http'
@@ -111,6 +112,99 @@ function startStaticServer(outDir: string): Promise<void> {
     httpServer = createServer((req, res) => {
       let urlPath = req.url?.split('?')[0] || '/'
       if (urlPath === '/') urlPath = '/index.html'
+
+      // ── API route: /api/apk-download ──────────────────────────────
+      // Proxies APK/Portable downloads from GitHub Releases so LAN
+      // operators can download even without direct internet access.
+      if (urlPath === '/api/apk-download') {
+        res.setHeader('Access-Control-Allow-Origin', '*')
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+
+        if (req.method === 'OPTIONS') {
+          res.writeHead(200)
+          res.end()
+          return
+        }
+
+        // GET: return release info (APK + Portable availability)
+        if (req.method === 'GET') {
+          const fetchReleaseInfo = async () => {
+            try {
+              const ghRes = await fetch(`https://api.github.com/repos/synclicen/Saatiril-Fullset/releases/tags/latest`, {
+                headers: { Accept: 'application/vnd.github+json' },
+              })
+              if (!ghRes.ok) throw new Error(`GitHub API returned ${ghRes.status}`)
+              const release = await ghRes.json()
+              const assets = release.assets || []
+              const apkAsset = assets.find((a: { name: string }) => a.name.endsWith('.apk'))
+              const portableAsset = assets.find((a: { name: string }) => a.name.endsWith('-portable.exe') || a.name === 'saatiril-portable.exe')
+
+              const toInfo = (a: { size: number; updated_at: string; name: string; browser_download_url: string } | undefined) =>
+                a ? { available: true, sizeMB: (a.size / (1024 * 1024)).toFixed(1), assetName: a.name, lastModified: a.updated_at, downloadUrl: a.browser_download_url }
+                  : { available: false, error: 'Not found in latest release' }
+
+              res.writeHead(200, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ apk: toInfo(apkAsset), portable: toInfo(portableAsset) }))
+            } catch (err: any) {
+              res.writeHead(200, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ apk: { available: false, error: err.message }, portable: { available: false, error: err.message } }))
+            }
+          }
+          fetchReleaseInfo()
+          return
+        }
+
+        // POST: proxy download from GitHub Releases
+        if (req.method === 'POST') {
+          const proxyDownload = async () => {
+            try {
+              let body: any = {}
+              try { body = await new Promise((resolve) => { let d = ''; req.on('data', c => d += c); req.on('end', () => resolve(JSON.parse(d || '{}'))) }) } catch { body = {} }
+              const type = body.type || 'apk'
+
+              const ghRes = await fetch(`https://api.github.com/repos/synclicen/Saatiril-Fullset/releases/tags/latest`, {
+                headers: { Accept: 'application/vnd.github+json' },
+              })
+              if (!ghRes.ok) throw new Error(`GitHub API returned ${ghRes.status}`)
+              const release = await ghRes.json()
+              const assets = release.assets || []
+              const asset = type === 'portable'
+                ? assets.find((a: { name: string }) => a.name.endsWith('-portable.exe') || a.name === 'saatiril-portable.exe')
+                : assets.find((a: { name: string }) => a.name.endsWith('.apk'))
+
+              if (!asset) {
+                res.writeHead(404, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ error: `${type} not available in latest release` }))
+                return
+              }
+
+              // Download from GitHub and pipe to client
+              const downloadRes = await fetch(asset.url, {
+                headers: { Accept: 'application/octet-stream' },
+                redirect: 'follow',
+              })
+              if (!downloadRes.ok) throw new Error(`GitHub download returned ${downloadRes.status}`)
+
+              const buffer = Buffer.from(await downloadRes.arrayBuffer())
+              const contentType = type === 'portable' ? 'application/x-msdownload' : 'application/vnd.android.package-archive'
+              const filename = type === 'portable' ? 'saatiril-portable.exe' : 'saatiril-operator.apk'
+
+              res.writeHead(200, {
+                'Content-Type': contentType,
+                'Content-Disposition': `attachment; filename="${filename}"`,
+                'Content-Length': buffer.length.toString(),
+              })
+              res.end(buffer)
+            } catch (err: any) {
+              res.writeHead(500, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: err.message }))
+            }
+          }
+          proxyDownload()
+          return
+        }
+      }
 
       // Check cache first (O(1) lookup instead of 3× fs.existsSync)
       const cachedPath = filePathCache.get(urlPath)

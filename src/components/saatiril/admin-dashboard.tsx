@@ -17,6 +17,7 @@ import {
   QrCode,
   X,
   Package,
+  Monitor,
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import * as XLSX from 'xlsx'
@@ -329,12 +330,47 @@ export default function AdminDashboard() {
   const [qrLink, setQrLink] = useState('')
   const [qrLabel, setQrLabel] = useState('')
 
-  // ── APK download state (from GitHub Releases) ──────────────────────
-  const [apkInfo, setApkInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; error?: string } | null>(null)
+  // ── Release download state (from GitHub Releases) ──────────────────
+  const GITHUB_REPO = 'synclicen/Saatiril-Fullset'
+  const [apkInfo, setApkInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string } | null>(null)
+  const [portableInfo, setPortableInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string } | null>(null)
 
-  // Check APK status from GitHub Releases on mount
+  // Check release status from GitHub Releases on mount — client-side fetch
+  // This works in BOTH dev mode and portable Electron build (no server API needed)
   useEffect(() => {
-    fetch('/api/apk-download').then(r => r.json()).then(data => setApkInfo(data)).catch(() => setApkInfo({ available: false, error: 'Network error' }))
+    const fetchReleaseInfo = async () => {
+      try {
+        const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/tags/latest`, {
+          headers: { Accept: 'application/vnd.github+json' },
+        })
+        if (!res.ok) throw new Error(`GitHub API returned ${res.status}`)
+        const release = await res.json()
+        const assets = release.assets || []
+
+        const apkAsset = assets.find((a: { name: string }) => a.name.endsWith('.apk'))
+        const portableAsset = assets.find((a: { name: string }) => a.name.endsWith('-portable.exe') || a.name === 'saatiril-portable.exe')
+
+        setApkInfo(apkAsset ? {
+          available: true,
+          sizeMB: (apkAsset.size / (1024 * 1024)).toFixed(1),
+          assetName: apkAsset.name,
+          lastModified: apkAsset.updated_at || release.published_at,
+          downloadUrl: apkAsset.browser_download_url,
+        } : { available: false, error: 'No APK asset found in latest release' })
+
+        setPortableInfo(portableAsset ? {
+          available: true,
+          sizeMB: (portableAsset.size / (1024 * 1024)).toFixed(1),
+          assetName: portableAsset.name,
+          lastModified: portableAsset.updated_at || release.published_at,
+          downloadUrl: portableAsset.browser_download_url,
+        } : { available: false, error: 'No Portable asset found in latest release' })
+      } catch {
+        setApkInfo({ available: false, error: 'GitHub API error' })
+        setPortableInfo({ available: false, error: 'GitHub API error' })
+      }
+    }
+    fetchReleaseInfo()
   }, [])
 
   useEffect(() => {
@@ -407,62 +443,25 @@ export default function AdminDashboard() {
     [lanInfo],
   )
 
-  // ── Generate APK download link ──────────────────────────────────
-  // Points to our backend API which proxies the APK from GitHub Releases.
-  const generateApkLink = useCallback(
-    async (): Promise<string> => {
-      const api = window.saatirilAPI
-      const isElectron = api?.isElectron
-
-      if (isElectron) {
-        try {
-          const info = lanInfo || (await api.getLanInfo())
-          const ips = info.ips
-          const lanIP = ips.length > 0 ? ips[0].address : 'localhost'
-          return `http://${lanIP}:${info.httpPort}/api/apk-download`
-        } catch {
-          const hostname = window.location.hostname
-          return `http://${hostname}:3000/api/apk-download`
-        }
-      } else {
-        let origin = window.location.origin
-
-        const hostname = window.location.hostname
-        if (hostname === 'localhost' || hostname === '127.0.0.1') {
-          try {
-            const pc = new RTCPeerConnection({ iceServers: [] })
-            pc.createDataChannel('')
-            const offer = await pc.createOffer()
-            await pc.setLocalDescription(offer)
-
-            const lanIP = await new Promise<string | null>((resolve) => {
-              const timeout = setTimeout(() => { pc.close(); resolve(null) }, 3000)
-              pc.onicecandidate = (e) => {
-                if (!e.candidate) return
-                const parts = e.candidate.candidate.split(' ')
-                const ip = parts[4]
-                if (ip && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip) && !ip.startsWith('0.') && ip !== '0.0.0.0') {
-                  clearTimeout(timeout)
-                  pc.close()
-                  resolve(ip)
-                }
-              }
-            })
-
-            if (lanIP) {
-              const port = window.location.port || '3000'
-              origin = `http://${lanIP}:${port}`
-            }
-          } catch {
-            // WebRTC not available — keep localhost URL
-          }
-        }
-
-        return `${origin}/api/apk-download`
-      }
+  // ── Generate download link helper ────────────────────────────────
+  // Uses direct GitHub Release URL — works in both dev and portable Electron
+  // (no server-side API route needed)
+  const generateDownloadLink = useCallback(
+    (type: 'apk' | 'portable'): string => {
+      const info = type === 'portable' ? portableInfo : apkInfo
+      if (info?.downloadUrl) return info.downloadUrl
+      // Fallback: construct the GitHub Release URL directly using the tag name
+      // NOTE: Use /releases/download/{tag}/ not /releases/latest/download/
+      // because the latter only works for non-prerelease releases.
+      const filename = type === 'portable' ? 'saatiril-portable.exe' : 'saatiril-operator.apk'
+      return `https://github.com/${GITHUB_REPO}/releases/download/latest/${filename}`
     },
-    [lanInfo],
+    [apkInfo, portableInfo],
   )
+
+  // Convenience wrappers
+  const generateApkLink = useCallback(() => generateDownloadLink('apk'), [generateDownloadLink])
+  const generatePortableLink = useCallback(() => generateDownloadLink('portable'), [generateDownloadLink])
 
   // ── Show QR code dialog ─────────────────────────────────────────────
   const showQrCode = useCallback(
@@ -478,8 +477,8 @@ export default function AdminDashboard() {
 
   // ── Show APK download QR code ────────────────────────────────────
   const showApkQrCode = useCallback(
-    async () => {
-      const url = await generateApkLink()
+    () => {
+      const url = generateApkLink()
       setQrLink(url)
       setQrLabel('APK Saatiril Android')
       setQrDialogOpen(true)
@@ -487,10 +486,21 @@ export default function AdminDashboard() {
     [generateApkLink],
   )
 
+  // ── Show Portable download QR code ───────────────────────────────
+  const showPortableQrCode = useCallback(
+    () => {
+      const url = generatePortableLink()
+      setQrLink(url)
+      setQrLabel('Saatiril Portable Windows')
+      setQrDialogOpen(true)
+    },
+    [generatePortableLink],
+  )
+
   // ── Copy APK download link ────────────────────────────────────────
   const copyApkLink = useCallback(
     async () => {
-      const url = await generateApkLink()
+      const url = generateApkLink()
       try {
         if (navigator.clipboard) {
           await navigator.clipboard.writeText(url)
@@ -515,6 +525,36 @@ export default function AdminDashboard() {
       }
     },
     [toast, generateApkLink],
+  )
+
+  // ── Copy Portable download link ──────────────────────────────────
+  const copyPortableLink = useCallback(
+    async () => {
+      const url = generatePortableLink()
+      try {
+        if (navigator.clipboard) {
+          await navigator.clipboard.writeText(url)
+        } else {
+          const textarea = document.createElement('textarea')
+          textarea.value = url
+          document.body.appendChild(textarea)
+          textarea.select()
+          document.execCommand('copy')
+          document.body.removeChild(textarea)
+        }
+        toast({
+          title: 'Link Portable disalin!',
+          description: `Saatiril Portable Windows — ${url}`,
+        })
+      } catch {
+        toast({
+          title: 'Gagal menyalin',
+          description: 'Tidak dapat menyalin link. Silakan salin manual.',
+          variant: 'destructive',
+        })
+      }
+    },
+    [toast, generatePortableLink],
   )
 
   // ── Copy link handler ────────────────────────────────────────────
@@ -981,7 +1021,7 @@ export default function AdminDashboard() {
                 <QrCode className="size-3.5" />
               </Button>
             </div>
-            {/* APK Android download section */}
+            {/* ── Download Section: APK + Portable ── */}
             <Separator className="bg-[#533485]/40" />
             <div className="mb-1 text-xs font-semibold uppercase tracking-wider" style={{ color: '#4ade80' }}>
               <Package className="size-3 inline mr-1" />APK Saatiril Android
@@ -995,19 +1035,9 @@ export default function AdminDashboard() {
                   <Button
                     variant="outline"
                     className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
-                    onClick={async () => {
-                      try {
-                        const res = await fetch('/api/apk-download', { method: 'POST' })
-                        if (!res.ok) throw new Error('Download failed')
-                        const blob = await res.blob()
-                        const url = URL.createObjectURL(blob)
-                        const a = document.createElement('a')
-                        a.href = url; a.download = 'saatiril-operator.apk'
-                        document.body.appendChild(a); a.click()
-                        document.body.removeChild(a); URL.revokeObjectURL(url)
-                      } catch {
-                        toast({ title: 'Download gagal', description: 'Tidak dapat mengunduh APK', variant: 'destructive' })
-                      }
+                    onClick={() => {
+                      const url = apkInfo?.downloadUrl || generateApkLink()
+                      if (url) window.open(url, '_blank')
                     }}
                   >
                     <Download className="size-3.5" />
@@ -1034,6 +1064,52 @@ export default function AdminDashboard() {
             ) : (
               <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
                 ⚠️ APK belum tersedia — build belum selesai atau GitHub Release belum dibuat
+              </div>
+            )}
+
+            {/* Portable Windows download */}
+            <Separator className="bg-[#533485]/40" />
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wider" style={{ color: CYAN }}>
+              <Monitor className="size-3 inline mr-1" />Saatiril Portable Windows
+            </div>
+            {portableInfo?.available ? (
+              <>
+                <div className="text-xs mb-1.5 opacity-70" style={{ color: '#67e8f9' }}>
+                  ✅ Portable tersedia ({portableInfo.sizeMB} MB)
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1 justify-start gap-2 border-[#06b6d4]/40 bg-[#06b6d410] text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#67e8f9]"
+                    onClick={() => {
+                      const url = portableInfo?.downloadUrl || generatePortableLink()
+                      if (url) window.open(url, '_blank')
+                    }}
+                  >
+                    <Download className="size-3.5" />
+                    Download Portable
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="shrink-0 gap-1.5 border-[#06b6d4]/40 bg-[#06b6d410] text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#67e8f9]"
+                    onClick={copyPortableLink}
+                    title="Salin Link Portable"
+                  >
+                    <Copy className="size-3.5" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="shrink-0 gap-1.5 border-[#06b6d4]/40 bg-[#06b6d410] text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#67e8f9]"
+                    onClick={showPortableQrCode}
+                    title="QR Code Portable Windows"
+                  >
+                    <QrCode className="size-3.5" />
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
+                ⚠️ Portable belum tersedia — build belum selesai atau GitHub Release belum dibuat
               </div>
             )}
           </div>
@@ -1116,7 +1192,7 @@ export default function AdminDashboard() {
 
             <Separator className="bg-[#533485]/40" />
 
-            {/* APK Android download section */}
+            {/* ── Download Section: APK + Portable ── */}
             <div>
               <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: '#4ade80' }}>
                 <Package className="size-3 inline mr-1" />APK Saatiril Android
@@ -1130,19 +1206,9 @@ export default function AdminDashboard() {
                     <Button
                       variant="outline"
                       className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
-                      onClick={async () => {
-                        try {
-                          const res = await fetch('/api/apk-download', { method: 'POST' })
-                          if (!res.ok) throw new Error('Download failed')
-                          const blob = await res.blob()
-                          const url = URL.createObjectURL(blob)
-                          const a = document.createElement('a')
-                          a.href = url; a.download = 'saatiril-operator.apk'
-                          document.body.appendChild(a); a.click()
-                          document.body.removeChild(a); URL.revokeObjectURL(url)
-                        } catch {
-                          toast({ title: 'Download gagal', description: 'Tidak dapat mengunduh APK', variant: 'destructive' })
-                        }
+                      onClick={() => {
+                        const url = apkInfo?.downloadUrl || generateApkLink()
+                        if (url) window.open(url, '_blank')
                       }}
                     >
                       <Download className="size-3.5" />
@@ -1169,6 +1235,53 @@ export default function AdminDashboard() {
               ) : (
                 <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
                   ⚠️ APK belum tersedia — build belum selesai atau GitHub Release belum dibuat
+                </div>
+              )}
+            </div>
+
+            {/* Portable Windows download */}
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: CYAN }}>
+                <Monitor className="size-3 inline mr-1" />Saatiril Portable Windows
+              </div>
+              {portableInfo?.available ? (
+                <>
+                  <div className="text-xs mb-1.5 opacity-70" style={{ color: '#67e8f9' }}>
+                    ✅ Portable tersedia ({portableInfo.sizeMB} MB)
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      className="flex-1 justify-start gap-2 border-[#06b6d4]/40 bg-[#06b6d410] text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#67e8f9]"
+                      onClick={() => {
+                        const url = portableInfo?.downloadUrl || generatePortableLink()
+                        if (url) window.open(url, '_blank')
+                      }}
+                    >
+                      <Download className="size-3.5" />
+                      Download Portable
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="shrink-0 gap-1.5 border-[#06b6d4]/40 bg-[#06b6d410] text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#67e8f9]"
+                      onClick={copyPortableLink}
+                      title="Salin Link Portable"
+                    >
+                      <Copy className="size-3.5" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="shrink-0 gap-1.5 border-[#06b6d4]/40 bg-[#06b6d410] text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#67e8f9]"
+                      onClick={showPortableQrCode}
+                      title="QR Code Portable Windows"
+                    >
+                      <QrCode className="size-3.5" />
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
+                  ⚠️ Portable belum tersedia — build belum selesai atau GitHub Release belum dibuat
                 </div>
               )}
             </div>
@@ -1269,7 +1382,7 @@ export default function AdminDashboard() {
 
             <Separator className="bg-[#533485]/40" />
 
-            {/* APK Android download section */}
+            {/* ── Download Section: APK + Portable ── */}
             <div>
               <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: '#4ade80' }}>
                 <Package className="size-3 inline mr-1" />APK Saatiril Android
@@ -1283,19 +1396,9 @@ export default function AdminDashboard() {
                     <Button
                       variant="outline"
                       className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
-                      onClick={async () => {
-                        try {
-                          const res = await fetch('/api/apk-download', { method: 'POST' })
-                          if (!res.ok) throw new Error('Download failed')
-                          const blob = await res.blob()
-                          const url = URL.createObjectURL(blob)
-                          const a = document.createElement('a')
-                          a.href = url; a.download = 'saatiril-operator.apk'
-                          document.body.appendChild(a); a.click()
-                          document.body.removeChild(a); URL.revokeObjectURL(url)
-                        } catch {
-                          toast({ title: 'Download gagal', description: 'Tidak dapat mengunduh APK', variant: 'destructive' })
-                        }
+                      onClick={() => {
+                        const url = apkInfo?.downloadUrl || generateApkLink()
+                        if (url) window.open(url, '_blank')
                       }}
                     >
                       <Download className="size-3.5" />
@@ -1322,6 +1425,53 @@ export default function AdminDashboard() {
               ) : (
                 <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
                   ⚠️ APK belum tersedia — build belum selesai atau GitHub Release belum dibuat
+                </div>
+              )}
+            </div>
+
+            {/* Portable Windows download */}
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: CYAN }}>
+                <Monitor className="size-3 inline mr-1" />Saatiril Portable Windows
+              </div>
+              {portableInfo?.available ? (
+                <>
+                  <div className="text-xs mb-1.5 opacity-70" style={{ color: '#67e8f9' }}>
+                    ✅ Portable tersedia ({portableInfo.sizeMB} MB)
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      className="flex-1 justify-start gap-2 border-[#06b6d4]/40 bg-[#06b6d410] text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#67e8f9]"
+                      onClick={() => {
+                        const url = portableInfo?.downloadUrl || generatePortableLink()
+                        if (url) window.open(url, '_blank')
+                      }}
+                    >
+                      <Download className="size-3.5" />
+                      Download Portable
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="shrink-0 gap-1.5 border-[#06b6d4]/40 bg-[#06b6d410] text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#67e8f9]"
+                      onClick={copyPortableLink}
+                      title="Salin Link Portable"
+                    >
+                      <Copy className="size-3.5" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="shrink-0 gap-1.5 border-[#06b6d4]/40 bg-[#06b6d410] text-[#06b6d4] hover:bg-[#3b2263] hover:text-[#67e8f9]"
+                      onClick={showPortableQrCode}
+                      title="QR Code Portable Windows"
+                    >
+                      <QrCode className="size-3.5" />
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
+                  ⚠️ Portable belum tersedia — build belum selesai atau GitHub Release belum dibuat
                 </div>
               )}
             </div>
