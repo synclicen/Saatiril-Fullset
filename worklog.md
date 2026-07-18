@@ -173,3 +173,26 @@ Stage Summary:
   2. NormalizedLandmark.x/.y are methods not properties in MediaPipe Tasks Vision API
 - Fix: Added import + changed property access to function calls
 - Build now succeeds: APK uploaded to GitHub Releases
+
+---
+Task ID: 7
+Agent: main
+Task: Fix Electron TypeScript compilation errors — 'release' is of type 'unknown'
+
+Work Log:
+- User reported TypeScript compilation errors in electron/main.ts
+  - Line 112: 'release' is of type 'unknown' (TS18046)
+  - Line 124: 'release' is of type 'unknown' (TS18046)
+- Root cause: `res.json()` returns `Promise<unknown>` in strict TypeScript mode
+  - Code accessed `release.assets` and `release.published_at` without type assertion
+- Fix 1: Added type assertion to `res.json()` result:
+  `as { assets?: Array<{ name: string; url: string; browser_download_url: string; size: number; updated_at: string }>; published_at?: string }`
+- Fix 2: Added fallback `|| ''` for `release.published_at` which could be undefined
+- Verified: `npx tsc -p electron/tsconfig.json` compiles with zero errors
+- Committed and pushed (61ee75d) to GitHub
+- Both APK and Electron builds succeeded ✅
+
+Stage Summary:
+- Root cause: TypeScript strict mode — `res.json()` returns `unknown`, needs type assertion
+- Fix: Type-asserted the GitHub API response + added undefined fallback
+- Both APK and Electron Windows builds now pass successfully
