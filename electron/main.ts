@@ -108,7 +108,7 @@ async function fetchLatestReleaseInfo(): Promise<CachedRelease> {
       throw new Error(`GitHub API returned ${res.status}`)
     }
 
-    const release = await res.json()
+    const release = await res.json() as { assets?: Array<{ name: string; url: string; browser_download_url: string; size: number; updated_at: string }>; published_at?: string }
     const assets = release.assets || []
 
     const apkAsset = assets.find((a: { name: string }) => a.name.endsWith('.apk'))
@@ -121,7 +121,7 @@ async function fetchLatestReleaseInfo(): Promise<CachedRelease> {
       browserUrl: a.browser_download_url,
       size: a.size,
       sizeMB: (a.size / (1024 * 1024)).toFixed(1),
-      lastModified: a.updated_at || release.published_at,
+      lastModified: a.updated_at || release.published_at || '',
       assetName: a.name,
     })
 
