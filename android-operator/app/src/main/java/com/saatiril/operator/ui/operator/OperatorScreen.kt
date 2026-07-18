@@ -1176,6 +1176,7 @@ private fun TargetInfoContent(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ShutterModeContent(
     currentMode: String,
