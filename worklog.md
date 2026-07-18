@@ -78,3 +78,36 @@ Stage Summary:
 - Photos only sent via socket (PHOTOS_SAVED) to admin's designated output folder
 - Storage permissions removed from manifest and runtime requests
 - PhotoSaver.kt kept in codebase but no longer called (could be removed later)
+
+---
+Task ID: 4
+Agent: main
+Task: Add Trigger Tangan (hand trigger) feature to APK Android, matching Chrome version
+
+Work Log:
+- Analyzed screenshot: APK operator screen has no hand/palm trigger toggle
+- Chrome version has use-palm-detection.ts hook with MediaPipe Hands JS
+- APK uses native Kotlin + Camera2/UVC — needs native hand detection
+- Added ML Kit Hand Detection dependency (com.google.mlkit:hand-detection:16.3.0)
+- Created HandTriggerDetector.kt: uses ML Kit Hand Landmarker (offline, no network)
+  - Detects ANY hand (open or closed) as trigger, same as Chrome version
+  - 300ms sustain before confirming
+  - Counts extended fingers for UI indicator (0-5)
+- Added hand trigger state to OperatorViewModel.kt:
+  - handTriggerEnabled, handState, fingersExtended StateFlows
+  - setHandTriggerEnabled() toggle
+  - Detection loop: samples preview bitmap at ~10fps
+  - onHandConfirmed → triggerCapture(), onHandReleased → cancelTimerCapture()
+- Added getPreviewBitmap() to Camera2Manager.kt and UVCCameraManager.kt
+  - Returns downscaled 320px bitmap for hand detection (saves CPU)
+- Added Trigger Tangan UI to OperatorScreen.kt:
+  - Toggle button in "Mode Shutter" panel (green when active)
+  - Hand state indicator overlay on camera preview (top-right corner)
+  - Shows: "Tangan" (searching), "..." (held), "OK" (confirmed), "3✋" (fingers)
+- Pushed commit e080161, builds triggered (#106 APK, #160 Electron)
+
+Stage Summary:
+- APK now has Trigger Tangan feature matching Chrome version
+- Uses ML Kit (native, offline) instead of MediaPipe JS
+- Same behavior: any hand detected = trigger shutter
+- UI consistent: green toggle + indicator overlay
