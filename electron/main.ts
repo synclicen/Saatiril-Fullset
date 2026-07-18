@@ -109,6 +109,19 @@ function startStaticServer(outDir: string): Promise<void> {
       console.warn('[SAATIRIL] Failed to pre-cache file paths:', err.message)
     }
 
+    // ── GitHub Release asset type ──────────────────────────────────
+    interface GhAsset {
+      name: string
+      url: string
+      size: number
+      updated_at: string
+      browser_download_url: string
+    }
+    interface GhRelease {
+      assets: GhAsset[]
+      published_at: string
+    }
+
     httpServer = createServer((req, res) => {
       let urlPath = req.url?.split('?')[0] || '/'
       if (urlPath === '/') urlPath = '/index.html'
@@ -135,12 +148,12 @@ function startStaticServer(outDir: string): Promise<void> {
                 headers: { Accept: 'application/vnd.github+json' },
               })
               if (!ghRes.ok) throw new Error(`GitHub API returned ${ghRes.status}`)
-              const release = await ghRes.json()
-              const assets = release.assets || []
-              const apkAsset = assets.find((a: { name: string }) => a.name.endsWith('.apk'))
-              const portableAsset = assets.find((a: { name: string }) => a.name.endsWith('-portable.exe') || a.name === 'saatiril-portable.exe')
+              const release = await ghRes.json() as GhRelease
+              const assets: GhAsset[] = release.assets || []
+              const apkAsset = assets.find((a) => a.name.endsWith('.apk'))
+              const portableAsset = assets.find((a) => a.name.endsWith('-portable.exe') || a.name === 'saatiril-portable.exe')
 
-              const toInfo = (a: { size: number; updated_at: string; name: string; browser_download_url: string } | undefined) =>
+              const toInfo = (a: GhAsset | undefined) =>
                 a ? { available: true, sizeMB: (a.size / (1024 * 1024)).toFixed(1), assetName: a.name, lastModified: a.updated_at, downloadUrl: a.browser_download_url }
                   : { available: false, error: 'Not found in latest release' }
 
@@ -160,18 +173,18 @@ function startStaticServer(outDir: string): Promise<void> {
           const proxyDownload = async () => {
             try {
               let body: any = {}
-              try { body = await new Promise((resolve) => { let d = ''; req.on('data', c => d += c); req.on('end', () => resolve(JSON.parse(d || '{}'))) }) } catch { body = {} }
+              try { body = await new Promise((resolve) => { let d = ''; req.on('data', (c: Buffer) => d += c); req.on('end', () => resolve(JSON.parse(d || '{}'))) }) } catch { body = {} }
               const type = body.type || 'apk'
 
               const ghRes = await fetch(`https://api.github.com/repos/synclicen/Saatiril-Fullset/releases/tags/latest`, {
                 headers: { Accept: 'application/vnd.github+json' },
               })
               if (!ghRes.ok) throw new Error(`GitHub API returned ${ghRes.status}`)
-              const release = await ghRes.json()
-              const assets = release.assets || []
+              const release = await ghRes.json() as GhRelease
+              const assets: GhAsset[] = release.assets || []
               const asset = type === 'portable'
-                ? assets.find((a: { name: string }) => a.name.endsWith('-portable.exe') || a.name === 'saatiril-portable.exe')
-                : assets.find((a: { name: string }) => a.name.endsWith('.apk'))
+                ? assets.find((a) => a.name.endsWith('-portable.exe') || a.name === 'saatiril-portable.exe')
+                : assets.find((a) => a.name.endsWith('.apk'))
 
               if (!asset) {
                 res.writeHead(404, { 'Content-Type': 'application/json' })
