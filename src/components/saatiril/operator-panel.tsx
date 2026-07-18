@@ -1115,11 +1115,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     if (palmTriggerActive && (palm.status === 'model_ready' || palm.status === 'stopped') && cameraAvailable && videoRef.current && hasActiveTarget) {
       palm.startDetection(videoRef.current, {
         onPalmConfirmed: () => {
-          console.log('[SAATIRIL OP] Palm confirmed — triggering shutter')
+          console.log('[SAATIRIL OP] Wave confirmed — triggering shutter')
           handleCaptureClickRef.current()
         },
         onPalmReleased: () => {
-          // No-op: let the selected mode run to completion.
+          // PHOTOBOOTH: Do NOT cancel timer when hand leaves frame.
+          // Timer ALWAYS completes so person can pose during countdown.
         },
       })
     } else if (!palmTriggerActive && palm.isRunning) {
@@ -1226,9 +1227,10 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       if (ai.momentState === 'ijazah_possible' || ai.momentState === 'ijazah_sustained') return 'AI: Ijazah terdeteksi...'
     }
     if (palmTriggerEnabled && palm.isRunning) {
-      if (palm.palmState === 'confirmed') return 'Tangan terdeteksi — timer berjalan...'
-      if (palm.palmState === 'held') return 'Tangan terdeteksi...'
-      if (palm.palmState === 'searching') return 'Mencari tangan...'
+      if (palm.palmState === 'confirmed') return 'Wave terdeteksi — timer berjalan...'
+      if (palm.palmState === 'waving') return 'Wave terdeteksi...'
+      if (palm.palmState === 'hand_visible') return 'Tangan terlihat...'
+      if (palm.palmState === 'searching') return 'Menunggu wave...'
     }
     if (photoshoot) {
       if (capturePhase === 'ready-1') return 'Siap Foto'
@@ -1322,28 +1324,28 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               border: `1px solid ${palmTriggerEnabled ? '#22c55e' : THEME.border}`,
               boxShadow: palmTriggerEnabled ? '0 0 8px #22c55e22' : 'none',
             }}
-            title="Trigger Tangan — tunjukkan tangan (terbuka/tertutup) ke kamera untuk memotret"
+            title="Trigger Waving — lambaikan tangan ke kamera untuk memulai timer/foto"
           >
             {palm.status === 'loading_scripts' || palm.status === 'loading_model' ? (
               <Loader2 className="size-3 animate-spin" />
             ) : (
               <Hand className="size-3" />
             )}
-            <span className="font-bold">Trigger Tangan</span>
+            <span className="font-bold">Trigger Waving</span>
             {palmTriggerEnabled && (
               <>
                 <span style={{ color: THEME.muted }}>•</span>
                 <span className={`text-[8px] ${compact ? '' : 'text-[9px]'}`} style={{
-                  color: palm.palmState === 'confirmed' ? '#4ade80' : palm.palmState === 'held' ? THEME.gold : THEME.muted
+                  color: palm.palmState === 'confirmed' ? '#4ade80' : palm.palmState === 'waving' ? THEME.gold : palm.palmState === 'hand_visible' ? '#4ade80' : THEME.muted
                 }}>
                   {palm.palmState === 'confirmed'
-                    ? 'Tangan terdeteksi ✓'
-                    : palm.palmState === 'held'
-                      ? 'Mendeteksi...'
-                      : palm.isRunning && palm.fingersExtended > 0
-                        ? `${palm.fingersExtended}✋`
+                    ? 'Wave terdeteksi ✓'
+                    : palm.palmState === 'waving'
+                      ? 'Mendeteksi wave...'
+                      : palm.palmState === 'hand_visible'
+                        ? 'Tangan terlihat'
                         : palm.isRunning
-                          ? 'Menunggu tangan...'
+                          ? 'Menunggu wave...'
                           : ''}
                 </span>
               </>
@@ -1698,12 +1700,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       {palmTriggerEnabled && palm.isRunning && (
         <div className="absolute top-2 right-2 flex items-center gap-1.5 pointer-events-none" style={{ zIndex: 10 }}>
           <div className="flex items-center gap-1 rounded-full px-2 py-1" style={{
-            backgroundColor: palm.palmState === 'confirmed' ? '#22c55e88' : palm.palmState === 'held' ? '#d4af3788' : 'rgba(0,0,0,0.7)',
-            border: `1px solid ${palm.palmState === 'confirmed' ? '#22c55e' : palm.palmState === 'held' ? THEME.gold : THEME.border}`,
+            backgroundColor: palm.palmState === 'confirmed' ? '#22c55e88' : palm.palmState === 'waving' ? '#d4af3788' : palm.palmState === 'hand_visible' ? '#4ade8044' : 'rgba(0,0,0,0.7)',
+            border: `1px solid ${palm.palmState === 'confirmed' ? '#22c55e' : palm.palmState === 'waving' ? THEME.gold : palm.palmState === 'hand_visible' ? '#4ade80' : THEME.border}`,
           }}>
-            <Hand className={`size-3 ${palm.palmState === 'held' ? 'animate-pulse' : ''}`} style={{ color: palm.palmState === 'confirmed' ? '#4ade80' : THEME.gold }} />
+            <Hand className={`size-3 ${palm.palmState === 'waving' ? 'animate-pulse' : ''}`} style={{ color: palm.palmState === 'confirmed' ? '#4ade80' : palm.palmState === 'waving' ? THEME.gold : palm.palmState === 'hand_visible' ? '#4ade80' : THEME.muted }} />
             <span className="text-[10px] font-bold" style={{ color: palm.palmState === 'confirmed' ? '#4ade80' : THEME.muted }}>
-              {palm.palmState === 'confirmed' ? 'OK' : palm.palmState === 'held' ? '...' : palm.fingersExtended > 0 ? `${palm.fingersExtended}✋` : 'Tangan'}
+              {palm.palmState === 'confirmed' ? 'OK ✓' : palm.palmState === 'waving' ? 'Waving...' : palm.palmState === 'hand_visible' ? 'Tangan' : palm.fingersExtended > 0 ? `${palm.fingersExtended}✋` : 'Wave'}
             </span>
           </div>
         </div>

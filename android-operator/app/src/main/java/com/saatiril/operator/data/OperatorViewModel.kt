@@ -1107,46 +1107,42 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         }
 
         HandTriggerDetector.onHandConfirmed = {
-            Log.i(TAG, "Hand trigger: confirmed — triggering capture")
+            Log.i(TAG, "Wave trigger: waving confirmed — triggering capture")
             viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
                 triggerCapture()
             }
         }
         HandTriggerDetector.onHandReleased = {
             // PHOTOBOOTH BEHAVIOR: Do NOT cancel the timer when hand leaves.
-            // Once hand is confirmed → timer starts → timer ALWAYS completes.
-            // The person being photographed can remove their hand and pose
-            // while the countdown runs. Just reset hand detection state so
-            // the next hand gesture can trigger a new capture later.
-            Log.i(TAG, "Hand trigger: hand released — timer continues (photobooth mode)")
+            // Once waving is confirmed → timer starts → timer ALWAYS completes.
+            // The person being photographed can stop waving and pose
+            // while the countdown runs.
+            Log.i(TAG, "Wave trigger: hand released — timer continues (photobooth mode)")
         }
 
         HandTriggerDetector.start()
 
-        // Start detection loop — sample preview frames periodically
+        // Start detection loop — sample preview frames at ~12fps for wave tracking
         handDetectionJob?.cancel()
         handDetectionJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
             while (isActive) {
                 if (!_handTriggerEnabled.value) break
 
-                // Get preview bitmap from the active camera
                 val bitmap = getPreviewBitmap()
                 if (bitmap != null) {
                     HandTriggerDetector.processFrame(bitmap)
 
-                    // Update UI state
                     _handState.value = HandTriggerDetector.handState
                     _fingersExtended.value = HandTriggerDetector.fingersExtended
 
-                    // Recycle only if we created it (getBitmap returns a copy)
                     if (!bitmap.isRecycled) bitmap.recycle()
                 }
 
-                delay(100) // ~10 fps detection (enough for hand trigger, saves CPU)
+                delay(80) // ~12 fps for better wave tracking
             }
         }
 
-        Log.i(TAG, "Hand trigger detection started")
+        Log.i(TAG, "Waving hand trigger detection started")
     }
 
     private fun stopHandDetection() {

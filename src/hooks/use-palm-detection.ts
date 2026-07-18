@@ -3,22 +3,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 /**
- * PALM DETECTION (hand-presence shutter trigger)
+ * WAVING HAND DETECTION (shutter trigger)
  *
- * Triggers when ANY hand is detected in the camera frame — whether fingers
- * are open (5 extended) or closed (fist). This is "telapak tangan" mode:
- * the mere presence of a hand/palm facing the camera is the trigger.
+ * Detects a WAVING hand gesture (hand moving back and forth horizontally)
+ * to trigger the camera shutter. Much more responsive and intentional
+ * than static hand presence detection.
  *
  * PHOTOBOOTH BEHAVIOR:
- *   1. Operator shows their hand/palm to the camera (open OR closed).
- *   2. Hand must be held ~300ms to be "confirmed" (debounce against flicker).
- *   3. onPalmConfirmed fires ONCE → starts timer (or direct capture).
- *   4. The person being photographed can REMOVE their hand and pose —
- *      the timer ALWAYS completes. onPalmReleased does NOT cancel it.
- *   5. When the countdown reaches 0 → photo is taken automatically.
+ *   1. Person waves their hand in front of the camera.
+ *   2. System detects horizontal oscillation (≥2 direction changes).
+ *   3. onWaveConfirmed fires ONCE → starts timer (or direct capture).
+ *   4. Person can STOP waving and pose — timer ALWAYS completes.
+ *   5. When countdown reaches 0 → photo is taken automatically.
  *
- * This is NOT the old "count fingers 1→5" or "open palm only" gesture.
- * ANY visible hand = trigger.
+ * WAVING ALGORITHM:
+ *   - Track wrist (landmark 0) X position across frames
+ *   - Detect direction changes (left→right or right→left)
+ *   - Min amplitude per direction: 6% of frame width
+ *   - 2+ direction changes within 2 seconds = wave confirmed
+ *   - 5-second cooldown after confirmation prevents re-triggering
  */
 
 export type PalmDetectionStatus =
@@ -30,11 +33,11 @@ export type PalmDetectionStatus =
   | 'stopped'
   | 'error'
 
-/** Current palm state, for UI feedback */
-export type PalmState = 'none' | 'searching' | 'held' | 'confirmed'
+/** Current wave detection state, for UI feedback */
+export type PalmState = 'none' | 'searching' | 'hand_visible' | 'waving' | 'confirmed'
 
 export interface PalmDetectionCallbacks {
-  /** Fires once when a hand has been held long enough to confirm */
+  /** Fires once when a wave gesture has been confirmed */
   onPalmConfirmed: () => void
   /** Fires when the confirmed hand leaves the frame (NO-OP: timer continues — photobooth behavior) */
   onPalmReleased: () => void
@@ -78,7 +81,6 @@ async function loadPalmScripts(): Promise<boolean> {
   if (scriptsLoadPromise) return scriptsLoadPromise
   scriptsLoadPromise = (async () => {
     try {
-      // Load MediaPipe Hands from CDN (detects hand landmarks)
       await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js')
       await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js')
       await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js')
@@ -89,7 +91,7 @@ async function loadPalmScripts(): Promise<boolean> {
       }
       return true
     } catch (e: any) {
-      console.error('[SAATIRIL Palm] Script load failed:', e.message)
+      console.error('[SAATIRIL Wave] Script load failed:', e.message)
       scriptsLoadPromise = null
       return false
     }
@@ -98,14 +100,12 @@ async function loadPalmScripts(): Promise<boolean> {
 }
 
 // ─── Count extended fingers from hand landmarks ───────────────────────────
-// Returns 0–5 for visual indicator only (NOT used for triggering).
 function countExtendedFingers(landmarks: any[]): number {
   const tipIds = [4, 8, 12, 16, 20]
-  const pipIds = [3, 6, 10, 14, 18] // Proximal interphalangeal joints
+  const pipIds = [3, 6, 10, 14, 18]
 
   let fingersUp = 0
 
-  // Thumb: compare x position relative to hand orientation
   const thumbTip = landmarks[tipIds[0]]
   const thumbIp = landmarks[pipIds[0]]
   const wrist = landmarks[0]
@@ -118,7 +118,6 @@ function countExtendedFingers(landmarks: any[]): number {
     if (thumbTip.x > thumbIp.x) fingersUp++
   }
 
-  // Other 4 fingers: tip above PIP (lower y = higher) means extended
   for (let i = 1; i < 5; i++) {
     const tip = landmarks[tipIds[i]]
     const pip = landmarks[pipIds[i]]
@@ -128,14 +127,25 @@ function countExtendedFingers(landmarks: any[]): number {
   return fingersUp
 }
 
-// ─── Tuning constants ─────────────────────────────────────────────────────
-// Hand must be held this long before "confirmed" (debounce against flicker)
-// Shorter than before (was 500ms) because any-hand detection is more stable
-const HAND_CONFIRM_SUSTAIN_MS = 300
+// ─── Waving Detection Tuning Constants ────────────────────────────────────
+// Min horizontal displacement to count as a direction change (6% of frame)
+const MIN_WAVE_AMPLITUDE = 0.06
+// Number of direction changes needed (2 = one full back-and-forth)
+const MIN_DIRECTION_CHANGES = 2
+// Time window for direction changes (ms)
+const WAVE_WINDOW_MS = 2000
+// Cooldown after confirmation (ms) — prevents re-triggering
+const CONFIRM_COOLDOWN_MS = 5000
+// Min interval between position samples (ms)
+const SAMPLE_INTERVAL_MS = 80
 
-// Cooldown after a confirmation before another can fire (ms)
-// Prevents re-triggering while the capture/timer flow is still running
-const HAND_CONFIRM_COOLDOWN_MS = 5000
+// Max position history entries
+const MAX_POSITION_HISTORY = 30
+
+interface PositionSample {
+  x: number
+  timestamp: number
+}
 
 export function usePalmDetection(): UsePalmDetectionReturn {
   const [status, setStatus] = useState<PalmDetectionStatus>('unloaded')
@@ -150,19 +160,33 @@ export function usePalmDetection(): UsePalmDetectionReturn {
   const isDetectingRef = useRef(false)
 
   const callbacksRef = useRef<PalmDetectionCallbacks | null>(null)
-  // Track whether we've already fired onPalmConfirmed for the current hold
-  const confirmedRef = useRef<boolean>(false)
-  // Timestamp when hand first appeared (0 = not currently held)
-  const handSinceRef = useRef<number>(0)
-  // Timestamp of last confirmation — used for cooldown
-  const lastConfirmTimeRef = useRef<number>(0)
+
+  // ── Wave tracking refs ──
+  const positionHistoryRef = useRef<PositionSample[]>([])
+  const lastDirectionRef = useRef(0) // +1=right, -1=left, 0=unknown
+  const directionChangeCountRef = useRef(0)
+  const lastDirectionChangeTimeRef = useRef(0)
+  const lastWristXRef = useRef(-1)
+  const lastSampleTimeRef = useRef(0)
+  const confirmedRef = useRef(false)
+  const lastConfirmTimeRef = useRef(0)
+
+  const resetWaveState = useCallback(() => {
+    positionHistoryRef.current = []
+    lastDirectionRef.current = 0
+    directionChangeCountRef.current = 0
+    lastDirectionChangeTimeRef.current = 0
+    lastWristXRef.current = -1
+    lastSampleTimeRef.current = 0
+    confirmedRef.current = false
+    lastConfirmTimeRef.current = 0
+  }, [])
 
   const processResults = useCallback((results: any) => {
     if (!isDetectingRef.current) return
 
     const multiHandLandmarks = results.multiHandLandmarks || []
 
-    // ── ANY hand detected = palm trigger ──
     // Count extended fingers for visual indicator only
     let maxFingers = 0
     for (const landmarks of multiHandLandmarks) {
@@ -172,38 +196,86 @@ export function usePalmDetection(): UsePalmDetectionReturn {
     setFingersExtended(maxFingers)
 
     const now = Date.now()
-    // KEY CHANGE: any hand in frame = trigger, regardless of finger count
     const handVisible = multiHandLandmarks.length > 0
 
-    if (handVisible) {
-      // Check cooldown — skip detection if recently confirmed
-      if (lastConfirmTimeRef.current > 0 && now - lastConfirmTimeRef.current < HAND_CONFIRM_COOLDOWN_MS) {
-        // Still in cooldown period — keep state as none
-        setPalmState('none')
-        return
-      }
+    // ── Cooldown check ──
+    if (lastConfirmTimeRef.current > 0 && now - lastConfirmTimeRef.current < CONFIRM_COOLDOWN_MS) {
+      setPalmState('none')
+      return
+    }
 
-      if (handSinceRef.current === 0) {
-        // Hand just appeared — start the sustain clock
-        handSinceRef.current = now
-        setPalmState('held')
-      } else if (!confirmedRef.current && now - handSinceRef.current >= HAND_CONFIRM_SUSTAIN_MS) {
-        // Sustained long enough → confirm (fires capture trigger)
-        confirmedRef.current = true
-        lastConfirmTimeRef.current = now
-        setPalmState('confirmed')
-        console.log('[SAATIRIL Palm] Hand confirmed — triggering shutter')
-        callbacksRef.current?.onPalmConfirmed?.()
+    if (handVisible) {
+      const wrist = multiHandLandmarks[0][0] // First hand, wrist landmark
+      const wristX = wrist.x
+
+      // ── Sample at controlled interval ──
+      if (now - lastSampleTimeRef.current >= SAMPLE_INTERVAL_MS) {
+        lastSampleTimeRef.current = now
+
+        if (lastWristXRef.current >= 0) {
+          const deltaX = wristX - lastWristXRef.current
+
+          // Determine current movement direction
+          let currentDirection = lastDirectionRef.current
+          if (deltaX > MIN_WAVE_AMPLITUDE) currentDirection = 1
+          else if (deltaX < -MIN_WAVE_AMPLITUDE) currentDirection = -1
+
+          // Check for direction change
+          if (currentDirection !== 0 && lastDirectionRef.current !== 0 && currentDirection !== lastDirectionRef.current) {
+            directionChangeCountRef.current++
+            lastDirectionChangeTimeRef.current = now
+
+            // Clean old samples outside window
+            positionHistoryRef.current = positionHistoryRef.current.filter(
+              (s) => now - s.timestamp < WAVE_WINDOW_MS
+            )
+
+            console.log(`[SAATIRIL Wave] Direction change #${directionChangeCountRef.current} (δx=${deltaX.toFixed(3)}, dir=${currentDirection})`)
+          }
+
+          if (currentDirection !== 0) {
+            lastDirectionRef.current = currentDirection
+          }
+        }
+
+        // Store position sample
+        positionHistoryRef.current.push({ x: wristX, timestamp: now })
+        if (positionHistoryRef.current.length > MAX_POSITION_HISTORY) {
+          positionHistoryRef.current.shift()
+        }
+
+        lastWristXRef.current = wristX
+
+        // ── Check if waving is confirmed ──
+        if (
+          !confirmedRef.current &&
+          directionChangeCountRef.current >= MIN_DIRECTION_CHANGES &&
+          lastDirectionChangeTimeRef.current > 0 &&
+          now - lastDirectionChangeTimeRef.current < WAVE_WINDOW_MS
+        ) {
+          confirmedRef.current = true
+          lastConfirmTimeRef.current = now
+          setPalmState('confirmed')
+          console.log(`[SAATIRIL Wave] Wave confirmed! (${directionChangeCountRef.current} direction changes) — triggering shutter`)
+          callbacksRef.current?.onPalmConfirmed?.()
+        } else if (!confirmedRef.current) {
+          // Update UI state
+          setPalmState(directionChangeCountRef.current > 0 ? 'waving' : 'hand_visible')
+        }
       }
     } else {
-      // No hand in frame right now
+      // No hand in frame
       if (confirmedRef.current) {
-        // Was confirmed, now hand gone → photobooth behavior:
-        // Timer continues to completion. The person can pose while countdown runs.
-        console.log('[SAATIRIL Palm] Hand left frame — timer continues (photobooth mode)')
+        // Photobooth behavior: timer continues
+        console.log('[SAATIRIL Wave] Hand left frame — timer continues (photobooth mode)')
         callbacksRef.current?.onPalmReleased?.()
       }
-      handSinceRef.current = 0
+      // Reset wave tracking for next attempt
+      positionHistoryRef.current = []
+      lastDirectionRef.current = 0
+      directionChangeCountRef.current = 0
+      lastDirectionChangeTimeRef.current = 0
+      lastWristXRef.current = -1
       confirmedRef.current = false
       setPalmState('none')
     }
@@ -249,14 +321,14 @@ export function usePalmDetection(): UsePalmDetectionReturn {
 
       hands.setOptions({
         maxNumHands: 1,
-        modelComplexity: 1, // full model for better hand detection at all angles
-        minDetectionConfidence: 0.5, // lower threshold = more responsive
-        minTrackingConfidence: 0.5,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.4, // Lower for better responsiveness
+        minTrackingConfidence: 0.4,
       })
 
       hands.onResults(processResults)
 
-      // Initialize the model with a dummy frame
+      // Initialize with dummy frame
       const tempCanvas = document.createElement('canvas')
       tempCanvas.width = 1
       tempCanvas.height = 1
@@ -266,7 +338,7 @@ export function usePalmDetection(): UsePalmDetectionReturn {
       setStatus('model_ready')
       return true
     } catch (e: any) {
-      console.error('[SAATIRIL Palm] Model initialization failed:', e)
+      console.error('[SAATIRIL Wave] Model initialization failed:', e)
       setStatus('error')
       setError(e.message || 'Model initialization failed')
       return false
@@ -283,9 +355,7 @@ export function usePalmDetection(): UsePalmDetectionReturn {
       videoRef.current = videoElement
       callbacksRef.current = callbacks
       isDetectingRef.current = true
-      confirmedRef.current = false
-      handSinceRef.current = 0
-      lastConfirmTimeRef.current = 0
+      resetWaveState()
 
       setIsRunning(true)
       setPalmState('searching')
@@ -293,7 +363,7 @@ export function usePalmDetection(): UsePalmDetectionReturn {
 
       detectFrameRef.current()
     },
-    [initialize, detectFrame],
+    [initialize, detectFrame, resetWaveState],
   )
 
   const stopDetection = useCallback(() => {
@@ -306,10 +376,8 @@ export function usePalmDetection(): UsePalmDetectionReturn {
     setFingersExtended(0)
     setPalmState('none')
     setStatus('model_ready')
-    confirmedRef.current = false
-    handSinceRef.current = 0
-    lastConfirmTimeRef.current = 0
-  }, [])
+    resetWaveState()
+  }, [resetWaveState])
 
   const dispose = useCallback(() => {
     stopDetection()

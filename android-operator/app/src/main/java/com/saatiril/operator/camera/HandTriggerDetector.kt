@@ -11,72 +11,104 @@ import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
 
 /**
- * Hand Trigger Detector — "Trigger Tangan"
+ * Hand Trigger Detector — "Trigger Waving"
  *
- * Uses MediaPipe Hand Landmarker to detect ANY hand in the camera frame
- * (open palm or closed fist) and trigger the camera shutter.
+ * Uses MediaPipe Hand Landmarker to detect a WAVING hand gesture
+ * (hand moving back and forth horizontally) and trigger the camera shutter.
  *
- * This matches the Chrome/Electron version's use-palm-detection.ts behavior:
- * - ANY hand visible = trigger (not just 5 fingers extended)
- * - 300ms sustain required before confirming (debounce against flicker)
- * - onHandConfirmed fires ONCE → triggers capture (starts timer or direct capture)
- * - onHandReleased fires when hand leaves frame → does NOT cancel timer
- *   (photobooth behavior: once hand confirms, timer always completes so the
- *   person being photographed can pose while the countdown runs)
+ * PHOTOBOOTH BEHAVIOR:
+ * - Waving hand detected → starts timer (or direct capture)
+ * - Timer ALWAYS completes — removing hand does NOT cancel it
+ * - The person being photographed can stop waving and pose during countdown
  *
- * MediaPipe processes camera preview bitmaps (from TextureView.getBitmap())
- * on a background thread — no JavaScript/MediaPipe scripts needed.
- *
- * NOTE: com.google.mlkit:hand-detection does NOT exist on Maven.
- * Google's hand detection is only available via MediaPipe Tasks Vision
- * (com.google.mediapipe:tasks-vision).
+ * WAVING DETECTION ALGORITHM:
+ * - Track wrist (landmark 0) X position across frames
+ * - Detect direction changes (left→right or right→left)
+ * - Minimum amplitude per direction: 6% of frame width
+ * - 2+ direction changes within 2 seconds = waving confirmed
+ * - After confirmation, 5-second cooldown prevents re-triggering
  */
 object HandTriggerDetector {
     private const val TAG = "HandTrigger"
 
-    // How long the hand must be visible before confirming (ms)
-    private const val CONFIRM_SUSTAIN_MS = 300L
+    // ─── Waving Detection Parameters ─────────────────────────────────
+    // Minimum horizontal displacement to count as a direction change (6% of frame)
+    private const val MIN_WAVE_AMPLITUDE = 0.06f
+
+    // Number of direction changes needed to confirm a wave (2 = one full back-and-forth)
+    private const val MIN_DIRECTION_CHANGES = 2
+
+    // Time window for direction changes to occur (ms)
+    private const val WAVE_WINDOW_MS = 2000L
 
     // Cooldown after a confirmation before another can fire (ms)
-    // Prevents re-triggering while the capture/timer flow is still running
     private const val CONFIRM_COOLDOWN_MS = 5000L
 
+    // How often to sample frames for wave tracking (ms between samples)
+    private const val SAMPLE_INTERVAL_MS = 80L
+
     // Minimum detection confidence
-    private const val MIN_CONFIDENCE = 0.5f
+    private const val MIN_CONFIDENCE = 0.4f
 
     // Model file in assets folder
     private const val MODEL_PATH = "hand_landmarker.task"
+
+    // Maximum position history entries
+    private const val MAX_POSITION_HISTORY = 30
 
     private var handLandmarker: HandLandmarker? = null
     private var isInitialized = false
     private var isRunning = false
 
-    // State tracking
-    private var handVisibleSince = 0L
-    private var isConfirmed = false
-    private var lastConfirmTime = 0L  // Cooldown tracking
+    // ─── Wave Tracking State ─────────────────────────────────────────
+    private data class PositionSample(
+        val x: Float,
+        val timestamp: Long
+    )
+
+    // Ring buffer of recent wrist positions
+    private val positionHistory = mutableListOf<PositionSample>()
+
+    // Last confirmed direction: +1 = moving right, -1 = moving left, 0 = unknown
+    private var lastDirection: Int = 0
+
+    // Number of direction changes detected in current wave attempt
+    private var directionChangeCount: Int = 0
+
+    // Timestamp of last direction change
+    private var lastDirectionChangeTime: Long = 0
+
+    // Last sampled wrist X position
+    private var lastWristX: Float = -1f
+
+    // Timestamp of last position sample
+    private var lastSampleTime: Long = 0
+
+    // Whether we've already fired onHandConfirmed for this wave
+    private var isConfirmed: Boolean = false
+
+    // Timestamp of last confirmation (for cooldown)
+    private var lastConfirmTime: Long = 0
 
     // Callbacks
     var onHandConfirmed: (() -> Unit)? = null
     var onHandReleased: (() -> Unit)? = null
 
-    // UI state (observable via StateFlow in ViewModel)
+    // UI state
     var handState: HandState = HandState.NONE
         private set
     var fingersExtended: Int = 0
         private set
 
     enum class HandState {
-        NONE,       // No hand detected
-        HELD,       // Hand visible, waiting for sustain
-        CONFIRMED   // Hand confirmed → trigger shutter
+        NONE,           // No hand detected
+        HAND_VISIBLE,   // Hand visible, not yet waving
+        WAVING,         // Waving detected (direction changes happening)
+        CONFIRMED       // Wave confirmed → trigger shutter
     }
 
     /**
      * Initialize the MediaPipe Hand Landmarker.
-     * Call once before starting detection.
-     *
-     * @param context Application context (needed for asset loading)
      */
     fun initialize(context: Context): Boolean {
         if (isInitialized) return true
@@ -97,7 +129,7 @@ object HandTriggerDetector {
 
             handLandmarker = HandLandmarker.createFromOptions(context, options)
             isInitialized = true
-            Log.i(TAG, "MediaPipe Hand Landmarker initialized successfully")
+            Log.i(TAG, "MediaPipe Hand Landmarker initialized (waving detection mode)")
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize Hand Landmarker: ${e.message}")
@@ -106,7 +138,7 @@ object HandTriggerDetector {
     }
 
     /**
-     * Start hand detection. Must call initialize() first.
+     * Start hand detection.
      */
     fun start() {
         if (!isInitialized) {
@@ -114,12 +146,10 @@ object HandTriggerDetector {
             return
         }
         isRunning = true
-        handVisibleSince = 0L
-        isConfirmed = false
-        lastConfirmTime = 0L
+        resetWaveState()
         handState = HandState.NONE
         fingersExtended = 0
-        Log.i(TAG, "Hand trigger detection started")
+        Log.i(TAG, "Waving hand trigger detection started")
     }
 
     /**
@@ -127,46 +157,45 @@ object HandTriggerDetector {
      */
     fun stop() {
         isRunning = false
-        handVisibleSince = 0L
-        isConfirmed = false
-        lastConfirmTime = 0L
+        resetWaveState()
         handState = HandState.NONE
         fingersExtended = 0
-        Log.i(TAG, "Hand trigger detection stopped")
+        Log.i(TAG, "Waving hand trigger detection stopped")
+    }
+
+    private fun resetWaveState() {
+        positionHistory.clear()
+        lastDirection = 0
+        directionChangeCount = 0
+        lastDirectionChangeTime = 0
+        lastWristX = -1f
+        lastSampleTime = 0
+        isConfirmed = false
+        lastConfirmTime = 0
     }
 
     /**
-     * Process a camera preview bitmap.
-     * Call this from a background thread/coroutine with each preview frame.
-     *
-     * MediaPipe's IMAGE mode detect() is synchronous (blocking) —
-     * it returns the result directly without needing Tasks.await().
+     * Process a camera preview bitmap for waving detection.
      *
      * PHOTOBOOTH BEHAVIOR:
-     * Once a hand is confirmed and triggers capture (timer or direct),
-     * the timer/capture ALWAYS runs to completion — removing the hand
-     * does NOT cancel it. This allows the person being photographed to
-     * remove their hand and pose while the countdown runs.
+     * Once waving is confirmed and triggers capture, the timer/capture
+     * ALWAYS runs to completion. Removing hand does NOT cancel it.
      *
-     * @param bitmap Camera preview frame (from TextureView.getBitmap())
+     * @param bitmap Camera preview frame
      * @return true if a hand was detected in this frame
      */
     fun processFrame(bitmap: Bitmap): Boolean {
         if (!isRunning || !isInitialized) return false
 
         try {
-            // Build MediaPipe image from bitmap
             val mpImage = BitmapImageBuilder(bitmap).build()
-
-            // Synchronous detection in IMAGE mode
             val result: HandLandmarkerResult? = handLandmarker?.detect(mpImage)
             if (result == null) return false
 
-            // Check if any hands detected
             val landmarks = result.landmarks()
             val handDetected = landmarks.isNotEmpty()
 
-            // Count extended fingers for UI indicator (first hand only)
+            // Count extended fingers for UI indicator
             fingersExtended = if (handDetected) {
                 countExtendedFingers(landmarks[0])
             } else {
@@ -175,55 +204,102 @@ object HandTriggerDetector {
 
             val now = System.currentTimeMillis()
 
-            if (handDetected) {
-                // Check cooldown — skip detection if recently confirmed
-                if (lastConfirmTime > 0 && now - lastConfirmTime < CONFIRM_COOLDOWN_MS) {
-                    // Still in cooldown period — keep state as NONE
-                    handState = HandState.NONE
-                    return true
-                }
+            // ── Cooldown check ──
+            if (lastConfirmTime > 0 && now - lastConfirmTime < CONFIRM_COOLDOWN_MS) {
+                handState = HandState.NONE
+                return handDetected
+            }
 
-                if (handVisibleSince == 0L) {
-                    // Hand just appeared
-                    handVisibleSince = now
-                    handState = HandState.HELD
-                } else if (!isConfirmed && now - handVisibleSince >= CONFIRM_SUSTAIN_MS) {
-                    // Sustained long enough → confirm
-                    isConfirmed = true
-                    lastConfirmTime = now
-                    handState = HandState.CONFIRMED
-                    Log.i(TAG, "Hand confirmed — triggering shutter")
-                    onHandConfirmed?.invoke()
+            if (handDetected) {
+                val wrist = landmarks[0][0] // First hand, wrist landmark
+                val wristX = wrist.x()
+
+                // ── Sample at controlled interval ──
+                if (now - lastSampleTime >= SAMPLE_INTERVAL_MS) {
+                    lastSampleTime = now
+
+                    if (lastWristX >= 0f) {
+                        // Calculate horizontal displacement
+                        val deltaX = wristX - lastWristX
+
+                        // Determine current movement direction
+                        val currentDirection = when {
+                            deltaX > MIN_WAVE_AMPLITUDE -> 1   // Moving right
+                            deltaX < -MIN_WAVE_AMPLITUDE -> -1 // Moving left
+                            else -> lastDirection               // No significant movement
+                        }
+
+                        // Check for direction change
+                        if (currentDirection != 0 && lastDirection != 0 && currentDirection != lastDirection) {
+                            directionChangeCount++
+                            lastDirectionChangeTime = now
+
+                            // Clean old samples outside window
+                            positionHistory.removeAll { now - it.timestamp > WAVE_WINDOW_MS }
+
+                            Log.d(TAG, "Wave: direction change #$directionChangeCount (deltaX=${String.format("%.3f", deltaX)}, dir=$currentDirection)")
+                        }
+
+                        if (currentDirection != 0) {
+                            lastDirection = currentDirection
+                        }
+                    }
+
+                    // Store position sample
+                    positionHistory.add(PositionSample(wristX, now))
+                    if (positionHistory.size > MAX_POSITION_HISTORY) {
+                        positionHistory.removeAt(0)
+                    }
+
+                    lastWristX = wristX
+
+                    // ── Check if waving is confirmed ──
+                    if (!isConfirmed && directionChangeCount >= MIN_DIRECTION_CHANGES) {
+                        // Verify at least one direction change is recent (within window)
+                        val recentChanges = directionChangeCount
+                        if (recentChanges >= MIN_DIRECTION_CHANGES && lastDirectionChangeTime > 0 && now - lastDirectionChangeTime < WAVE_WINDOW_MS) {
+                            isConfirmed = true
+                            lastConfirmTime = now
+                            handState = HandState.CONFIRMED
+                            Log.i(TAG, "Waving confirmed! ($directionChangeCount direction changes) — triggering shutter")
+                            onHandConfirmed?.invoke()
+                        }
+                    }
+
+                    // Update UI state
+                    if (!isConfirmed) {
+                        handState = if (directionChangeCount > 0) {
+                            HandState.WAVING
+                        } else {
+                            HandState.HAND_VISIBLE
+                        }
+                    }
                 }
             } else {
-                // No hand in frame
+                // No hand in frame — reset wave tracking (but don't cancel timer!)
                 if (isConfirmed) {
-                    // Hand was confirmed and now left — photobooth behavior:
-                    // Do NOT cancel the timer. Just reset detection state so
-                    // the next hand can trigger a new capture later.
-                    Log.i(TAG, "Hand left frame after confirmation — timer continues")
+                    Log.i(TAG, "Hand left frame after wave confirm — timer continues (photobooth mode)")
                     onHandReleased?.invoke()
                 }
-                handVisibleSince = 0L
+                // Reset wave detection state for next attempt
+                positionHistory.clear()
+                lastDirection = 0
+                directionChangeCount = 0
+                lastDirectionChangeTime = 0
+                lastWristX = -1f
                 isConfirmed = false
                 handState = HandState.NONE
             }
 
             return handDetected
         } catch (e: Exception) {
-            // MediaPipe can occasionally throw on bad frames — skip silently
             return false
         }
     }
 
     /**
      * Count extended fingers from hand landmarks (for UI indicator only).
-     * Returns 0–5. This is NOT used for triggering — any hand triggers.
-     *
-     * Each NormalizedLandmark has .x, .y, .z (normalized 0-1).
-     * 21 landmarks per hand:
-     *   0: WRIST, 1-4: THUMB (CMC,MCP,IP,TIP), 5-8: INDEX (MCP,PIP,DIP,TIP),
-     *   9-12: MIDDLE, 13-16: RING, 17-20: PINKY
+     * Returns 0–5. This is NOT used for triggering — waving triggers.
      */
     private fun countExtendedFingers(handLandmarks: List<NormalizedLandmark>): Int {
         if (handLandmarks.size < 21) return 0
@@ -233,7 +309,6 @@ object HandTriggerDetector {
 
         var fingersUp = 0
 
-        // Thumb: compare x position relative to hand orientation
         val thumbTip = handLandmarks[tipIds[0]]
         val thumbIp = handLandmarks[pipIds[0]]
         val wrist = handLandmarks[0]
@@ -246,7 +321,6 @@ object HandTriggerDetector {
             if (thumbTip.x() > thumbIp.x()) fingersUp++
         }
 
-        // Other 4 fingers: tip above PIP (lower y = higher) means extended
         for (i in 1..4) {
             val tip = handLandmarks[tipIds[i]]
             val pip = handLandmarks[pipIds[i]]
@@ -269,8 +343,5 @@ object HandTriggerDetector {
         Log.i(TAG, "Hand trigger detector disposed")
     }
 
-    /**
-     * Check if detection is currently running.
-     */
     fun isDetecting(): Boolean = isRunning
 }
