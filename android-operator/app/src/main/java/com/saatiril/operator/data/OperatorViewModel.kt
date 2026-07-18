@@ -11,7 +11,6 @@ import com.saatiril.operator.camera.Camera2Manager
 import com.saatiril.operator.camera.CameraCapture
 import com.saatiril.operator.camera.UVCCameraManager
 import com.saatiril.operator.util.FilenameUtils
-import com.saatiril.operator.util.PhotoSaver
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -560,7 +559,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
 
     /**
      * Handle a captured photo (base64 data URL from camera engine).
-     * v31: Photos saved locally via PhotoSaver AND sent via socket.
+     * Photos are ONLY sent via socket to the admin's output folder.
+     * They are NOT saved locally to the phone — the admin determines
+     * the output folder during project initialization, and photos go there.
      */
     private fun handleCapturedPhoto(base64DataUrl: String) {
         val mode = _project.value?.config?.mode
@@ -575,38 +576,13 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         currentPhotos.add(base64DataUrl)
         _capturedPhotos.value = currentPhotos
 
-        // Save photo locally to Pictures/Saatiril/{folderName}/
-        val photoIndex = currentPhotos.size
-        val poseName = if (photosPerSession > 1) {
-            if (photoIndex == 1) "Toga" else "Ijazah"
-        } else ""
-        val filename = FilenameUtils.buildStandardFilename(
-            nim = target.nim,
-            nama = target.nama,
-            suffix = photoIndex,
-            type = poseName
-        )
-        val projectName = _project.value?.name ?: "Saatiril"
-        val targetFolder = _project.value?.config?.targetFolder ?: ""
+        // NOTE: Photos are NOT saved to the phone's local storage.
+        // They are sent via socket (PHOTOS_SAVED) to the admin app,
+        // which saves them to the admin-designated output folder.
+        // Local saving was removed because it caused photos to appear
+        // in the phone's Gallery, which is not the intended behavior.
 
-        try {
-            val savedName = PhotoSaver.savePhoto(
-                context = getApplication(),
-                base64Data = base64DataUrl,
-                filename = filename,
-                projectName = projectName,
-                targetFolder = targetFolder
-            )
-            if (savedName != null) {
-                Log.i(TAG, "handleCapturedPhoto: Photo saved locally as $savedName")
-            } else {
-                Log.w(TAG, "handleCapturedPhoto: Local save failed — photo still sent via socket")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "handleCapturedPhoto: Local save error: ${e.message}")
-        }
-
-        Log.i(TAG, "handleCapturedPhoto: photo ${currentPhotos.size}/${photosPerSession} captured for ${target.nama}")
+        Log.i(TAG, "handleCapturedPhoto: photo ${currentPhotos.size}/${photosPerSession} captured for ${target.nama} — will be sent via socket")
 
         if (photosPerSession == 1 || currentPhotos.size >= photosPerSession) {
             // All photos captured — finalize (send via socket only, NO local save)

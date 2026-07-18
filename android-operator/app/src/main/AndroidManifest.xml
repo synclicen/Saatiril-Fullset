@@ -16,12 +16,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     
-    <!-- Storage (v8: NOT needed — photos NOT saved on operator device) -->
-    <!-- Kept for backward compatibility only -->
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" 
-        android:maxSdkVersion="28" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
+    <!-- Storage permissions REMOVED — photos are NOT saved on operator device.
+         Photos are sent via socket to the admin's designated output folder only. -->
     
     <!-- Keep screen on during operation -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />

@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.usb.UsbManager
-import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.WindowManager
@@ -163,13 +162,8 @@ class MainActivity : ComponentActivity() {
             permissions.add(Manifest.permission.CAMERA)
         }
 
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                != PackageManager.PERMISSION_GRANTED
-            ) {
-                permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            }
-        }
+        // NOTE: WRITE_EXTERNAL_STORAGE removed — photos are NOT saved locally.
+        // Photos are sent via socket to the admin's output folder only.
 
         if (permissions.isNotEmpty()) {
             permissionLauncher.launch(permissions.toTypedArray())
