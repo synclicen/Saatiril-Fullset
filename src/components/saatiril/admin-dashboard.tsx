@@ -335,11 +335,22 @@ export default function AdminDashboard() {
   const [apkInfo, setApkInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string } | null>(null)
   const [portableInfo, setPortableInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string } | null>(null)
 
-  // Check release status from GitHub Releases on mount — client-side fetch
-  // This works in BOTH dev mode and portable Electron build (no server API needed)
+  // Check release status from GitHub Releases on mount
+  // ── In Electron portable: use IPC (main process fetches GitHub API via Node.js,
+  //    no CORS/network issues). In web/dev: use direct client-side fetch.
   useEffect(() => {
     const fetchReleaseInfo = async () => {
       try {
+        // ── Electron: use IPC → main process fetch ──
+        const api = window.saatirilAPI
+        if (api?.isElectron && api.getReleaseInfo) {
+          const data = await api.getReleaseInfo()
+          setApkInfo(data.apk)
+          setPortableInfo(data.portable)
+          return
+        }
+
+        // ── Web / dev preview: direct client-side fetch ──
         const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/tags/latest`, {
           headers: { Accept: 'application/vnd.github+json' },
         })
@@ -365,9 +376,9 @@ export default function AdminDashboard() {
           lastModified: portableAsset.updated_at || release.published_at,
           downloadUrl: portableAsset.browser_download_url,
         } : { available: false, error: 'No Portable asset found in latest release' })
-      } catch {
-        setApkInfo({ available: false, error: 'GitHub API error' })
-        setPortableInfo({ available: false, error: 'GitHub API error' })
+      } catch (err: any) {
+        setApkInfo({ available: false, error: err?.message || 'GitHub API error' })
+        setPortableInfo({ available: false, error: err?.message || 'GitHub API error' })
       }
     }
     fetchReleaseInfo()

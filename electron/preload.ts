@@ -78,4 +78,13 @@ contextBridge.exposeInMainWorld('saatirilAPI', {
   }> => {
     return ipcRenderer.invoke('generate-license-code', machineId, adminKey)
   },
+
+  // ── Release Info (GitHub Releases) ────────────────────────────────────
+  // Uses main-process fetch (Node.js) to avoid CORS issues in Electron
+  getReleaseInfo: (): Promise<{
+    apk: { available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string }
+    portable: { available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string }
+  }> => {
+    return ipcRenderer.invoke('get-release-info')
+  },
 })

@@ -564,6 +564,32 @@ function registerIpcHandlers() {
   ipcMain.handle('generate-license-code', async (_event, machineId: string, adminKey: string) => {
     return generateLicenseCode(machineId, adminKey)
   })
+
+  // ── Release info IPC ──────────────────────────────────────────────────
+  // Fetches GitHub Release info from the main process (Node.js) to avoid
+  // CORS / network issues when the renderer tries to call api.github.com
+  // directly (which fails in portable Electron builds on some networks).
+  ipcMain.handle('get-release-info', async () => {
+    try {
+      const ghRes = await fetch('https://api.github.com/repos/synclicen/Saatiril-Fullset/releases/tags/latest', {
+        headers: { Accept: 'application/vnd.github+json' },
+      })
+      if (!ghRes.ok) throw new Error(`GitHub API returned ${ghRes.status}`)
+      const release: any = await ghRes.json()
+      const assets: any[] = release.assets || []
+
+      const apkAsset = assets.find((a: any) => a.name.endsWith('.apk'))
+      const portableAsset = assets.find((a: any) => a.name.endsWith('-portable.exe') || a.name === 'saatiril-portable.exe')
+
+      const toInfo = (a: any) =>
+        a ? { available: true, sizeMB: (a.size / (1024 * 1024)).toFixed(1), assetName: a.name, lastModified: a.updated_at, downloadUrl: a.browser_download_url }
+          : { available: false, error: 'Not found in latest release' }
+
+      return { apk: toInfo(apkAsset), portable: toInfo(portableAsset) }
+    } catch (err: any) {
+      return { apk: { available: false, error: err.message || 'GitHub API error' }, portable: { available: false, error: err.message || 'GitHub API error' } }
+    }
+  })
 }
 
 // ─── Splash/Loading Window ────────────────────────────────────────────────

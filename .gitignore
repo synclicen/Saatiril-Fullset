@@ -76,3 +76,4 @@ server.log
 worklog.mdtool-results/
 tool-results/
 upload/
+/electron/license.js
