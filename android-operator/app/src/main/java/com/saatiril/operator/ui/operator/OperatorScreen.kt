@@ -663,55 +663,12 @@ fun OperatorScreen(
                                 ShutterModeContent(
                                     currentMode = shutterMode,
                                     onModeChange = { viewModel.setShutterMode(it) },
-                                    cameraMode = mode
+                                    cameraMode = mode,
+                                    handTriggerEnabled = handTriggerEnabled,
+                                    handState = handState,
+                                    fingersExtended = fingersExtended,
+                                    onHandTriggerToggle = { viewModel.setHandTriggerEnabled(!handTriggerEnabled) }
                                 )
-                                // ── Hand trigger toggle ──
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(
-                                            if (handTriggerEnabled) Color(0x224ade80) else PANEL,
-                                            RoundedCornerShape(4.dp)
-                                        )
-                                        .border(
-                                            BorderStroke(1.dp, if (handTriggerEnabled) Color(0xFF4ade80) else BORDER),
-                                            RoundedCornerShape(4.dp)
-                                        )
-                                        .clickable { viewModel.setHandTriggerEnabled(!handTriggerEnabled) }
-                                        .padding(horizontal = 6.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.PanTool,
-                                        contentDescription = null,
-                                        tint = if (handTriggerEnabled) Color(0xFF4ade80) else MUTED,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                    Text(
-                                        "Trigger Tangan",
-                                        style = TextStyle(
-                                            color = if (handTriggerEnabled) Color(0xFF4ade80) else MUTED,
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    )
-                                    if (handTriggerEnabled && handState != HandTriggerDetector.HandState.NONE) {
-                                        Text(
-                                            when (handState) {
-                                                HandTriggerDetector.HandState.CONFIRMED -> " OK"
-                                                HandTriggerDetector.HandState.HELD -> " ..."
-                                                else -> if (fingersExtended > 0) " $fingersExtended✋" else ""
-                                            },
-                                            style = TextStyle(
-                                                color = if (handState == HandTriggerDetector.HandState.CONFIRMED) Color(0xFF4ade80) else GOLD,
-                                                fontSize = 8.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        )
-                                    }
-                                }
                             }
                         }
                     }
@@ -1223,9 +1180,20 @@ private fun TargetInfoContent(
 private fun ShutterModeContent(
     currentMode: String,
     onModeChange: (String) -> Unit,
-    cameraMode: CameraMode
+    cameraMode: CameraMode,
+    handTriggerEnabled: Boolean,
+    handState: HandTriggerDetector.HandState,
+    fingersExtended: Int,
+    onHandTriggerToggle: () -> Unit
 ) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+    // All mode buttons + Trigger Tangan in a single FlowRow
+    // This prevents Trigger Tangan from overlapping/covering other buttons
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        // Shutter mode buttons
         SHUTTER_MODES.forEach { (id, label) ->
             if (id == "ai" && cameraMode != CameraModes.SINGLE && cameraMode != CameraModes.DUAL) return@forEach
             val isActive = currentMode == id
@@ -1234,12 +1202,58 @@ private fun ShutterModeContent(
                     .background(if (isActive) GOLD.copy(alpha = 0.2f) else PANEL, RoundedCornerShape(4.dp))
                     .border(BorderStroke(1.dp, if (isActive) GOLD else BORDER), RoundedCornerShape(4.dp))
                     .clickable { onModeChange(id) }
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(1.dp)
+                    .padding(horizontal = 5.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Icon(when (id) { "ai" -> Icons.Default.AutoAwesome; "manual" -> Icons.Default.Camera; else -> Icons.Default.Timer },
                     contentDescription = null, tint = if (isActive) GOLD else MUTED, modifier = Modifier.size(10.dp))
                 Text(label, style = TextStyle(color = if (isActive) GOLD else MUTED, fontSize = 8.sp, fontWeight = FontWeight.Bold))
+            }
+        }
+
+        // Trigger Tangan toggle — same row flow as mode buttons
+        Row(
+            modifier = Modifier
+                .background(
+                    if (handTriggerEnabled) Color(0x224ade80) else PANEL,
+                    RoundedCornerShape(4.dp)
+                )
+                .border(
+                    BorderStroke(1.dp, if (handTriggerEnabled) Color(0xFF4ade80) else BORDER),
+                    RoundedCornerShape(4.dp)
+                )
+                .clickable { onHandTriggerToggle() }
+                .padding(horizontal = 5.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Icon(
+                Icons.Default.PanTool,
+                contentDescription = null,
+                tint = if (handTriggerEnabled) Color(0xFF4ade80) else MUTED,
+                modifier = Modifier.size(10.dp)
+            )
+            Text(
+                "Trigger Tangan",
+                style = TextStyle(
+                    color = if (handTriggerEnabled) Color(0xFF4ade80) else MUTED,
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            )
+            if (handTriggerEnabled && handState != HandTriggerDetector.HandState.NONE) {
+                Text(
+                    when (handState) {
+                        HandTriggerDetector.HandState.CONFIRMED -> " OK"
+                        HandTriggerDetector.HandState.HELD -> " ..."
+                        else -> if (fingersExtended > 0) " $fingersExtended✋" else ""
+                    },
+                    style = TextStyle(
+                        color = if (handState == HandTriggerDetector.HandState.CONFIRMED) Color(0xFF4ade80) else GOLD,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                )
             }
         }
     }

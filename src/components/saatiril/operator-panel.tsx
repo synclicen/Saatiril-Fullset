@@ -1304,38 +1304,38 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               </button>
             )
           })}
+          {/* Palm trigger toggle — flows in same row as mode buttons */}
+          {!readOnly && effectiveShutterMode !== 'ai' && (
+            <button
+              onClick={() => {
+                setPalmTriggerEnabled((v) => !v)
+                if (palmTriggerEnabled) palm.stopDetection()
+              }}
+              className={`flex items-center gap-1.5 rounded-md font-semibold transition-all duration-200 cursor-pointer ${
+                compact ? 'px-1.5 py-1 text-[9px]' : 'px-2 py-1.5 text-[10px]'
+              } ${palmTriggerEnabled ? 'scale-105' : 'hover:bg-white/5'}`}
+              style={{
+                backgroundColor: palmTriggerEnabled ? '#22c55e22' : THEME.panel,
+                color: palmTriggerEnabled ? '#4ade80' : THEME.muted,
+                border: `1px solid ${palmTriggerEnabled ? '#22c55e' : THEME.border}`,
+                boxShadow: palmTriggerEnabled ? '0 0 8px #22c55e22' : 'none',
+              }}
+              title="Trigger Tangan — tunjukkan tangan (terbuka/tertutup) ke kamera untuk memotret"
+            >
+              {palm.status === 'loading_scripts' || palm.status === 'loading_model' ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Hand className="size-3" />
+              )}
+              <span>Trigger Tangan</span>
+              {palmTriggerEnabled && palm.isRunning && palm.fingersExtended > 0 && (
+                <span className="text-[8px] font-mono" style={{ color: palm.palmState === 'confirmed' ? '#4ade80' : THEME.gold }}>
+                  {palm.fingersExtended}✋
+                </span>
+              )}
+            </button>
+          )}
         </div>
-        {/* Palm trigger toggle — independent of shutter mode */}
-        {!readOnly && effectiveShutterMode !== 'ai' && (
-          <button
-            onClick={() => {
-              setPalmTriggerEnabled((v) => !v)
-              if (palmTriggerEnabled) palm.stopDetection()
-            }}
-            className={`flex items-center gap-1.5 rounded-md font-semibold transition-all duration-200 cursor-pointer ${
-              compact ? 'px-1.5 py-1 text-[9px]' : 'px-2 py-1.5 text-[10px]'
-            } ${palmTriggerEnabled ? 'scale-105' : 'hover:bg-white/5'}`}
-            style={{
-              backgroundColor: palmTriggerEnabled ? '#22c55e22' : THEME.panel,
-              color: palmTriggerEnabled ? '#4ade80' : THEME.muted,
-              border: `1px solid ${palmTriggerEnabled ? '#22c55e' : THEME.border}`,
-              boxShadow: palmTriggerEnabled ? '0 0 8px #22c55e22' : 'none',
-            }}
-            title="Trigger Tangan — tunjukkan tangan (terbuka/tertutup) ke kamera untuk memotret"
-          >
-            {palm.status === 'loading_scripts' || palm.status === 'loading_model' ? (
-              <Loader2 className="size-3 animate-spin" />
-            ) : (
-              <Hand className="size-3" />
-            )}
-            <span>Trigger Tangan</span>
-            {palmTriggerEnabled && palm.isRunning && palm.fingersExtended > 0 && (
-              <span className="text-[8px] font-mono" style={{ color: palm.palmState === 'confirmed' ? '#4ade80' : THEME.gold }}>
-                {palm.fingersExtended}✋
-              </span>
-            )}
-          </button>
-        )}
       </div>
     )
   }
