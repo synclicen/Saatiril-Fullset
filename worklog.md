@@ -196,3 +196,30 @@ Stage Summary:
 - Root cause: TypeScript strict mode — `res.json()` returns `unknown`, needs type assertion
 - Fix: Type-asserted the GitHub API response + added undefined fallback
 - Both APK and Electron Windows builds now pass successfully
+
+---
+Task ID: 8
+Agent: main
+Task: Fix Mode Shutter layout — Trigger Tangan covering other mode options
+
+Work Log:
+- User reported: "mode telapak tangan menutupi pilihan mode lainnya" in APK
+- Analyzed screenshot with VLM — Trigger Tangan was a separate full-width Row below mode buttons
+- Root cause: Trigger Tangan was a separate Row element inside the CollapsiblePanel, creating visual overlap
+- APK fix (OperatorScreen.kt):
+  - Changed ShutterModeContent from single Row to FlowRow (wrapping layout)
+  - Moved Trigger Tangan toggle INTO the FlowRow alongside mode buttons
+  - All buttons (Manual, 3s, 5s, 10s, AI, Trigger Tangan) now flow naturally
+  - Added @OptIn(ExperimentalLayoutApi::class) for FlowRow
+  - Consistent padding (5dp h, 3dp v) and spacing (3dp) for all buttons
+- Windows fix (operator-panel.tsx):
+  - Moved Trigger Tangan button INTO the flex-wrap container (was previously separate)
+  - All buttons now flow in same row with flex-wrap
+- Commits: 4fc24e7 (layout fix) + 9a33a33 (OptIn fix)
+- Both APK and Electron builds succeeded ✅
+
+Stage Summary:
+- Root cause: Trigger Tangan was a separate element, not flowing with mode buttons
+- Fix: Use FlowRow (APK) / flex-wrap (Windows) with all buttons in same container
+- Layout is now consistent between APK and Windows
+- Both builds pass
