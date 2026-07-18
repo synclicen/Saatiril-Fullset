@@ -16,6 +16,8 @@ import {
   XCircle,
   QrCode,
   X,
+  Upload,
+  Package,
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import * as XLSX from 'xlsx'
@@ -327,6 +329,55 @@ export default function AdminDashboard() {
   const [qrDialogOpen, setQrDialogOpen] = useState(false)
   const [qrLink, setQrLink] = useState('')
   const [qrLabel, setQrLabel] = useState('')
+
+  // ── APK upload state ──────────────────────────────────────────────
+  const [apkInfo, setApkInfo] = useState<{ exists: boolean; sizeMB?: string; lastModified?: string } | null>(null)
+  const [apkUploading, setApkUploading] = useState(false)
+  const apkFileRef = useRef<HTMLInputElement>(null)
+
+  // Check APK status on mount
+  useEffect(() => {
+    fetch('/api/apk-upload').then(r => r.json()).then(data => setApkInfo(data)).catch(() => {})
+  }, [])
+
+  const handleApkUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!file.name.endsWith('.apk')) {
+      toast({ title: 'Format salah', description: 'File harus berformat .apk', variant: 'destructive' })
+      return
+    }
+
+    setApkUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append('apk', file)
+      const res = await fetch('/api/apk-upload', { method: 'POST', body: formData })
+      const data = await res.json()
+
+      if (!res.ok) {
+        toast({ title: 'Upload gagal', description: data.error || 'Terjadi kesalahan', variant: 'destructive' })
+        return
+      }
+
+      toast({
+        title: 'APK berhasil diupload!',
+        description: `${data.fileName} (${data.sizeMB} MB) — siap didownload oleh operator`,
+      })
+
+      // Refresh APK info
+      const infoRes = await fetch('/api/apk-upload')
+      const infoData = await infoRes.json()
+      setApkInfo(infoData)
+    } catch {
+      toast({ title: 'Upload gagal', description: 'Terjadi kesalahan jaringan', variant: 'destructive' })
+    } finally {
+      setApkUploading(false)
+      // Reset file input
+      if (apkFileRef.current) apkFileRef.current.value = ''
+    }
+  }, [toast])
 
   useEffect(() => {
     const api = window.saatirilAPI
@@ -975,35 +1026,65 @@ export default function AdminDashboard() {
             {/* APK Android download section */}
             <Separator className="bg-[#533485]/40" />
             <div className="mb-1 text-xs font-semibold uppercase tracking-wider" style={{ color: '#4ade80' }}>
-              APK Saatiril Android
+              <Package className="size-3 inline mr-1" />APK Saatiril Android
             </div>
-            <div className="flex gap-2">
+            {apkInfo?.exists ? (
+              <>
+                <div className="text-xs mb-1.5 opacity-70" style={{ color: '#86efac' }}>
+                  ✅ APK tersedia ({apkInfo.sizeMB} MB)
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                    onClick={async () => {
+                      const url = await generateApkLink()
+                      window.open(url, '_blank')
+                    }}
+                  >
+                    <Download className="size-3.5" />
+                    Download APK
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                    onClick={copyApkLink}
+                    title="Salin Link APK"
+                  >
+                    <Copy className="size-3.5" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                    onClick={showApkQrCode}
+                    title="QR Code APK Android"
+                  >
+                    <QrCode className="size-3.5" />
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
+                ⚠️ Belum ada APK — upload file APK terbaru
+              </div>
+            )}
+            <div className="flex gap-2 mt-1">
+              <input
+                type="file"
+                accept=".apk"
+                ref={apkFileRef}
+                onChange={handleApkUpload}
+                className="hidden"
+              />
               <Button
                 variant="outline"
-                className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
-                onClick={async () => {
-                  const url = await generateApkLink()
-                  window.open(url, '_blank')
-                }}
+                size="sm"
+                className="flex-1 justify-start gap-2 border-[#533485]/60 bg-[#1a0b2e]/40 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37] text-xs h-7"
+                onClick={() => apkFileRef.current?.click()}
+                disabled={apkUploading}
               >
-                <Download className="size-3.5" />
-                Download APK
-              </Button>
-              <Button
-                variant="outline"
-                className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
-                onClick={copyApkLink}
-                title="Salin Link APK"
-              >
-                <Copy className="size-3.5" />
-              </Button>
-              <Button
-                variant="outline"
-                className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
-                onClick={showApkQrCode}
-                title="QR Code APK Android"
-              >
-                <QrCode className="size-3.5" />
+                <Upload className="size-3" />
+                {apkUploading ? 'Uploading...' : 'Upload APK Baru'}
               </Button>
             </div>
           </div>
@@ -1089,35 +1170,65 @@ export default function AdminDashboard() {
             {/* APK Android download section */}
             <div>
               <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: '#4ade80' }}>
-                APK Saatiril Android
+                <Package className="size-3 inline mr-1" />APK Saatiril Android
               </div>
-              <div className="flex gap-2">
+              {apkInfo?.exists ? (
+                <>
+                  <div className="text-xs mb-1.5 opacity-70" style={{ color: '#86efac' }}>
+                    ✅ APK tersedia ({apkInfo.sizeMB} MB)
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                      onClick={async () => {
+                        const url = await generateApkLink()
+                        window.open(url, '_blank')
+                      }}
+                    >
+                      <Download className="size-3.5" />
+                      Download APK
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                      onClick={copyApkLink}
+                      title="Salin Link APK"
+                    >
+                      <Copy className="size-3.5" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                      onClick={showApkQrCode}
+                      title="QR Code APK Android"
+                    >
+                      <QrCode className="size-3.5" />
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
+                  ⚠️ Belum ada APK — upload file APK terbaru
+                </div>
+              )}
+              <div className="flex gap-2 mt-1">
+                <input
+                  type="file"
+                  accept=".apk"
+                  ref={apkFileRef}
+                  onChange={handleApkUpload}
+                  className="hidden"
+                />
                 <Button
                   variant="outline"
-                  className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
-                  onClick={async () => {
-                    const url = await generateApkLink()
-                    window.open(url, '_blank')
-                  }}
+                  size="sm"
+                  className="flex-1 justify-start gap-2 border-[#533485]/60 bg-[#1a0b2e]/40 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37] text-xs h-7"
+                  onClick={() => apkFileRef.current?.click()}
+                  disabled={apkUploading}
                 >
-                  <Download className="size-3.5" />
-                  Download APK
-                </Button>
-                <Button
-                  variant="outline"
-                  className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
-                  onClick={copyApkLink}
-                  title="Salin Link APK"
-                >
-                  <Copy className="size-3.5" />
-                </Button>
-                <Button
-                  variant="outline"
-                  className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
-                  onClick={showApkQrCode}
-                  title="QR Code APK Android"
-                >
-                  <QrCode className="size-3.5" />
+                  <Upload className="size-3" />
+                  {apkUploading ? 'Uploading...' : 'Upload APK Baru'}
                 </Button>
               </div>
             </div>
@@ -1221,35 +1332,65 @@ export default function AdminDashboard() {
             {/* APK Android download section */}
             <div>
               <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: '#4ade80' }}>
-                APK Saatiril Android
+                <Package className="size-3 inline mr-1" />APK Saatiril Android
               </div>
-              <div className="flex gap-2">
+              {apkInfo?.exists ? (
+                <>
+                  <div className="text-xs mb-1.5 opacity-70" style={{ color: '#86efac' }}>
+                    ✅ APK tersedia ({apkInfo.sizeMB} MB)
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                      onClick={async () => {
+                        const url = await generateApkLink()
+                        window.open(url, '_blank')
+                      }}
+                    >
+                      <Download className="size-3.5" />
+                      Download APK
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                      onClick={copyApkLink}
+                      title="Salin Link APK"
+                    >
+                      <Copy className="size-3.5" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
+                      onClick={showApkQrCode}
+                      title="QR Code APK Android"
+                    >
+                      <QrCode className="size-3.5" />
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
+                  ⚠️ Belum ada APK — upload file APK terbaru
+                </div>
+              )}
+              <div className="flex gap-2 mt-1">
+                <input
+                  type="file"
+                  accept=".apk"
+                  ref={apkFileRef}
+                  onChange={handleApkUpload}
+                  className="hidden"
+                />
                 <Button
                   variant="outline"
-                  className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
-                  onClick={async () => {
-                    const url = await generateApkLink()
-                    window.open(url, '_blank')
-                  }}
+                  size="sm"
+                  className="flex-1 justify-start gap-2 border-[#533485]/60 bg-[#1a0b2e]/40 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37] text-xs h-7"
+                  onClick={() => apkFileRef.current?.click()}
+                  disabled={apkUploading}
                 >
-                  <Download className="size-3.5" />
-                  Download APK
-                </Button>
-                <Button
-                  variant="outline"
-                  className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
-                  onClick={copyApkLink}
-                  title="Salin Link APK"
-                >
-                  <Copy className="size-3.5" />
-                </Button>
-                <Button
-                  variant="outline"
-                  className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
-                  onClick={showApkQrCode}
-                  title="QR Code APK Android"
-                >
-                  <QrCode className="size-3.5" />
+                  <Upload className="size-3" />
+                  {apkUploading ? 'Uploading...' : 'Upload APK Baru'}
                 </Button>
               </div>
             </div>
