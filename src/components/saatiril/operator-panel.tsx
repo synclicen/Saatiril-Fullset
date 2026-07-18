@@ -1226,9 +1226,9 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       if (ai.momentState === 'ijazah_possible' || ai.momentState === 'ijazah_sustained') return 'AI: Ijazah terdeteksi...'
     }
     if (palmTriggerEnabled && palm.isRunning) {
-      if (palm.palmState === 'confirmed') return 'Telapak terdeteksi — memicu shutter...'
-      if (palm.palmState === 'held') return 'Telapak terdeteksi...'
-      if (palm.palmState === 'searching') return 'Mencari telapak tangan...'
+      if (palm.palmState === 'confirmed') return 'Tangan terdeteksi — memicu shutter...'
+      if (palm.palmState === 'held') return 'Tangan terdeteksi...'
+      if (palm.palmState === 'searching') return 'Mencari tangan...'
     }
     if (photoshoot) {
       if (capturePhase === 'ready-1') return 'Siap Foto'
@@ -1321,17 +1321,17 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               border: `1px solid ${palmTriggerEnabled ? '#22c55e' : THEME.border}`,
               boxShadow: palmTriggerEnabled ? '0 0 8px #22c55e22' : 'none',
             }}
-            title="Trigger Telapak — tunjukkan telapak tangan ke kamera untuk memotret"
+            title="Trigger Tangan — tunjukkan tangan (terbuka/tertutup) ke kamera untuk memotret"
           >
             {palm.status === 'loading_scripts' || palm.status === 'loading_model' ? (
               <Loader2 className="size-3 animate-spin" />
             ) : (
               <Hand className="size-3" />
             )}
-            <span>Trigger Telapak</span>
+            <span>Trigger Tangan</span>
             {palmTriggerEnabled && palm.isRunning && palm.fingersExtended > 0 && (
               <span className="text-[8px] font-mono" style={{ color: palm.palmState === 'confirmed' ? '#4ade80' : THEME.gold }}>
-                {palm.fingersExtended}/5
+                {palm.fingersExtended}✋
               </span>
             )}
           </button>
@@ -1689,7 +1689,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           }}>
             <Hand className={`size-3 ${palm.palmState === 'held' ? 'animate-pulse' : ''}`} style={{ color: palm.palmState === 'confirmed' ? '#4ade80' : THEME.gold }} />
             <span className="text-[10px] font-bold" style={{ color: palm.palmState === 'confirmed' ? '#4ade80' : THEME.muted }}>
-              {palm.palmState === 'confirmed' ? 'OK' : palm.palmState === 'held' ? '...' : palm.fingersExtended > 0 ? `${palm.fingersExtended}/5` : 'Telapak'}
+              {palm.palmState === 'confirmed' ? 'OK' : palm.palmState === 'held' ? '...' : palm.fingersExtended > 0 ? `${palm.fingersExtended}✋` : 'Tangan'}
             </span>
           </div>
         </div>

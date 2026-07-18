@@ -3,18 +3,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 /**
- * PALM DETECTION (selfie-style shutter)
+ * PALM DETECTION (hand-presence shutter trigger)
  *
- * Behaves like a phone selfie palm timer:
- *   1. Operator shows an OPEN PALM to the camera (all 5 fingers extended).
- *   2. Palm must be held ~500ms to be "confirmed" (debounce against flicker).
- *   3. onPalmConfirmed fires ONCE → operator-panel starts a 3s countdown.
- *   4. If the palm is removed (hand closes, drops, or leaves frame) while the
- *      countdown is still running, onPalmReleased fires → countdown cancels.
- *   5. If the palm stays up through the whole countdown → photo is taken.
+ * Triggers when ANY hand is detected in the camera frame — whether fingers
+ * are open (5 extended) or closed (fist). This is "telapak tangan" mode:
+ * the mere presence of a hand/palm facing the camera is the trigger.
  *
- * This is NOT the old "count fingers 1→5" gesture. The only gesture is an
- * open palm held up to the camera.
+ * Flow:
+ *   1. Operator shows their hand/palm to the camera (open OR closed).
+ *   2. Hand must be held ~300ms to be "confirmed" (debounce against flicker).
+ *   3. onPalmConfirmed fires ONCE → operator-panel triggers capture.
+ *   4. If the hand leaves the frame while a countdown is still running,
+ *      onPalmReleased fires → countdown cancels.
+ *   5. If the hand stays through the countdown → photo is taken.
+ *
+ * This is NOT the old "count fingers 1→5" or "open palm only" gesture.
+ * ANY visible hand = trigger.
  */
 
 export type PalmDetectionStatus =
@@ -30,9 +34,9 @@ export type PalmDetectionStatus =
 export type PalmState = 'none' | 'searching' | 'held' | 'confirmed'
 
 export interface PalmDetectionCallbacks {
-  /** Fires once when an open palm has been held long enough to confirm */
+  /** Fires once when a hand has been held long enough to confirm */
   onPalmConfirmed: () => void
-  /** Fires when the confirmed palm is removed (hand closes / leaves frame) */
+  /** Fires when the confirmed hand leaves the frame (cancels countdown) */
   onPalmReleased: () => void
 }
 
@@ -74,7 +78,7 @@ async function loadPalmScripts(): Promise<boolean> {
   if (scriptsLoadPromise) return scriptsLoadPromise
   scriptsLoadPromise = (async () => {
     try {
-      // Load MediaPipe Hands from CDN (same model — detects hand landmarks)
+      // Load MediaPipe Hands from CDN (detects hand landmarks)
       await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js')
       await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js')
       await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js')
@@ -94,7 +98,7 @@ async function loadPalmScripts(): Promise<boolean> {
 }
 
 // ─── Count extended fingers from hand landmarks ───────────────────────────
-// An OPEN PALM = all 5 fingers extended. Returns 0–5.
+// Returns 0–5 for visual indicator only (NOT used for triggering).
 function countExtendedFingers(landmarks: any[]): number {
   const tipIds = [4, 8, 12, 16, 20]
   const pipIds = [3, 6, 10, 14, 18] // Proximal interphalangeal joints
@@ -125,10 +129,9 @@ function countExtendedFingers(landmarks: any[]): number {
 }
 
 // ─── Tuning constants ─────────────────────────────────────────────────────
-// Palm must be held this long before "confirmed" (debounce against flicker)
-const PALM_CONFIRM_SUSTAIN_MS = 500
-// How many fingers count as "an open palm". 5 = strict open palm.
-const PALM_FINGER_THRESHOLD = 5
+// Hand must be held this long before "confirmed" (debounce against flicker)
+// Shorter than before (was 500ms) because any-hand detection is more stable
+const HAND_CONFIRM_SUSTAIN_MS = 300
 
 export function usePalmDetection(): UsePalmDetectionReturn {
   const [status, setStatus] = useState<PalmDetectionStatus>('unloaded')
@@ -145,15 +148,16 @@ export function usePalmDetection(): UsePalmDetectionReturn {
   const callbacksRef = useRef<PalmDetectionCallbacks | null>(null)
   // Track whether we've already fired onPalmConfirmed for the current hold
   const confirmedRef = useRef<boolean>(false)
-  // Timestamp when palm first reached the threshold (0 = not currently held)
-  const palmSinceRef = useRef<number>(0)
+  // Timestamp when hand first appeared (0 = not currently held)
+  const handSinceRef = useRef<number>(0)
 
   const processResults = useCallback((results: any) => {
     if (!isDetectingRef.current) return
 
     const multiHandLandmarks = results.multiHandLandmarks || []
 
-    // Find the hand with the most extended fingers
+    // ── ANY hand detected = palm trigger ──
+    // Count extended fingers for visual indicator only
     let maxFingers = 0
     for (const landmarks of multiHandLandmarks) {
       const count = countExtendedFingers(landmarks)
@@ -162,30 +166,31 @@ export function usePalmDetection(): UsePalmDetectionReturn {
     setFingersExtended(maxFingers)
 
     const now = Date.now()
-    const palmCurrentlyUp = maxFingers >= PALM_FINGER_THRESHOLD
+    // KEY CHANGE: any hand in frame = trigger, regardless of finger count
+    const handVisible = multiHandLandmarks.length > 0
 
-    if (palmCurrentlyUp) {
-      if (palmSinceRef.current === 0) {
-        // Palm just appeared — start the sustain clock
-        palmSinceRef.current = now
+    if (handVisible) {
+      if (handSinceRef.current === 0) {
+        // Hand just appeared — start the sustain clock
+        handSinceRef.current = now
         setPalmState('held')
-      } else if (!confirmedRef.current && now - palmSinceRef.current >= PALM_CONFIRM_SUSTAIN_MS) {
-        // Sustained long enough → confirm (fires countdown start)
+      } else if (!confirmedRef.current && now - handSinceRef.current >= HAND_CONFIRM_SUSTAIN_MS) {
+        // Sustained long enough → confirm (fires capture trigger)
         confirmedRef.current = true
         setPalmState('confirmed')
-        console.log('[SAATIRIL Palm] Palm confirmed — starting countdown')
+        console.log('[SAATIRIL Palm] Hand confirmed — triggering shutter')
         callbacksRef.current?.onPalmConfirmed?.()
       }
     } else {
-      // No open palm right now
+      // No hand in frame right now
       if (confirmedRef.current) {
-        // Was confirmed, now removed → release (cancels countdown)
-        console.log('[SAATIRIL Palm] Palm released — cancelling countdown')
+        // Was confirmed, now hand gone → release (cancels countdown)
+        console.log('[SAATIRIL Palm] Hand left frame — cancelling countdown')
         callbacksRef.current?.onPalmReleased?.()
       }
-      palmSinceRef.current = 0
+      handSinceRef.current = 0
       confirmedRef.current = false
-      setPalmState(multiHandLandmarks.length > 0 ? 'searching' : 'none')
+      setPalmState('none')
     }
   }, [])
 
@@ -229,8 +234,8 @@ export function usePalmDetection(): UsePalmDetectionReturn {
 
       hands.setOptions({
         maxNumHands: 1,
-        modelComplexity: 0, // lite model for speed
-        minDetectionConfidence: 0.6,
+        modelComplexity: 1, // full model for better hand detection at all angles
+        minDetectionConfidence: 0.5, // lower threshold = more responsive
         minTrackingConfidence: 0.5,
       })
 
@@ -264,7 +269,7 @@ export function usePalmDetection(): UsePalmDetectionReturn {
       callbacksRef.current = callbacks
       isDetectingRef.current = true
       confirmedRef.current = false
-      palmSinceRef.current = 0
+      handSinceRef.current = 0
 
       setIsRunning(true)
       setPalmState('searching')
@@ -286,7 +291,7 @@ export function usePalmDetection(): UsePalmDetectionReturn {
     setPalmState('none')
     setStatus('model_ready')
     confirmedRef.current = false
-    palmSinceRef.current = 0
+    handSinceRef.current = 0
   }, [])
 
   const dispose = useCallback(() => {
