@@ -55,3 +55,26 @@ Stage Summary:
 - More responsive: lower confidence threshold, faster sustain timer
 - Better model: complexity 1 for more robust detection
 - UI updated to reflect new behavior
+
+---
+Task ID: 3
+Agent: main
+Task: Stop saving photos to phone storage in APK — photos should only go to admin's output folder
+
+Work Log:
+- Analyzed PhotoSaver.kt: saves photos to Pictures/Saatiril/ via MediaStore API (3-tier fallback)
+- Analyzed OperatorViewModel.kt handleCapturedPhoto(): called PhotoSaver.savePhoto() to save locally
+- Identified root cause: v31 change added local saving AND socket sending, but user only wants socket
+- Removed PhotoSaver.savePhoto() call from handleCapturedPhoto()
+- Removed unused PhotoSaver import from OperatorViewModel.kt
+- Removed WRITE_EXTERNAL_STORAGE and READ_EXTERNAL_STORAGE permissions from AndroidManifest.xml
+- Removed runtime storage permission request from MainActivity.kt
+- Removed unused Build import from MainActivity.kt
+- Committed 709e3ee and pushed to GitHub
+- Builds triggered: APK #105, Electron #159
+
+Stage Summary:
+- Photos no longer saved to phone storage in APK
+- Photos only sent via socket (PHOTOS_SAVED) to admin's designated output folder
+- Storage permissions removed from manifest and runtime requests
+- PhotoSaver.kt kept in codebase but no longer called (could be removed later)
