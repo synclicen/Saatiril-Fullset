@@ -146,3 +146,30 @@ Stage Summary:
 - HandTriggerDetector.kt fully rewritten with correct MediaPipe Tasks Vision API
 - Model file (hand_landmarker.task) added to assets
 - Version bumped to 32
+
+---
+Task ID: 6
+Agent: main
+Task: Fix APK build failure — resolve Kotlin compilation errors (NormalizedLandmark + missing Bitmap import)
+
+Work Log:
+- User reported "BUILD FAILED in 16s, Process completed with exit code 1" (build still failing after Task 5 fix)
+- Fetched GitHub Actions build logs from run 29647166743 (commit 1048243)
+- Identified root cause: Kotlin compilation errors — 2 separate issues
+- ERROR 1: Camera2Manager.kt:541 — "Unresolved reference: Bitmap"
+  - getPreviewBitmap() method returns Bitmap? but import android.graphics.Bitmap was missing
+  - Fix: Added `import android.graphics.Bitmap` to Camera2Manager.kt
+- ERROR 2: HandTriggerDetector.kt lines 215,218,220,227 — "Function invocation 'x()' expected"
+  - NormalizedLandmark from MediaPipe has x() and y() as METHODS (functions), not properties
+  - Code used wrist.x, middleMcp.x, tip.y, pip.y (property syntax) — Kotlin requires function call syntax
+  - Fix: Changed .x → .x() and .y → .y() for all NormalizedLandmark access in countExtendedFingers()
+- Committed and pushed fix (9435dc9) to GitHub
+- Monitored GitHub Actions build — BUILD SUCCEEDED ✅
+- APK uploaded to latest GitHub Release successfully
+
+Stage Summary:
+- Root cause: 2 Kotlin compilation errors from Task 5's MediaPipe migration
+  1. Missing Bitmap import in Camera2Manager.kt (added for getPreviewBitmap method)
+  2. NormalizedLandmark.x/.y are methods not properties in MediaPipe Tasks Vision API
+- Fix: Added import + changed property access to function calls
+- Build now succeeds: APK uploaded to GitHub Releases
