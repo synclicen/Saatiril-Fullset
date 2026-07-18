@@ -212,19 +212,19 @@ object HandTriggerDetector {
         val thumbIp = handLandmarks[pipIds[0]]
         val wrist = handLandmarks[0]
         val middleMcp = handLandmarks[9]
-        val isRightHand = wrist.x < middleMcp.x
+        val isRightHand = wrist.x() < middleMcp.x()
 
         if (isRightHand) {
-            if (thumbTip.x < thumbIp.x) fingersUp++
+            if (thumbTip.x() < thumbIp.x()) fingersUp++
         } else {
-            if (thumbTip.x > thumbIp.x) fingersUp++
+            if (thumbTip.x() > thumbIp.x()) fingersUp++
         }
 
         // Other 4 fingers: tip above PIP (lower y = higher) means extended
         for (i in 1..4) {
             val tip = handLandmarks[tipIds[i]]
             val pip = handLandmarks[pipIds[i]]
-            if (tip.y < pip.y) fingersUp++
+            if (tip.y() < pip.y()) fingersUp++
         }
 
         return fingersUp
