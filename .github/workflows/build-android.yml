@@ -1,143 +1,94 @@
-name: Build Saatiril
+name: Build Saatiril APK Android
 
 on:
   push:
     branches: [main]
-    tags: ['v*']
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
-env:
-  NODE_VERSION: '20'
+permissions:
+  contents: write
 
 jobs:
-  # ─── Windows Build (Next.js + Electron) ────────────────────
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          
-      - name: Install bun
-        run: npm install -g bun
-          
-      - name: Install dependencies
-        run: bun install
-        
-      - name: Build Next.js (export)
-        run: bun run build:export
-        continue-on-error: true
-        
-      - name: Build Next.js (standard)
-        if: failure()
-        run: bun run build
-        
-      - name: Upload Next.js build
-        uses: actions/upload-artifact@v4
-        with:
-          name: saatiril-nextjs-build
-          path: .next/
-          continue-on-error: true
-
-  # ─── Android Build (Operator App) ──────────────────────────
-  build-android:
+  build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-          
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          cmdline-tools-version: 12266719
-          accept-android-sdk-licenses: true
-          packages: 'tools platform-tools'
+    - uses: actions/checkout@v4
 
-      # Force accept all Android SDK licenses — prevents interactive prompt hang
-      # Some SDK packages (e.g., android-googletv-license) require explicit
-      # acceptance even with accept-android-sdk-licenses: true
-      - name: Accept Android SDK Licenses Manually
-        run: |
-          mkdir -p -m 0775 "$ANDROID_HOME/licenses"
-          echo "y" | yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          # Alternative: try the versioned cmdline-tools path if latest doesn't exist
-          if [ -d "$ANDROID_HOME/cmdline-tools/16.0" ]; then
-            echo "y" | yes | $ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager --licenses || true
-          fi
-        
-      - name: Install Android SDK components
-        run: |
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
-        
-      - name: Cache Gradle packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-            android-operator/.gradle
-          key: gradle-${{ hashFiles('android-operator/**/*.gradle.kts', 'android-operator/**/gradle-wrapper.properties') }}
-          restore-keys: gradle-
-          
-      - name: Create local.properties
-        working-directory: android-operator
-        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
 
-      - name: Make gradlew executable
-        working-directory: android-operator
-        run: chmod +x gradlew
-          
-      - name: Build Debug APK
-        working-directory: android-operator
-        env:
-          GITHUB_USER: ${{ github.actor }}
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
-        
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: saatiril-operator-android
-          path: android-operator/app/build/outputs/apk/debug/*.apk
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+      with:
+        cmdline-tools-version: 12266719
+        accept-android-sdk-licenses: true
+        packages: 'tools platform-tools'
 
-  # ─── Release ───────────────────────────────────────────────
-  release:
-    needs: [build-windows, build-android]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            saatiril-operator-android/*.apk
-          body: |
-            ## Saatiril Release ${{ github.ref_name }}
-            
-            ### 📦 Downloads
-            - **Android Operator App**: `app-debug.apk`
-            
-            ### 📱 Android App Setup
-            1. Download the APK to your phone
-            2. Enable "Install from Unknown Sources" in Settings
-            3. Install the APK
-            4. Open the app and enter the Saatiril server IP
-            5. For external camera: connect HDMI capture card via USB-C OTG
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    # Force accept all Android SDK licenses — prevents interactive prompt hang
+    - name: Accept Android SDK Licenses Manually
+      run: |
+        mkdir -p -m 0775 "$ANDROID_HOME/licenses"
+        echo "y" | yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+        if [ -d "$ANDROID_HOME/cmdline-tools/16.0" ]; then
+          echo "y" | yes | $ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager --licenses || true
+        fi
+
+    - name: Install SDK components
+      run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
+    - name: Cache Gradle packages
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+          android-operator/.gradle
+        key: gradle-${{ hashFiles('android-operator/**/*.gradle.kts', 'android-operator/**/gradle-wrapper.properties') }}
+        restore-keys: gradle-
+
+    - name: Create local.properties
+      working-directory: android-operator
+      run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+    - name: Grant execute permission for gradlew
+      working-directory: android-operator
+      run: chmod +x gradlew
+
+    - name: Build Debug APK
+      working-directory: android-operator
+      run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+    - name: Rename APK to saatiril-operator.apk
+      working-directory: android-operator/app/build/outputs/apk/debug
+      run: |
+        cp app-debug.apk saatiril-operator.apk
+        echo "APK size: $(du -h saatiril-operator.apk | cut -f1)"
+
+    - name: Upload APK as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: saatiril-operator-android
+        path: android-operator/app/build/outputs/apk/debug/saatiril-operator.apk
+
+    # ── Auto-publish APK to GitHub Releases (tag: latest) ──
+    - name: Delete existing latest release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release delete latest --yes || true
+        git tag -d latest || true
+        git push origin :refs/tags/latest || true
+
+    - name: Create latest release with APK
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release create latest \
+          android-operator/app/build/outputs/apk/debug/saatiril-operator.apk \
+          --title "Saatiril Operator - Latest" \
+          --notes "APK terbaru dari build #${{ github.run_number }} (${{ github.sha }})" \
+          --prerelease

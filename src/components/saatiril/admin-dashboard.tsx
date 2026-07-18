@@ -16,7 +16,6 @@ import {
   XCircle,
   QrCode,
   X,
-  Upload,
   Package,
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
@@ -330,54 +329,13 @@ export default function AdminDashboard() {
   const [qrLink, setQrLink] = useState('')
   const [qrLabel, setQrLabel] = useState('')
 
-  // ── APK upload state ──────────────────────────────────────────────
-  const [apkInfo, setApkInfo] = useState<{ exists: boolean; sizeMB?: string; lastModified?: string } | null>(null)
-  const [apkUploading, setApkUploading] = useState(false)
-  const apkFileRef = useRef<HTMLInputElement>(null)
+  // ── APK download state (from GitHub Releases) ──────────────────────
+  const [apkInfo, setApkInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; error?: string } | null>(null)
 
-  // Check APK status on mount
+  // Check APK status from GitHub Releases on mount
   useEffect(() => {
-    fetch('/api/apk-upload').then(r => r.json()).then(data => setApkInfo(data)).catch(() => {})
+    fetch('/api/apk-download').then(r => r.json()).then(data => setApkInfo(data)).catch(() => setApkInfo({ available: false, error: 'Network error' }))
   }, [])
-
-  const handleApkUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    if (!file.name.endsWith('.apk')) {
-      toast({ title: 'Format salah', description: 'File harus berformat .apk', variant: 'destructive' })
-      return
-    }
-
-    setApkUploading(true)
-    try {
-      const formData = new FormData()
-      formData.append('apk', file)
-      const res = await fetch('/api/apk-upload', { method: 'POST', body: formData })
-      const data = await res.json()
-
-      if (!res.ok) {
-        toast({ title: 'Upload gagal', description: data.error || 'Terjadi kesalahan', variant: 'destructive' })
-        return
-      }
-
-      toast({
-        title: 'APK berhasil diupload!',
-        description: `${data.fileName} (${data.sizeMB} MB) — siap didownload oleh operator`,
-      })
-
-      // Refresh APK info
-      const infoRes = await fetch('/api/apk-upload')
-      const infoData = await infoRes.json()
-      setApkInfo(infoData)
-    } catch {
-      toast({ title: 'Upload gagal', description: 'Terjadi kesalahan jaringan', variant: 'destructive' })
-    } finally {
-      setApkUploading(false)
-      // Reset file input
-      if (apkFileRef.current) apkFileRef.current.value = ''
-    }
-  }, [toast])
 
   useEffect(() => {
     const api = window.saatirilAPI
@@ -450,7 +408,7 @@ export default function AdminDashboard() {
   )
 
   // ── Generate APK download link ──────────────────────────────────
-  // Provides a direct download link for the Saatiril Operator Android APK.
+  // Points to our backend API which proxies the APK from GitHub Releases.
   const generateApkLink = useCallback(
     async (): Promise<string> => {
       const api = window.saatirilAPI
@@ -461,10 +419,10 @@ export default function AdminDashboard() {
           const info = lanInfo || (await api.getLanInfo())
           const ips = info.ips
           const lanIP = ips.length > 0 ? ips[0].address : 'localhost'
-          return `http://${lanIP}:${info.httpPort}/saatiril-operator.apk`
+          return `http://${lanIP}:${info.httpPort}/api/apk-download`
         } catch {
           const hostname = window.location.hostname
-          return `http://${hostname}:3000/saatiril-operator.apk`
+          return `http://${hostname}:3000/api/apk-download`
         }
       } else {
         let origin = window.location.origin
@@ -500,7 +458,7 @@ export default function AdminDashboard() {
           }
         }
 
-        return `${origin}/saatiril-operator.apk`
+        return `${origin}/api/apk-download`
       }
     },
     [lanInfo],
@@ -1028,7 +986,7 @@ export default function AdminDashboard() {
             <div className="mb-1 text-xs font-semibold uppercase tracking-wider" style={{ color: '#4ade80' }}>
               <Package className="size-3 inline mr-1" />APK Saatiril Android
             </div>
-            {apkInfo?.exists ? (
+            {apkInfo?.available ? (
               <>
                 <div className="text-xs mb-1.5 opacity-70" style={{ color: '#86efac' }}>
                   ✅ APK tersedia ({apkInfo.sizeMB} MB)
@@ -1038,8 +996,18 @@ export default function AdminDashboard() {
                     variant="outline"
                     className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
                     onClick={async () => {
-                      const url = await generateApkLink()
-                      window.open(url, '_blank')
+                      try {
+                        const res = await fetch('/api/apk-download', { method: 'POST' })
+                        if (!res.ok) throw new Error('Download failed')
+                        const blob = await res.blob()
+                        const url = URL.createObjectURL(blob)
+                        const a = document.createElement('a')
+                        a.href = url; a.download = 'saatiril-operator.apk'
+                        document.body.appendChild(a); a.click()
+                        document.body.removeChild(a); URL.revokeObjectURL(url)
+                      } catch {
+                        toast({ title: 'Download gagal', description: 'Tidak dapat mengunduh APK', variant: 'destructive' })
+                      }
                     }}
                   >
                     <Download className="size-3.5" />
@@ -1065,28 +1033,9 @@ export default function AdminDashboard() {
               </>
             ) : (
               <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
-                ⚠️ Belum ada APK — upload file APK terbaru
+                ⚠️ APK belum tersedia — build belum selesai atau GitHub Release belum dibuat
               </div>
             )}
-            <div className="flex gap-2 mt-1">
-              <input
-                type="file"
-                accept=".apk"
-                ref={apkFileRef}
-                onChange={handleApkUpload}
-                className="hidden"
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                className="flex-1 justify-start gap-2 border-[#533485]/60 bg-[#1a0b2e]/40 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37] text-xs h-7"
-                onClick={() => apkFileRef.current?.click()}
-                disabled={apkUploading}
-              >
-                <Upload className="size-3" />
-                {apkUploading ? 'Uploading...' : 'Upload APK Baru'}
-              </Button>
-            </div>
           </div>
         ) : mode === 'dual-photoshoot' ? (
           /* Dual Photoshoot: 1 MC + 2 Operators */
@@ -1172,7 +1121,7 @@ export default function AdminDashboard() {
               <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: '#4ade80' }}>
                 <Package className="size-3 inline mr-1" />APK Saatiril Android
               </div>
-              {apkInfo?.exists ? (
+              {apkInfo?.available ? (
                 <>
                   <div className="text-xs mb-1.5 opacity-70" style={{ color: '#86efac' }}>
                     ✅ APK tersedia ({apkInfo.sizeMB} MB)
@@ -1182,8 +1131,18 @@ export default function AdminDashboard() {
                       variant="outline"
                       className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
                       onClick={async () => {
-                        const url = await generateApkLink()
-                        window.open(url, '_blank')
+                        try {
+                          const res = await fetch('/api/apk-download', { method: 'POST' })
+                          if (!res.ok) throw new Error('Download failed')
+                          const blob = await res.blob()
+                          const url = URL.createObjectURL(blob)
+                          const a = document.createElement('a')
+                          a.href = url; a.download = 'saatiril-operator.apk'
+                          document.body.appendChild(a); a.click()
+                          document.body.removeChild(a); URL.revokeObjectURL(url)
+                        } catch {
+                          toast({ title: 'Download gagal', description: 'Tidak dapat mengunduh APK', variant: 'destructive' })
+                        }
                       }}
                     >
                       <Download className="size-3.5" />
@@ -1209,28 +1168,9 @@ export default function AdminDashboard() {
                 </>
               ) : (
                 <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
-                  ⚠️ Belum ada APK — upload file APK terbaru
+                  ⚠️ APK belum tersedia — build belum selesai atau GitHub Release belum dibuat
                 </div>
               )}
-              <div className="flex gap-2 mt-1">
-                <input
-                  type="file"
-                  accept=".apk"
-                  ref={apkFileRef}
-                  onChange={handleApkUpload}
-                  className="hidden"
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1 justify-start gap-2 border-[#533485]/60 bg-[#1a0b2e]/40 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37] text-xs h-7"
-                  onClick={() => apkFileRef.current?.click()}
-                  disabled={apkUploading}
-                >
-                  <Upload className="size-3" />
-                  {apkUploading ? 'Uploading...' : 'Upload APK Baru'}
-                </Button>
-              </div>
             </div>
           </div>
         ) : (
@@ -1334,7 +1274,7 @@ export default function AdminDashboard() {
               <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: '#4ade80' }}>
                 <Package className="size-3 inline mr-1" />APK Saatiril Android
               </div>
-              {apkInfo?.exists ? (
+              {apkInfo?.available ? (
                 <>
                   <div className="text-xs mb-1.5 opacity-70" style={{ color: '#86efac' }}>
                     ✅ APK tersedia ({apkInfo.sizeMB} MB)
@@ -1344,8 +1284,18 @@ export default function AdminDashboard() {
                       variant="outline"
                       className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
                       onClick={async () => {
-                        const url = await generateApkLink()
-                        window.open(url, '_blank')
+                        try {
+                          const res = await fetch('/api/apk-download', { method: 'POST' })
+                          if (!res.ok) throw new Error('Download failed')
+                          const blob = await res.blob()
+                          const url = URL.createObjectURL(blob)
+                          const a = document.createElement('a')
+                          a.href = url; a.download = 'saatiril-operator.apk'
+                          document.body.appendChild(a); a.click()
+                          document.body.removeChild(a); URL.revokeObjectURL(url)
+                        } catch {
+                          toast({ title: 'Download gagal', description: 'Tidak dapat mengunduh APK', variant: 'destructive' })
+                        }
                       }}
                     >
                       <Download className="size-3.5" />
@@ -1371,28 +1321,9 @@ export default function AdminDashboard() {
                 </>
               ) : (
                 <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
-                  ⚠️ Belum ada APK — upload file APK terbaru
+                  ⚠️ APK belum tersedia — build belum selesai atau GitHub Release belum dibuat
                 </div>
               )}
-              <div className="flex gap-2 mt-1">
-                <input
-                  type="file"
-                  accept=".apk"
-                  ref={apkFileRef}
-                  onChange={handleApkUpload}
-                  className="hidden"
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1 justify-start gap-2 border-[#533485]/60 bg-[#1a0b2e]/40 text-[#c4b5fd] hover:bg-[#3b2263] hover:text-[#d4af37] text-xs h-7"
-                  onClick={() => apkFileRef.current?.click()}
-                  disabled={apkUploading}
-                >
-                  <Upload className="size-3" />
-                  {apkUploading ? 'Uploading...' : 'Upload APK Baru'}
-                </Button>
-              </div>
             </div>
           </div>
         )}
