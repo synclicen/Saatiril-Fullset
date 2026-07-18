@@ -1106,23 +1106,25 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
             return
         }
 
+        // PHOTOBOOTH TRIGGER: Hand appears → confirmed → hand leaves → timer starts
+        // onHandConfirmed = hand detected long enough (indicator turns green)
+        // onHandLeft = hand left frame → START TIMER (this is the actual trigger!)
         HandTriggerDetector.onHandConfirmed = {
-            Log.i(TAG, "Wave trigger: waving confirmed — triggering capture")
+            Log.i(TAG, "Hand trigger: hand confirmed ✓ — waiting for hand to leave frame")
+        }
+        HandTriggerDetector.onHandLeft = {
+            Log.i(TAG, "Hand trigger: hand left frame → starting capture/timer")
             viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
                 triggerCapture()
             }
         }
-        HandTriggerDetector.onHandReleased = {
-            // PHOTOBOOTH BEHAVIOR: Do NOT cancel the timer when hand leaves.
-            // Once waving is confirmed → timer starts → timer ALWAYS completes.
-            // The person being photographed can stop waving and pose
-            // while the countdown runs.
-            Log.i(TAG, "Wave trigger: hand released — timer continues (photobooth mode)")
+        HandTriggerDetector.onHandAppeared = {
+            Log.d(TAG, "Hand trigger: hand appeared")
         }
 
         HandTriggerDetector.start()
 
-        // Start detection loop — sample preview frames at ~12fps for wave tracking
+        // Detection loop — ~15fps for responsive hand tracking
         handDetectionJob?.cancel()
         handDetectionJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
             while (isActive) {
@@ -1133,16 +1135,15 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
                     HandTriggerDetector.processFrame(bitmap)
 
                     _handState.value = HandTriggerDetector.handState
-                    _fingersExtended.value = HandTriggerDetector.fingersExtended
 
                     if (!bitmap.isRecycled) bitmap.recycle()
                 }
 
-                delay(80) // ~12 fps for better wave tracking
+                delay(66) // ~15 fps — fast and responsive
             }
         }
 
-        Log.i(TAG, "Waving hand trigger detection started")
+        Log.i(TAG, "Photobooth hand trigger detection started")
     }
 
     private fun stopHandDetection() {
@@ -1150,7 +1151,6 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
         handDetectionJob = null
         HandTriggerDetector.stop()
         _handState.value = HandTriggerDetector.HandState.NONE
-        _fingersExtended.value = 0
         Log.i(TAG, "Hand trigger detection stopped")
     }
 

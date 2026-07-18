@@ -125,7 +125,6 @@ fun OperatorScreen(
     val timerCountdown by viewModel.timerCountdown.collectAsState()
     val handTriggerEnabled by viewModel.handTriggerEnabled.collectAsState()
     val handState by viewModel.handState.collectAsState()
-    val fingersExtended by viewModel.fingersExtended.collectAsState()
     val opSearchQuery by viewModel.opSearchQuery.collectAsState()
     val frameBitmap by viewModel.frameBitmap.collectAsState()
     val mcCallBuffer by viewModel.mcCallBuffer.collectAsState()
@@ -389,9 +388,9 @@ fun OperatorScreen(
                                 modifier = Modifier
                                     .background(
                                         when (handState) {
+                                            HandTriggerDetector.HandState.TRIGGERED -> Color(0x8822c55e)
                                             HandTriggerDetector.HandState.CONFIRMED -> Color(0x8822c55e)
-                                            HandTriggerDetector.HandState.WAVING -> Color(0x88d4af37)
-                                            HandTriggerDetector.HandState.HAND_VISIBLE -> Color(0x884ade80)
+                                            HandTriggerDetector.HandState.HAND_DETECTED -> Color(0x88d4af37)
                                             else -> Color(0xAA000000)
                                         },
                                         RoundedCornerShape(12.dp)
@@ -399,9 +398,9 @@ fun OperatorScreen(
                                     .border(
                                         1.dp,
                                         when (handState) {
+                                            HandTriggerDetector.HandState.TRIGGERED -> Color(0xFF22c55e)
                                             HandTriggerDetector.HandState.CONFIRMED -> Color(0xFF22c55e)
-                                            HandTriggerDetector.HandState.WAVING -> GOLD
-                                            HandTriggerDetector.HandState.HAND_VISIBLE -> Color(0xFF4ade80)
+                                            HandTriggerDetector.HandState.HAND_DETECTED -> GOLD
                                             else -> BORDER
                                         },
                                         RoundedCornerShape(12.dp)
@@ -414,22 +413,23 @@ fun OperatorScreen(
                                     Icons.Default.PanTool,
                                     contentDescription = null,
                                     tint = when (handState) {
+                                        HandTriggerDetector.HandState.TRIGGERED -> Color(0xFF4ade80)
                                         HandTriggerDetector.HandState.CONFIRMED -> Color(0xFF4ade80)
-                                        HandTriggerDetector.HandState.WAVING -> GOLD
-                                        HandTriggerDetector.HandState.HAND_VISIBLE -> Color(0xFF4ade80)
+                                        HandTriggerDetector.HandState.HAND_DETECTED -> GOLD
                                         else -> MUTED
                                     },
                                     modifier = Modifier.size(10.dp)
                                 )
                                 Text(
                                     when (handState) {
-                                        HandTriggerDetector.HandState.CONFIRMED -> "OK ✓"
-                                        HandTriggerDetector.HandState.WAVING -> "Waving..."
-                                        HandTriggerDetector.HandState.HAND_VISIBLE -> "Tangan"
-                                        else -> if (fingersExtended > 0) "$fingersExtended✋" else "Wave"
+                                        HandTriggerDetector.HandState.TRIGGERED -> "Timer ✓"
+                                        HandTriggerDetector.HandState.CONFIRMED -> "Siap ✓"
+                                        HandTriggerDetector.HandState.HAND_DETECTED -> "Tangan..."
+                                        else -> "Tangan"
                                     },
                                     style = TextStyle(
                                         color = when (handState) {
+                                            HandTriggerDetector.HandState.TRIGGERED -> Color(0xFF4ade80)
                                             HandTriggerDetector.HandState.CONFIRMED -> Color(0xFF4ade80)
                                             else -> MUTED
                                         },
@@ -670,7 +670,6 @@ fun OperatorScreen(
                                     cameraMode = mode,
                                     handTriggerEnabled = handTriggerEnabled,
                                     handState = handState,
-                                    fingersExtended = fingersExtended,
                                     onHandTriggerToggle = { viewModel.setHandTriggerEnabled(!handTriggerEnabled) }
                                 )
                             }
@@ -1187,7 +1186,6 @@ private fun ShutterModeContent(
     cameraMode: CameraMode,
     handTriggerEnabled: Boolean,
     handState: HandTriggerDetector.HandState,
-    fingersExtended: Int,
     onHandTriggerToggle: () -> Unit
 ) {
     // Layout: Row 1 = shutter mode buttons, Row 2 = Trigger Tangan toggle
@@ -1220,7 +1218,7 @@ private fun ShutterModeContent(
             }
         }
 
-        // Row 2: Trigger Waving toggle (separate row for clarity)
+        // Row 2: Trigger Tangan toggle (photobooth: show hand → remove → timer starts)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1244,7 +1242,7 @@ private fun ShutterModeContent(
                 modifier = Modifier.size(10.dp)
             )
             Text(
-                "Trigger Waving",
+                "Trigger Tangan",
                 style = TextStyle(
                     color = if (handTriggerEnabled) Color(0xFF4ade80) else MUTED,
                     fontSize = 8.sp,
@@ -1258,16 +1256,16 @@ private fun ShutterModeContent(
                 )
                 Text(
                     when (handState) {
-                        HandTriggerDetector.HandState.CONFIRMED -> "Wave terdeteksi ✓"
-                        HandTriggerDetector.HandState.WAVING -> "Mendeteksi wave..."
-                        HandTriggerDetector.HandState.HAND_VISIBLE -> "Tangan terlihat"
-                        else -> "Menunggu wave..."
+                        HandTriggerDetector.HandState.TRIGGERED -> "Timer dimulai ✓"
+                        HandTriggerDetector.HandState.CONFIRMED -> "Lepas tangan = mulai"
+                        HandTriggerDetector.HandState.HAND_DETECTED -> "Tangan terdeteksi..."
+                        else -> "Tunjukkan tangan"
                     },
                     style = TextStyle(
                         color = when (handState) {
+                            HandTriggerDetector.HandState.TRIGGERED -> Color(0xFF4ade80)
                             HandTriggerDetector.HandState.CONFIRMED -> Color(0xFF4ade80)
-                            HandTriggerDetector.HandState.WAVING -> GOLD
-                            HandTriggerDetector.HandState.HAND_VISIBLE -> Color(0xFF4ade80)
+                            HandTriggerDetector.HandState.HAND_DETECTED -> GOLD
                             else -> MUTED
                         },
                         fontSize = 7.sp,
