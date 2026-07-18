@@ -1,22 +1,25 @@
 ---
 Task ID: 1
-Agent: Main Agent
-Task: Fix APK download not working in portable Electron version
+Agent: main
+Task: Fix APK/Portable download "belum tersedia" issue in Electron portable build
 
 Work Log:
-- Investigated the root cause: Electron workflow removes `src/app/api` directory before building static export, so `/api/apk-download` route doesn't exist in portable version
-- Verified GitHub Release with tag "latest" exists and contains both APK (18.3 MB) and Portable (117.2 MB) assets
-- Fixed `admin-dashboard.tsx`: Replaced server-side API dependency (`fetch('/api/apk-download')`) with direct client-side GitHub API call
-- Updated state types to include `downloadUrl` field for direct GitHub download URLs
-- Fixed fallback download URL pattern: `/releases/download/latest/` instead of `/releases/latest/download/` (latter fails for prerelease releases)
-- Updated all 6 download buttons (3 APK + 3 Portable across single/dual-photoshoot/dual-camera modes) to use `window.open(url, '_blank')` with direct GitHub URLs
-- Updated `showApkQrCode`, `showPortableQrCode`, `copyApkLink`, `copyPortableLink` to use synchronous `generateDownloadLink()`
-- Added `/api/apk-download` route handler to `electron/main.ts` for LAN proxy support (GET for info, POST for proxy download)
-- Pushed changes to GitHub repo `synclicen/Saatiril-Fullset`
+- Analyzed user screenshot: both APK and Portable show "belum tersedia" in portable Electron
+- Confirmed GitHub Releases API returns both assets correctly (saatiril-operator.apk + saatiril-portable.exe)
+- Identified root cause: admin-dashboard.tsx uses client-side fetch('https://api.github.com/...') which fails in Electron portable due to CORS/network restrictions from localhost renderer
+- The Electron main.ts already had an /api/apk-download HTTP route but frontend never used it
+- Solution: Use Electron IPC (main process fetches GitHub API via Node.js) instead of renderer-side fetch
+- Added 'get-release-info' IPC handler in electron/main.ts (fetches from Node.js, no CORS)
+- Added getReleaseInfo() method in electron/preload.ts
+- Updated admin-dashboard.tsx to detect Electron and use IPC, fallback to direct fetch for web/dev
+- Also improved error messages in catch block to show actual error reason
+- TypeScript compilation passes (npx tsc -p electron/tsconfig.json)
+- Dev preview verified working at http://localhost:3000
+- Committed changes in saatiril-repo but CANNOT push (no GitHub credentials in environment)
 
 Stage Summary:
-- Root cause: Frontend depended on server-side API route that doesn't exist in portable Electron build
-- Fix: Client-side GitHub API call works in both dev and portable environments
-- Additional fix: Electron main.ts now includes API route handler for LAN proxy support
-- GitHub push confirmed: commit 2c65940 pushed to main
-- Both APK (18.3 MB) and Portable (117.2 MB) are available in GitHub Releases
+- Root cause: client-side fetch to api.github.com fails in Electron portable (CORS from localhost)
+- Fix: Use IPC → main process (Node.js) fetch instead of renderer fetch
+- Files changed: electron/main.ts, electron/preload.ts, admin-dashboard.tsx, .gitignore
+- Commit: c70537c "fix: use Electron IPC for GitHub Release info instead of client-side fetch"
+- User needs to push to GitHub manually (no credentials available)
