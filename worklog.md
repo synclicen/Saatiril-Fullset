@@ -322,3 +322,27 @@ Stage Summary:
 - Lower confidence threshold (0.4) + faster sampling (80ms) = more responsive
 - Both APK and Electron builds pass successfully
 - Works across all camera modes (front, back, UVC/external)
+
+---
+Task ID: 11
+Agent: main
+Task: Simplify download text + clean up dead finger count code + verify hand trigger implementation
+
+Work Log:
+- User requested: Remove "build belum selesai atau GitHub Release belum dibuat" from download text
+- Changed all 3 occurrences of "⚠️ APK belum tersedia — build belum selesai atau GitHub Release belum dibuat" → "⚠️ APK belum tersedia"
+- Changed all 3 occurrences of "⚠️ Portable belum tersedia — build belum selesai atau GitHub Release belum dibuat" → "⚠️ Portable belum tersedia"
+- Found dead code: _fingersExtended StateFlow in OperatorViewModel.kt (defined but never used in UI)
+- Removed dead _fingersExtended and fingersExtended StateFlow from OperatorViewModel.kt
+- Verified HandTriggerDetector.kt already has correct "hand present → hand leaves → timer starts" logic (no finger counting)
+- Verified use-palm-detection.ts already has correct "hand present → hand leaves → timer starts" logic (no finger counting)
+- Verified OperatorScreen.kt does NOT display finger count (1-5)
+- Verified operator-panel.tsx does NOT display finger count
+- Committed: 7fef568, pushed to GitHub
+- Both APK and Electron builds triggered on GitHub Actions
+
+Stage Summary:
+- Download text simplified: only "APK belum tersedia" / "Portable belum tersedia"
+- Dead finger count code removed from OperatorViewModel
+- Hand trigger already uses simple detection (hand appears → confirmed → hand leaves → timer starts)
+- No finger counting anywhere in the codebase (neither Android nor Electron)
