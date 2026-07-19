@@ -125,8 +125,6 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     private val _handState = MutableStateFlow(HandTriggerDetector.HandState.NONE)
     val handState: StateFlow<HandTriggerDetector.HandState> = _handState.asStateFlow()
 
-    private val _fingersExtended = MutableStateFlow(0)
-    val fingersExtended: StateFlow<Int> = _fingersExtended.asStateFlow()
 
     private var handDetectionJob: Job? = null
 

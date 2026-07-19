@@ -1074,7 +1074,7 @@ export default function AdminDashboard() {
               </>
             ) : (
               <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
-                ⚠️ APK belum tersedia — build belum selesai atau GitHub Release belum dibuat
+                ⚠️ APK belum tersedia
               </div>
             )}
 
@@ -1120,7 +1120,7 @@ export default function AdminDashboard() {
               </>
             ) : (
               <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
-                ⚠️ Portable belum tersedia — build belum selesai atau GitHub Release belum dibuat
+                ⚠️ Portable belum tersedia
               </div>
             )}
           </div>
@@ -1245,7 +1245,7 @@ export default function AdminDashboard() {
                 </>
               ) : (
                 <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
-                  ⚠️ APK belum tersedia — build belum selesai atau GitHub Release belum dibuat
+                  ⚠️ APK belum tersedia
                 </div>
               )}
             </div>
@@ -1292,7 +1292,7 @@ export default function AdminDashboard() {
                 </>
               ) : (
                 <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
-                  ⚠️ Portable belum tersedia — build belum selesai atau GitHub Release belum dibuat
+                  ⚠️ Portable belum tersedia
                 </div>
               )}
             </div>
@@ -1435,7 +1435,7 @@ export default function AdminDashboard() {
                 </>
               ) : (
                 <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
-                  ⚠️ APK belum tersedia — build belum selesai atau GitHub Release belum dibuat
+                  ⚠️ APK belum tersedia
                 </div>
               )}
             </div>
@@ -1482,7 +1482,7 @@ export default function AdminDashboard() {
                 </>
               ) : (
                 <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
-                  ⚠️ Portable belum tersedia — build belum selesai atau GitHub Release belum dibuat
+                  ⚠️ Portable belum tersedia
                 </div>
               )}
             </div>
