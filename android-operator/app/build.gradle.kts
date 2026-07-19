@@ -11,18 +11,35 @@ android {
         applicationId = "com.saatiril.operator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 32
-        versionName = "1.0.32-mediapipe-hand-trigger"
+        versionCode = 33
+        versionName = "1.0.33-anr-fix-size-optimization"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        // ── ABI filter: only include ARM architectures ──
+        // Real Android devices are ARM (arm64-v8a, armeabi-v7a).
+        // x86 and x86_64 are only for emulators.
+        // This saves ~18MB by dropping x86/x86_64 native libs
+        // (MediaPipe tasks-vision has ~10MB per ABI).
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     buildTypes {
-        release {
+        debug {
+            // Debug also benefits from ABI filter (same ndk config applies)
             isMinifyEnabled = false
+        }
+        release {
+            // Enable R8 code shrinking + resource shrinking for release builds.
+            // Removes unused classes and resources from dependencies,
+            // saving ~2-4MB. MediaPipe keep rules added to proguard-rules.pro.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * ═════════════════════════════════════════════════════════════════════════
@@ -1098,38 +1099,54 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun startHandDetection() {
-        if (!HandTriggerDetector.initialize(getApplication<Application>())) {
-            Log.e(TAG, "Failed to initialize hand trigger detector")
-            _handTriggerEnabled.value = false
-            return
-        }
-
-        // PHOTOBOOTH TRIGGER: Hand appears → confirmed → hand leaves → timer starts
-        // onHandConfirmed = hand detected long enough (indicator turns green)
-        // onHandLeft = hand left frame → START TIMER (this is the actual trigger!)
-        HandTriggerDetector.onHandConfirmed = {
-            Log.i(TAG, "Hand trigger: hand confirmed ✓ — waiting for hand to leave frame")
-        }
-        HandTriggerDetector.onHandLeft = {
-            Log.i(TAG, "Hand trigger: hand left frame → starting capture/timer")
-            viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                triggerCapture()
-            }
-        }
-        HandTriggerDetector.onHandAppeared = {
-            Log.d(TAG, "Hand trigger: hand appeared")
-        }
-
-        HandTriggerDetector.start()
-
-        // Detection loop — ~15fps for responsive hand tracking
+        // ── ANR FIX: Initialize MediaPipe on a background thread ──
+        // HandLandmarker.createFromOptions() loads the 7.5MB model from assets
+        // and initializes the TFLite inference engine — this takes 1-5 seconds.
+        // Doing this on the Main thread causes ANR ("app isn't responding").
         handDetectionJob?.cancel()
-        handDetectionJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+        handDetectionJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            // Heavy model loading — must be on IO thread
+            val success = HandTriggerDetector.initialize(getApplication<Application>())
+            if (!success) {
+                Log.e(TAG, "Failed to initialize hand trigger detector")
+                _handTriggerEnabled.value = false
+                return@launch
+            }
+
+            // Set up callbacks (lightweight — just schedule work)
+            // PHOTOBOOTH TRIGGER: Hand appears → confirmed → hand leaves → timer starts
+            // onHandConfirmed = hand detected long enough (indicator turns green)
+            // onHandLeft = hand left frame → START TIMER (this is the actual trigger!)
+            HandTriggerDetector.onHandConfirmed = {
+                Log.i(TAG, "Hand trigger: hand confirmed ✓ — waiting for hand to leave frame")
+            }
+            HandTriggerDetector.onHandLeft = {
+                Log.i(TAG, "Hand trigger: hand left frame → starting capture/timer")
+                viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                    triggerCapture()
+                }
+            }
+            HandTriggerDetector.onHandAppeared = {
+                Log.d(TAG, "Hand trigger: hand appeared")
+            }
+
+            HandTriggerDetector.start()
+            Log.i(TAG, "Photobooth hand trigger detection started")
+
+            // ── Detection loop — ~12fps for responsive hand tracking ──
+            // getPreviewBitmap() calls TextureView.getBitmap() which MUST run
+            // on the Main thread (Android requirement). We switch to Main
+            // briefly to grab the bitmap, then do detection on Default thread.
             while (isActive) {
                 if (!_handTriggerEnabled.value) break
 
-                val bitmap = getPreviewBitmap()
+                // TextureView.getBitmap() must be called from UI thread
+                val bitmap = withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    getPreviewBitmap()
+                }
+
                 if (bitmap != null) {
+                    // Heavy detection runs on Default (CPU) thread
                     HandTriggerDetector.processFrame(bitmap)
 
                     _handState.value = HandTriggerDetector.handState
@@ -1137,11 +1154,9 @@ class OperatorViewModel(application: Application) : AndroidViewModel(application
                     if (!bitmap.isRecycled) bitmap.recycle()
                 }
 
-                delay(66) // ~15 fps — fast and responsive
+                delay(80) // ~12 fps — fast and responsive
             }
         }
-
-        Log.i(TAG, "Photobooth hand trigger detection started")
     }
 
     private fun stopHandDetection() {
