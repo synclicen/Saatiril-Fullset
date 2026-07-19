@@ -346,3 +346,42 @@ Stage Summary:
 - Dead finger count code removed from OperatorViewModel
 - Hand trigger already uses simple detection (hand appears → confirmed → hand leaves → timer starts)
 - No finger counting anywhere in the codebase (neither Android nor Electron)
+
+---
+Task ID: 12
+Agent: main
+Task: Fix ANR crash (app isn't responding) + reduce APK size from 50MB+ to ~25MB
+
+Work Log:
+- User reported: APK suddenly stops with "Saatiril app isn't responding" + size jumped from ~18MB to 50MB+
+- INVESTIGATION — APK SIZE:
+  - hand_landmarker.task model file: 7.5MB in assets (needed)
+  - MediaPipe tasks-vision:0.10.14 ships native .so for ALL 4 ABIs (arm64-v8a, armeabi-v7a, x86, x86_64) = ~36MB of native libs
+  - No ABI filter configured → all 4 archs packed into single APK
+  - isMinifyEnabled = false in release → no code/resource shrinking
+  - Size breakdown: ~7.5MB model + ~36MB native libs + app code = ~50MB
+- INVESTIGATION — ANR:
+  - HandTriggerDetector.initialize() called on Main thread (line 1101)
+  - HandLandmarker.createFromOptions() loads 7.5MB model + init TFLite engine = 1-5s blocking
+  - Main thread blocked > 5s = Android ANR watchdog kills app
+  - SECONDARY: getPreviewBitmap() calls TextureView.getBitmap() from Dispatchers.Default
+  - TextureView.getBitmap() MUST be called from UI thread — thread violation
+- FIX — APK SIZE (build.gradle.kts):
+  - Added ndk.abiFilters = arm64-v8a + armeabi-v7a (drops x86/x86_64) → saves ~18MB
+  - Enabled isMinifyEnabled = true + isShrinkResources = true for release → saves ~2-4MB
+  - Added MediaPipe, TFLite, UVCCamera keep rules to proguard-rules.pro
+  - Estimated new size: ~25MB (down from 50MB+)
+- FIX — ANR (OperatorViewModel.kt):
+  - Moved initialize() from synchronous Main thread call to Dispatchers.IO coroutine
+  - Detection loop now on Dispatchers.IO (was Dispatchers.Default)
+  - getPreviewBitmap() wrapped in withContext(Dispatchers.Main) — fixes thread violation
+  - Added withContext import
+  - Bumped version to 33
+- Committed: 2b9e2bd, pushed to GitHub
+- Both APK and Electron builds triggered on GitHub Actions
+
+Stage Summary:
+- ANR root cause: 7.5MB model loaded on Main thread blocking UI for 1-5s → moved to IO thread
+- APK size root cause: all 4 ABI native libs (~36MB) + no minification → added ABI filter + R8
+- Expected APK size: ~25MB (down from 50MB+)
+- No existing functionality changed — only threading and build configuration
