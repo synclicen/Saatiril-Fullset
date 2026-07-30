@@ -8,8 +8,10 @@
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     
-    <!-- USB Host for UVC capture card — REQUIRED for UVCCamera library -->
-    <uses-feature android:name="android.hardware.usb.host" android:required="true" />
+    <!-- USB Host for UVC capture card — NOT required (app falls back to Camera2) -->
+    <!-- Setting required=false allows installation on devices without USB host support.
+         The app gracefully falls back to built-in Camera2 when no USB camera is available. -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     
     <!-- Network permissions for LAN Socket.io -->
     <uses-permission android:name="android.permission.INTERNET" />

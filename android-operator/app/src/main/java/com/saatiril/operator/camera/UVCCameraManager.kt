@@ -134,6 +134,13 @@ class UVCCameraManager(private val context: Context) {
     private var isInitialized = false
     private var isDestroying = false
 
+    // ── Android 14+ USB polling fallback ──
+    // On Android 14 (API 34), the USBMonitor library's internal registerReceiver()
+    // may fail with SecurityException (missing RECEIVER_EXPORTED flag).
+    // This polling mechanism detects USB devices as a fallback.
+    private var usbPollingRunnable: Runnable? = null
+    private val USB_POLLING_INTERVAL_MS = 2000L // Check every 2 seconds
+
     /**
      * Initialize the UVC camera system.
      * Called once when the Activity is created.
@@ -249,6 +256,15 @@ class UVCCameraManager(private val context: Context) {
             // Enumerate already-connected USB devices
             enumerateConnectedDevices()
 
+            // ── Android 14+ USB polling fallback ──
+            // The USBMonitor library may fail to register its internal
+            // BroadcastReceiver on Android 14+ (SecurityException due to
+            // missing RECEIVER_EXPORTED flag). This polling mechanism
+            // detects USB devices as a fallback by checking UsbManager.deviceList
+            // every 2 seconds. It's a no-op if USBMonitor is working correctly
+            // (devices already discovered are skipped).
+            startUsbPolling()
+
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register USBMonitor: ${e.message}", e)
         }
@@ -293,6 +309,124 @@ class UVCCameraManager(private val context: Context) {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // Android 14+ USB Polling Fallback
+    // ═══════════════════════════════════════════════════════════════
+    // On Android 14 (API 34), the USBMonitor library's internal
+    // registerReceiver() may throw SecurityException due to missing
+    // RECEIVER_EXPORTED/RECEIVER_NOT_EXPORTED flag. This causes
+    // USB device detection to silently fail — no onAttach callback,
+    // no permission dialog, no camera detected.
+    //
+    // This polling mechanism checks UsbManager.deviceList every 2
+    // seconds as a fallback. It's a no-op if USBMonitor is working
+    // correctly (devices already discovered are skipped).
+    // ═══════════════════════════════════════════════════════════════
+
+    private fun startUsbPolling() {
+        stopUsbPolling() // Clear any existing polling
+        usbPollingRunnable = object : Runnable {
+            override fun run() {
+                if (isDestroying) return
+                try {
+                    pollUsbDevices()
+                } catch (e: Exception) {
+                    Log.e(TAG, "USB polling error: ${e.message}")
+                }
+                // Schedule next poll
+                usbPollingRunnable?.let {
+                    mainHandler.postDelayed(it, USB_POLLING_INTERVAL_MS)
+                }
+            }
+        }
+        // Start polling after a short delay
+        usbPollingRunnable?.let { mainHandler.postDelayed(it, USB_POLLING_INTERVAL_MS) }
+        Log.i(TAG, "USB polling fallback started (every ${USB_POLLING_INTERVAL_MS}ms)")
+    }
+
+    private fun stopUsbPolling() {
+        usbPollingRunnable?.let { mainHandler.removeCallbacks(it) }
+        usbPollingRunnable = null
+    }
+
+    /**
+     * Poll UsbManager.deviceList for new UVC devices.
+     * This is a fallback for Android 14+ where USBMonitor's BroadcastReceiver
+     * may fail to register. It's idempotent — skips already-discovered devices.
+     */
+    private fun pollUsbDevices() {
+        try {
+            val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager ?: return
+            var newDeviceFound = false
+
+            for (device in usbManager.deviceList.values) {
+                if (discoveredDevices.containsKey(device.deviceName)) continue // Already known
+
+                if (isUVCDevice(device)) {
+                    Log.i(TAG, "★ Polling found NEW UVC device: ${device.deviceName} vid=0x${Integer.toHexString(device.vendorId)}")
+                    discoveredDevices[device.deviceName] = device
+                    newDeviceFound = true
+
+                    // Request permission if not already granted
+                    if (!usbManager.hasPermission(device)) {
+                        requestUsbPermission(device)
+                    } else {
+                        // Permission already granted — try to open the camera
+                        // The USBMonitor's onConnect won't fire if it's broken,
+                        // so we need to manually trigger the camera open
+                        tryOpenUVCCameraWithPermission(device)
+                    }
+                }
+            }
+
+            // Check for disconnected devices (plugged out since last poll)
+            val connectedNames = usbManager.deviceList.keys
+            val removedKeys = discoveredDevices.keys.filter { it !in connectedNames }
+            for (key in removedKeys) {
+                val device = discoveredDevices.remove(key)
+                if (device != null) {
+                    Log.i(TAG, "Polling detected USB DISCONNECT: ${device.deviceName}")
+                    handleDeviceDisconnect(device)
+                    newDeviceFound = true
+                }
+            }
+
+            if (newDeviceFound) {
+                updateAvailableCameras()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "USB polling failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Try to open a UVC camera when permission is already granted.
+     * This is needed when the USBMonitor's onConnect callback doesn't fire
+     * (e.g., on Android 14 where the library's BroadcastReceiver fails).
+     */
+    private fun tryOpenUVCCameraWithPermission(device: UsbDevice) {
+        try {
+            val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager ?: return
+            if (!usbManager.hasPermission(device)) return
+
+            // Try to get a UsbControlBlock via the USBMonitor
+            val monitor = usbMonitor ?: return
+
+            // If USBMonitor is registered and working, onConnect should have
+            // already fired. But on Android 14, it might not have.
+            // requestPermission on an already-permitted device triggers onConnect.
+            backgroundHandler?.post {
+                try {
+                    monitor.requestPermission(device)
+                } catch (e: Exception) {
+                    Log.e(TAG, "tryOpenUVCCameraWithPermission failed: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "tryOpenUVCCameraWithPermission error: ${e.message}")
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // USB Permission — Required for UVC device access
     // ═══════════════════════════════════════════════════════════════
 
@@ -322,7 +456,15 @@ class UVCCameraManager(private val context: Context) {
         }
 
         val filter = IntentFilter(ACTION_USB_PERMISSION)
-        context.registerReceiver(usbPermissionReceiver, filter)
+        // ── Android 14+ (API 34) requires RECEIVER_EXPORTED or RECEIVER_NOT_EXPORTED ──
+        // Without this flag, registerReceiver() throws SecurityException on Android 14+,
+        // which silently prevents USB permission dialogs from working.
+        // This receiver is NOT exported (only receives our own PendingIntent broadcasts).
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(usbPermissionReceiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            context.registerReceiver(usbPermissionReceiver, filter)
+        }
         Log.i(TAG, "USB permission BroadcastReceiver registered")
     }
 
@@ -883,6 +1025,7 @@ class UVCCameraManager(private val context: Context) {
     fun forceRescan() {
         Log.i(TAG, "forceRescan: Re-registering USBMonitor")
         try {
+            stopUsbPolling()
             unregisterUsbMonitor()
             discoveredDevices.clear()
             updateAvailableCameras()
@@ -920,6 +1063,7 @@ class UVCCameraManager(private val context: Context) {
         Log.i(TAG, "destroy: Cleaning up UVCCamera")
         isDestroying = true
         isInitialized = false
+        stopUsbPolling()
         closeUVCCamera()
         unregisterUsbMonitor()
         unregisterUsbPermissionReceiver()

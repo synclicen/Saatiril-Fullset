@@ -1,11 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- UVC Video Class devices (HDMI capture cards, webcams, etc.) -->
-    <!-- USB Video Class: Class 239, Subclass 2 (Modern UVC spec) -->
+    <!-- ═══════════════════════════════════════════════════════════════
+         USB Device Filter for UVC (USB Video Class) capture cards
+
+         This filter tells Android which USB devices this app wants to
+         be notified about. When a matching device is plugged in, Android
+         shows the permission dialog (if the app uses USB_DEVICE_ATTACHED
+         intent-filter in the manifest).
+
+         IMPORTANT: The vendor-id values here are in DECIMAL (not hex).
+         ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- UVC Video Class: Class 239 (0xEF), Subclass 2 (Video) — Modern UVC spec -->
     <usb-device class="239" subclass="2" protocol="1" />
-    <!-- Legacy video class -->
+    <usb-device class="239" subclass="2" protocol="0" />
+
+    <!-- Legacy video class: Class 14 (0x0E) — Older UVC devices -->
     <usb-device class="14" subclass="1" protocol="0" />
+    <usb-device class="14" subclass="1" protocol="1" />
     <usb-device class="14" subclass="2" protocol="0" />
+
     <!-- Common capture card vendor IDs (DECIMAL values, not hex!) -->
     <usb-device vendor-id="1161" />   <!-- Fushicai (0x0489) -->
     <usb-device vendor-id="13407" />  <!-- MacroSilicon (0x345F) — JASOZ capture card -->
@@ -13,6 +27,22 @@
     <usb-device vendor-id="5961" />   <!-- Elgato/Corsair (0x1749) -->
     <usb-device vendor-id="4544" />   <!-- AverMedia (0x11C0) -->
     <usb-device vendor-id="1060" />   <!-- Genki (0x0424) -->
-    <!-- Broad UVC catch-all: Video class 14 (0x0E) -->
+    <usb-device vendor-id="1266" />   <!-- Logitech (0x04F2) -->
+    <usb-device vendor-id="1133" />   <!-- Logitech (0x046D) -->
+    <usb-device vendor-id="1446" />   <!-- Microsoft (0x05A6) -->
+    <usb-device vendor-id="1118" />   <!-- Microsoft (0x045E) -->
+    <usb-device vendor-id="1034" />   <!-- Creative (0x040A) -->
+    <usb-device vendor-id="1409" />   <!-- AverMedia (0x0581) -->
+    <usb-device vendor-id="8195" />   <!-- Somagic (0x1C88) -->
+    <usb-device vendor-id="1943" />   <!-- Fushicai (0x0797) -->
+    <usb-device vendor-id="3141" />   <!-- Syntek (0x0C45) -->
+    <usb-device vendor-id="5965" />   <!-- Elgato (0x174D) -->
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         BROAD CATCH-ALL: Any USB device with video class interface.
+         This ensures even unknown capture cards get detected.
+         The app's isUVCDevice() method does further filtering.
+         ═══════════════════════════════════════════════════════════════ -->
     <usb-device class="14" subclass="1" />
+    <usb-device class="239" subclass="2" />
 </resources>
