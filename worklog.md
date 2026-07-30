@@ -426,3 +426,43 @@ Stage Summary:
 - USB camera not detected on Android 14 due to registerReceiver() missing RECEIVER_NOT_EXPORTED flag
 - Three-layer fix: (1) correct registerReceiver flags, (2) polling fallback, (3) broader device filter
 - No existing functionality changed — only USB detection robustness improved
+
+---
+Task ID: 14
+Agent: main
+Task: Fix USB camera STILL not detected on Redmi 10 MIUI 14.0.5 (Android 14)
+
+Work Log:
+- User reported: previous fix (Task 13) didn't work — still no USB permission notification
+- Device: Redmi 10, MIUI Global 14.0.5, Android 14
+- Deep investigation found 5 CRITICAL bugs:
+- BUG #1 (CRITICAL): PendingIntent missing FLAG_UPDATE_CURRENT
+  - FLAG_MUTABLE alone insufficient on MIUI — cached PendingIntent may lack UsbDevice extras
+  - Permission dialog never appears because PendingIntent has stale/missing data
+  - Fix: Added FLAG_MUTABLE | FLAG_UPDATE_CURRENT for Android 12+
+  - Added unique request code (device.deviceName.hashCode()) to prevent caching
+  - Added UsbDevice extra to Intent explicitly
+- BUG #2 (CRITICAL): USB permission BroadcastReceiver onReceive only LOGGED
+  - When permission was granted, the callback did NOTHING — just logged
+  - On Android 14, USBMonitor's onConnect never fires (library's BroadcastReceiver broken)
+  - So the only path to open the camera was through onReceive, but it was a dead end
+  - Fix: Added tryOpenUVCCameraDirect(device) call when permission is granted
+- BUG #3 (CRITICAL): tryOpenUVCCameraDirect uses monitor.requestPermission()
+  - KEY INSIGHT: USBMonitor.requestPermission() on an already-permitted device
+  internally calls processConnect() → onConnect() WITHOUT needing BroadcastReceiver
+  - This bypasses the broken BroadcastReceiver on Android 14
+  - If that fails, falls back to tryForceOpenViaUsbManager() which re-registers USBMonitor
+- BUG #4 (HIGH): enumerateConnectedDevices() didn't handle already-permitted devices
+  - When hasPermission() was true, no action was taken to open the camera
+  - Fix: Added tryOpenUVCCameraDirect() call for already-permitted devices
+- BUG #5 (HIGH): requestUsbPermission() returned early when hasPermission=true
+  - On Android 14, USBMonitor's onConnect won't fire, so returning early = dead end
+  - Fix: Now calls tryOpenUVCCameraDirect() instead of just returning
+- Version bumped to 34 (1.0.34-usb-android14-fix)
+- Committed: fad157d, pushed to GitHub
+- Both APK and Electron builds triggered on GitHub Actions
+
+Stage Summary:
+- Root cause chain: PendingIntent flags → no permission dialog → even if granted, onReceive dead end → USBMonitor broken on Android 14
+- Five-layer fix: (1) PendingIntent flags, (2) onReceive opens camera, (3) requestPermission on already-permitted device triggers processConnect, (4) enumerateConnectedDevices handles already-permitted, (5) force re-registration fallback
+- User should see USB permission notification appear when plugging in USB camera on Redmi 10 MIUI 14.0.5
