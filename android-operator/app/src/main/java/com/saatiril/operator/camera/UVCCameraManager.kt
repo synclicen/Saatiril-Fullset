@@ -288,6 +288,10 @@ class UVCCameraManager(private val context: Context) {
                     discoveredDevices[device.deviceName] = device
                     if (!usbManager.hasPermission(device)) {
                         requestUsbPermission(device)
+                    } else {
+                        // Permission already granted — on Android 14+, USBMonitor's
+                        // onConnect may not fire, so open camera directly
+                        tryOpenUVCCameraDirect(device)
                     }
                 }
             }
@@ -408,21 +412,84 @@ class UVCCameraManager(private val context: Context) {
             val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager ?: return
             if (!usbManager.hasPermission(device)) return
 
-            // Try to get a UsbControlBlock via the USBMonitor
-            val monitor = usbMonitor ?: return
-
-            // If USBMonitor is registered and working, onConnect should have
-            // already fired. But on Android 14, it might not have.
-            // requestPermission on an already-permitted device triggers onConnect.
-            backgroundHandler?.post {
-                try {
-                    monitor.requestPermission(device)
-                } catch (e: Exception) {
-                    Log.e(TAG, "tryOpenUVCCameraWithPermission failed: ${e.message}")
-                }
-            }
+            // On Android 14+, USBMonitor's onConnect may never fire because
+            // the library's internal registerReceiver() throws SecurityException.
+            // Try direct open first (bypasses USBMonitor entirely).
+            tryOpenUVCCameraDirect(device)
         } catch (e: Exception) {
             Log.e(TAG, "tryOpenUVCCameraWithPermission error: ${e.message}")
+        }
+    }
+
+    /**
+     * Directly open a UVC camera when USB permission is already granted.
+     * On Android 14+, USBMonitor's internal BroadcastReceiver may fail due to
+     * missing RECEIVER_EXPORTED flag. This method uses USBMonitor.requestPermission()
+     * on an already-permitted device, which internally calls processConnect() → onConnect()
+     * WITHOUT needing the BroadcastReceiver. This is the key workaround for Android 14.
+     */
+    private fun tryOpenUVCCameraDirect(device: UsbDevice) {
+        try {
+            val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager ?: return
+            if (!usbManager.hasPermission(device)) return
+
+            // Don't open if already connected to this device
+            if (currentUsbDevice?.deviceName == device.deviceName && _isConnected.value) {
+                Log.i(TAG, "tryOpenUVCCameraDirect: already connected to ${device.deviceName}")
+                return
+            }
+
+            val monitor = usbMonitor
+            if (monitor != null) {
+                // KEY INSIGHT: USBMonitor.requestPermission() on an already-permitted device
+                // calls processConnect() internally, which creates a UsbControlBlock and
+                // triggers onConnect(). This works even when the BroadcastReceiver is broken
+                // on Android 14 because processConnect() doesn't need the BroadcastReceiver.
+                Log.i(TAG, "tryOpenUVCCameraDirect: calling monitor.requestPermission() for already-permitted device")
+                backgroundHandler?.post {
+                    try {
+                        monitor.requestPermission(device)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "USBMonitor.requestPermission() failed on already-permitted device: ${e.message}")
+                        // Last resort: try to force open via UsbManager.openDevice()
+                        tryForceOpenViaUsbManager(device)
+                    }
+                }
+            } else {
+                Log.e(TAG, "tryOpenUVCCameraDirect: No USBMonitor available")
+                tryForceOpenViaUsbManager(device)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "tryOpenUVCCameraDirect error: ${e.message}")
+        }
+    }
+
+    /**
+     * Last-resort fallback: try to open camera by registering a fresh USBMonitor
+     * and requesting permission. This is for the case where USBMonitor is completely
+     * broken on Android 14 MIUI.
+     */
+    private fun tryForceOpenViaUsbManager(device: UsbDevice) {
+        try {
+            val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager ?: return
+            if (!usbManager.hasPermission(device)) return
+
+            // Don't open if already connected to this device
+            if (currentUsbDevice?.deviceName == device.deviceName && _isConnected.value) {
+                return
+            }
+
+            Log.i(TAG, "tryForceOpenViaUsbManager: Attempting re-registration of USBMonitor")
+            // Try re-registering the USBMonitor — this might work on second attempt
+            try {
+                unregisterUsbMonitor()
+                isRegistered = false
+                registerUsbMonitor()
+            } catch (e: Exception) {
+                Log.e(TAG, "Re-registration failed: ${e.message}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "tryForceOpenViaUsbManager error: ${e.message}")
         }
     }
 
@@ -445,10 +512,15 @@ class UVCCameraManager(private val context: Context) {
 
                         if (granted && device != null) {
                             Log.i(TAG, "USB permission GRANTED for ${device.deviceName}")
+                            // BUG FIX: On Android 14+, USBMonitor's onConnect may never fire
+                            // because the library's internal registerReceiver() throws
+                            // SecurityException. We MUST open the camera directly here.
+                            tryOpenUVCCameraDirect(device)
                         } else if (device != null) {
                             Log.w(TAG, "USB permission DENIED for ${device.deviceName}")
                         } else {
-                            // No device in intent
+                            // No device in intent — try to find device from polling
+                            Log.w(TAG, "USB permission result: no device in intent extras")
                         }
                     }
                 }
@@ -543,19 +615,26 @@ class UVCCameraManager(private val context: Context) {
 
             if (usbManager.hasPermission(device)) {
                 Log.i(TAG, "USB permission already granted for ${device.deviceName}")
-                // USBMonitor handles connection via onConnect
+                // On Android 14+, USBMonitor's onConnect may not fire due to
+                // registerReceiver() SecurityException. Open camera directly.
+                tryOpenUVCCameraDirect(device)
                 return
             }
 
+            // FIX: Add FLAG_UPDATE_CURRENT to ensure PendingIntent contains correct
+            // UsbDevice extras. Without it, MIUI may cache a stale PendingIntent
+            // without the device, causing the permission dialog to not appear.
             val flags = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                android.app.PendingIntent.FLAG_MUTABLE
+                android.app.PendingIntent.FLAG_MUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
             } else {
-                0
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT
             }
 
             val pendingIntent = android.app.PendingIntent.getBroadcast(
-                context, 0,
-                Intent(ACTION_USB_PERMISSION),
+                context, device.deviceName.hashCode(),
+                Intent(ACTION_USB_PERMISSION).apply {
+                    putExtra(UsbManager.EXTRA_DEVICE, device)
+                },
                 flags
             )
 

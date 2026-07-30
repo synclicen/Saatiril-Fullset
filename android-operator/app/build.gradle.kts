@@ -11,8 +11,8 @@ android {
         applicationId = "com.saatiril.operator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 33
-        versionName = "1.0.33-anr-fix-size-optimization"
+        versionCode = 34
+        versionName = "1.0.34-usb-android14-fix"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
