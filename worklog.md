@@ -466,3 +466,47 @@ Stage Summary:
 - Root cause chain: PendingIntent flags → no permission dialog → even if granted, onReceive dead end → USBMonitor broken on Android 14
 - Five-layer fix: (1) PendingIntent flags, (2) onReceive opens camera, (3) requestPermission on already-permitted device triggers processConnect, (4) enumerateConnectedDevices handles already-permitted, (5) force re-registration fallback
 - User should see USB permission notification appear when plugging in USB camera on Redmi 10 MIUI 14.0.5
+
+---
+Task ID: 15
+Agent: main
+Task: Add project persistence (auto-save & resume) so users can continue from where they left off
+
+Work Log:
+- User reported: After several photo shoots, battery died, and when reopening the app they had to start from name no 1 again in dual mode
+- User asked: "bagaimana agar project tetap tersimpan dan bisa dilanjutkan apabila terpaksa keluar atau ada gangguan lainnya?"
+- ANALYSIS:
+  - Project state IS stored in localStorage on the admin side via Zustand store
+  - The project hub DOES show existing projects with progress badges
+  - The issue is that users may create a NEW project instead of re-opening the existing one
+  - No auto-save on state changes — only explicit saves on specific actions
+  - No "resume" prompt — users don't know they can continue existing projects
+- CHANGES MADE:
+  1. Enhanced Project Hub (project-hub.tsx):
+     - Added "Lanjutkan Proyek" (Resume Project) section at the top for the most recent project with progress
+     - Shows project name, participant count, completed count, pending count
+     - Includes progress bar with percentage
+     - Green "Resume" badge for visual emphasis
+     - Added auto-save notice: "Progres proyek tersimpan otomatis — tutup dan buka kembali untuk melanjutkan dari posisi terakhir"
+     - Added progress bars to ALL project cards (not just the resume card)
+     - Added visual differentiation: in-progress cards (gold border), completed cards (green border)
+     - Added completion percentage to each project card
+  2. Auto-save in Zustand Store (use-saatiril-store.ts):
+     - Added `lastSavedAt` field to track when project was last saved
+     - `updateCurrentProject()` now triggers `saveProjectsToStorage()` (debounced auto-save)
+     - `updateStudentStatus()` now triggers `saveProjectsToStorage()` (debounced auto-save)
+     - `saveProjectsToStorage()` updates `lastSavedAt` timestamp on successful save
+     - `saveProjectsToStorageNow()` updates `lastSavedAt` timestamp on successful save
+  3. Auto-save indicator in Admin Dashboard (admin-dashboard.tsx):
+     - Added "Tersimpan otomatis — HH:MM:SS" indicator below the progress bar
+     - Shows green checkmark icon + timestamp of last save
+     - Uses `lastSavedAt` from Zustand store
+- Verified: Lint passes, build succeeds
+
+Stage Summary:
+- Project persistence already worked via localStorage, but users didn't know they could resume
+- Added prominent "Lanjutkan Proyek" section at top of project hub for quick resume
+- Added auto-save on every project state change (updateCurrentProject, updateStudentStatus)
+- Added "Tersimpan otomatis" indicator in admin dashboard showing last save time
+- Added progress bars to all project cards for better visual feedback
+- Key insight: The problem was UX (no resume prompt) not data loss

@@ -122,6 +122,7 @@ export default function AdminDashboard() {
   // Store
   const currentProject = useSaatirilStore((s) => s.currentProject)
   const updateCurrentProject = useSaatirilStore((s) => s.updateCurrentProject)
+  const lastSavedAt = useSaatirilStore((s) => s.lastSavedAt)
 
   // ── Computed values ──────────────────────────────────────────────
   const mode = currentProject?.config.mode ?? 'single'
@@ -792,6 +793,14 @@ export default function AdminDashboard() {
                 style={{ width: `${(doneCount / totalPeserta) * 100}%` }}
               />
             </div>
+          </div>
+        )}
+
+        {/* ── Auto-save indicator ── */}
+        {lastSavedAt && (
+          <div className="shrink-0 flex items-center gap-1.5 text-[10px] text-[#c4b5fd]/50">
+            <CheckCircle2 className="size-3 text-emerald-500/60" />
+            <span>Tersimpan otomatis{lastSavedAt ? ` — ${new Date(lastSavedAt).toLocaleTimeString('id-ID')}` : ''}</span>
           </div>
         )}
 

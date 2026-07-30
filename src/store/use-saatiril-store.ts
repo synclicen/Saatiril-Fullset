@@ -348,6 +348,9 @@ interface SaatirilState {
   projects: Project[]
   currentProject: Project | null
 
+  // Auto-save tracking
+  lastSavedAt: number | null  // Timestamp of last successful save
+
   // User role & channel
   myRole: Role
   myChannel: number
@@ -478,6 +481,7 @@ export function sanitizeProjects(projects: Project[]): Project[] {
 export const useSaatirilStore = create<SaatirilState>((set, get) => ({
   projects: [],
   currentProject: null,
+  lastSavedAt: null,
   myRole: 'admin',
   myChannel: 1,
   currentScreen: 'hub',
@@ -490,6 +494,7 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
     // Save frame data to separate localStorage key immediately
     saveFrameToStorage(project.id, project.config.frame)
     return { projects: [...s.projects, project] }
+    // Note: saveProjectsToStorage is called after setCurrentProject in the setup flow
   }),
   deleteProject: (id) => set((s) => {
     const newProjects = s.projects.filter(p => p.id !== id)
@@ -538,7 +543,7 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
     }
     set({ currentProject: project })
   },
-  updateCurrentProject: (project) => set((s) => {
+  updateCurrentProject: (project) => {
     // If frame is marker, restore from separate storage
     if (project.config.frame === '__FRAME_SAVED__') {
       const savedFrame = loadFrameFromStorage(project.id)
@@ -564,11 +569,17 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
     }
     // Save frame data to separate localStorage key
     saveFrameToStorage(trimmedProject.id, trimmedProject.config.frame)
-    const idx = s.projects.findIndex(p => p.id === trimmedProject.id)
-    const newProjects = [...s.projects]
-    if (idx !== -1) newProjects[idx] = trimmedProject
-    return { currentProject: trimmedProject, projects: newProjects }
-  }),
+    set((s) => {
+      const idx = s.projects.findIndex(p => p.id === trimmedProject.id)
+      const newProjects = [...s.projects]
+      if (idx !== -1) newProjects[idx] = trimmedProject
+      return { currentProject: trimmedProject, projects: newProjects }
+    })
+    // ── AUTO-SAVE: Persist project state to localStorage on every update ──
+    // This ensures progress is never lost if the app crashes or is closed.
+    // The debounced save prevents localStorage thrashing during rapid updates.
+    get().saveProjectsToStorage()
+  },
   setMyRole: (role) => set({ myRole: role }),
   setMyChannel: (channel) => set({ myChannel: channel }),
   setCurrentScreen: (screen) => set({ currentScreen: screen }),
@@ -677,6 +688,8 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
           },
         }))
         localStorage.setItem('saatiril_projects', JSON.stringify(safeProjects))
+        // Update lastSavedAt timestamp
+        set({ lastSavedAt: Date.now() })
         console.log('[SAATIRIL] Projects saved to localStorage (debounced)')
       } catch (e) {
         console.error('Failed to save projects to storage', e)
@@ -709,21 +722,27 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
         },
       }))
       localStorage.setItem('saatiril_projects', JSON.stringify(safeProjects))
+      // Update lastSavedAt timestamp
+      set({ lastSavedAt: Date.now() })
       console.log('[SAATIRIL] Projects saved to localStorage (immediate)')
     } catch (e) {
       console.error('Failed to save projects to storage (immediate)', e)
     }
   },
 
-  updateStudentStatus: (studentId, status) => set((s) => {
-    if (!s.currentProject) return {}
-    const newDb = s.currentProject.database.map(st =>
-      st.id === studentId ? { ...st, status } : st
-    )
-    const updatedProject = { ...s.currentProject, database: newDb }
-    const idx = s.projects.findIndex(p => p.id === updatedProject.id)
-    const newProjects = [...s.projects]
-    if (idx !== -1) newProjects[idx] = updatedProject
-    return { currentProject: updatedProject, projects: newProjects }
-  }),
+  updateStudentStatus: (studentId, status) => {
+    set((s) => {
+      if (!s.currentProject) return {}
+      const newDb = s.currentProject.database.map(st =>
+        st.id === studentId ? { ...st, status } : st
+      )
+      const updatedProject = { ...s.currentProject, database: newDb }
+      const idx = s.projects.findIndex(p => p.id === updatedProject.id)
+      const newProjects = [...s.projects]
+      if (idx !== -1) newProjects[idx] = updatedProject
+      return { currentProject: updatedProject, projects: newProjects }
+    })
+    // ── AUTO-SAVE: Persist student status changes to localStorage ──
+    get().saveProjectsToStorage()
+  },
 }))
