@@ -385,3 +385,44 @@ Stage Summary:
 - APK size root cause: all 4 ABI native libs (~36MB) + no minification → added ABI filter + R8
 - Expected APK size: ~25MB (down from 50MB+)
 - No existing functionality changed — only threading and build configuration
+
+---
+Task ID: 13
+Agent: main
+Task: Fix USB camera not detected on Android 14 Redmi
+
+Work Log:
+- User reported: APK works on Android 15 Redmi but USB camera NOT detected on Android 14 Redmi
+- No permission notification when plugging in USB on Android 14
+- Camera access permission already granted
+- INVESTIGATION:
+  - On Android 14 (API 34), registerReceiver() requires RECEIVER_EXPORTED or RECEIVER_NOT_EXPORTED
+  - Without flag: SecurityException thrown → BroadcastReceiver silently fails
+  - UVCCameraManager.kt line 325: context.registerReceiver(usbPermissionReceiver, filter) — NO FLAG
+  - UVCCamera library (org.uvccamera:lib:0.0.13) may also have this issue internally
+  - When USBMonitor's BroadcastReceiver fails → no onAttach callback → no permission dialog → no camera detected
+  - Also: device_filter.xml may not match all capture cards
+  - Also: usb.host required=true filters out devices without USB host from Play Store
+- FIX 1 — registerReceiver with RECEIVER_NOT_EXPORTED flag (Android 13+):
+  - Added conditional: if SDK >= TIRAMISU, use registerReceiver(receiver, filter, RECEIVER_NOT_EXPORTED)
+  - This prevents SecurityException on Android 14+
+- FIX 2 — USB polling fallback (every 2 seconds):
+  - Added startUsbPolling()/stopUsbPolling() methods
+  - Polls UsbManager.deviceList directly — works even if USBMonitor's BroadcastReceiver fails
+  - Detects new devices AND disconnected devices
+  - For already-permitted devices: calls monitor.requestPermission() to trigger onConnect
+  - Idempotent: skips already-discovered devices (no-op if USBMonitor is working)
+  - Properly cleaned up in destroy() and forceRescan()
+- FIX 3 — device_filter.xml expanded:
+  - Added more vendor IDs: Logitech, Microsoft, Creative, AverMedia, Somagic, Syntek, Elgato
+  - Added more protocol variants: class 239 subclass 2 protocol 0, class 14 subclass 1 protocol 1
+  - Added broad catch-all filters
+- FIX 4 — AndroidManifest.xml: usb.host required=false
+  - Allows app to be installed on devices without USB host (falls back to Camera2)
+- Committed: a3f442d, pushed to GitHub
+- Both APK and Electron builds triggered on GitHub Actions
+
+Stage Summary:
+- USB camera not detected on Android 14 due to registerReceiver() missing RECEIVER_NOT_EXPORTED flag
+- Three-layer fix: (1) correct registerReceiver flags, (2) polling fallback, (3) broader device filter
+- No existing functionality changed — only USB detection robustness improved
