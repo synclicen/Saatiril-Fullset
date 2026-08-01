@@ -144,6 +144,7 @@ export interface ConnectionHealth {
   latencyMs: number  // -1 = unknown
   avgLatencyMs: number // -1 = unknown
   networkQuality: 'excellent' | 'good' | 'fair' | 'poor' | 'unknown'
+  queuedEvents: number  // events waiting in offline queue
 }
 
 /**
@@ -173,6 +174,7 @@ export function getConnectionHealth(): ConnectionHealth {
     latencyMs: currentLatencyMs,
     avgLatencyMs: Math.round(avgLatency),
     networkQuality: classifyNetworkQuality(avgLatency),
+    queuedEvents: eventQueue.length,
   }
 }
 
@@ -291,8 +293,8 @@ interface QueuedEvent {
 }
 
 const eventQueue: QueuedEvent[] = []
-const MAX_QUEUE_SIZE = 50
-const MAX_RETRIES = 3
+const MAX_QUEUE_SIZE = 100  // Increased for ceremony resilience
+const MAX_RETRIES = 5     // More retries for unreliable WiFi
 const CRITICAL_EVENTS = new Set(['PHOTOS_SAVED', 'MC_CALL', 'SYNC_DB', 'STUDENT_DONE', 'STUDENT_RESET'])
 
 // ─── Pending session password ──────────────────────────────────────────────
@@ -356,9 +358,9 @@ export function connectSocket(): Socket {
     forceNew: true,
     reconnection: true,
     reconnectionAttempts: Infinity,    // Never give up during ceremony!
-    reconnectionDelay: 1000,           // Start at 1s
-    reconnectionDelayMax: 10000,       // Max 10s between retries
-    timeout: 15000,                    // 15s connection timeout
+    reconnectionDelay: 500,            // Start at 500ms (faster for crowded WiFi)
+    reconnectionDelayMax: 5000,        // Max 5s between retries (faster recovery)
+    timeout: 10000,                    // 10s connection timeout (faster fail detection)
   }
 
   // For sandbox/web mode, add XTransformPort as a query parameter

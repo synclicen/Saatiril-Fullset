@@ -19,8 +19,8 @@ import crypto from 'crypto'
 // ─── Configuration ─────────────────────────────────────────────────────────
 const PORT = 3003
 const MAX_HTTP_BUFFER = 20e6 // 20MB — supports dual-channel photo bursts (4 × ~3MB base64)
-const PING_INTERVAL = 10000  // 10s — faster detection of disconnected clients (was 15s)
-const PING_TIMEOUT = 20000   // 20s — generous timeout for LAN (was 30s)
+const PING_INTERVAL = 5000   // 5s — aggressive ping for crowded WiFi (was 10s)
+const PING_TIMEOUT = 15000   // 15s — fail faster when device unreachable (was 20s)
 const MAX_CONNECTIONS = 10   // Max concurrent clients (admin + 2×MC + 2×OP + buffer)
 const IDENTIFICATION_TIMEOUT_MS = 10000 // 10s — clients must identify within this time
 
@@ -74,10 +74,10 @@ const io = new Server(httpServer, {
   // socket.io-client:2.1.0 uses Engine.IO v3 protocol while
   // socket.io v4 server defaults to Engine.IO v4.
   allowEIO3: true,
-  // Connection state recovery — if client reconnects within 2min,
-  // it gets missed events automatically
+  // Connection state recovery — if client reconnects within 5min,
+  // it gets missed events automatically (long window for WiFi blips)
   connectionStateRecovery: {
-    maxDisconnectionDuration: 2 * 60 * 1000, // 2 minutes
+    maxDisconnectionDuration: 5 * 60 * 1000, // 5 minutes
   },
   // Transport order: websocket first (lower latency), polling as fallback
   transports: ['websocket', 'polling'],

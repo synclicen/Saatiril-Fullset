@@ -1003,7 +1003,7 @@ export function MainApp() {
             )}
 
             {/* Server status with connection quality */}
-            <div className="flex shrink-0 items-center gap-1.5" title={connectionQuality === 'good' ? 'Koneksi LAN stabil' : connectionQuality === 'degraded' ? 'Koneksi tidak stabil' : 'Tidak terhubung'}>
+            <div className="flex shrink-0 items-center gap-1.5" title={connectionQuality === 'good' ? 'Koneksi LAN stabil' : connectionQuality === 'degraded' ? 'Koneksi tidak stabil — gunakan WiFi 5GHz atau Hotspot langsung' : 'Tidak terhubung — coba Hotspot langsung dari Admin'}>
               <span
                 className="size-2 rounded-full"
                 style={{
@@ -1020,6 +1020,16 @@ export function MainApp() {
                 {connectionQuality === 'good' ? 'LAN' : connectionQuality === 'degraded' ? 'LAN ⚠' : 'OFFLINE'}
               </span>
             </div>
+            {/* WiFi congestion tip for degraded/disconnected */}
+            {connectionQuality !== 'good' && (
+              <div
+                className="hidden sm:flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px]"
+                style={{ backgroundColor: connectionQuality === 'disconnected' ? 'rgba(239,68,68,0.1)' : 'rgba(245,158,11,0.1)', color: connectionQuality === 'disconnected' ? '#f87171' : '#fbbf24' }}
+              >
+                <Wifi className="size-3" />
+                {connectionQuality === 'disconnected' ? 'Hotspot?' : '5GHz?'}
+              </div>
+            )}
           </div>
 
           {/* Tab navigation (admin only) — compact on mobile */}

@@ -510,3 +510,86 @@ Stage Summary:
 - Added "Tersimpan otomatis" indicator in admin dashboard showing last save time
 - Added progress bars to all project cards for better visual feedback
 - Key insight: The problem was UX (no resume prompt) not data loss
+
+---
+Task ID: 2-c
+Agent: resilience-updater
+Task: Improve Socket.io server resilience settings for crowded WiFi environments
+
+Work Log:
+- Updated mini-services/saatiril-socket/index.ts Socket.io Server options:
+  - PING_INTERVAL: 10000 → 5000 (more frequent pings to detect disconnects faster)
+  - PING_TIMEOUT: 20000 → 15000 (fail faster when device is unreachable)
+  - maxDisconnectionDuration: 2×60×1000 (2min) → 5×60×1000 (5min — allows longer disconnections during WiFi blips)
+- Updated electron/main.ts Socket.io Server options (matching settings):
+  - pingInterval: 10000 → 5000
+  - pingTimeout: 20000 → 15000
+  - maxDisconnectionDuration: 2×60×1000 (2min) → 5×60×1000 (5min)
+- Both servers now have consistent, WiFi-resilient settings
+
+Stage Summary:
+- Files changed: mini-services/saatiril-socket/index.ts, electron/main.ts
+- Rationale: Crowded WiFi environments (e.g., graduation ceremonies) cause intermittent disconnections
+  - More frequent pings (5s vs 10s) detect dead connections sooner
+  - Shorter ping timeout (15s vs 20s) recovers faster from unreachable devices
+  - Longer disconnection recovery window (5min vs 2min) allows clients that briefly lose WiFi to seamlessly reconnect and receive missed events without manual resync
+
+---
+Task ID: 2-b
+Agent: resilience-updater
+Task: Improve operator.html (Chrome on Android) connection resilience for crowded WiFi
+
+Work Log:
+- Updated all 3 Socket.io client option blocks in operator.html (explicitSocketPort, isCaddyGateway, direct LAN):
+  - reconnectionAttempts: 10 → Infinity (never give up reconnecting)
+  - reconnectionDelay: 2000 → 500 (start retrying faster)
+  - Added reconnectionDelayMax: 5000 (cap backoff at 5s between retries)
+  - timeout: 15000 → 10000 (fail faster on initial connection)
+  - transports: ['polling', 'websocket'] → ['websocket', 'polling'] (prefer websocket for lower latency)
+- Improved disconnect handler for 'io server disconnect':
+  - Changed message to indicate retry is happening
+  - Added setTimeout(2000) → socket.connect() auto-reconnect after server-initiated disconnect
+- Added reconnect_failed handler:
+  - Starts manual retry loop (setInterval every 3s) that calls socket.connect() until connected
+  - Clears interval once connection is restored
+  - Shows "Koneksi terputus. Mencoba menyambung ulang..." status
+- Added reconnect_attempt handler:
+  - Logs attempt number and shows "Menyambung ulang... (N)" in UI
+- Added reconnect success handler:
+  - Logs number of attempts taken and shows "Terhubung kembali!" success status
+- Updated timeout error message: "15 detik" → "10 detik" to match new timeout value
+
+Stage Summary:
+- Files changed: public/operator.html
+- Rationale: In crowded WiFi (graduation ceremonies), connections drop frequently
+  - Infinity reconnection attempts = operator never permanently disconnects
+  - Faster initial retry (500ms) = quicker recovery from brief WiFi blips
+  - Manual retry fallback = even if Socket.io gives up, we keep trying
+  - Server disconnect auto-reconnect = handles server restarts gracefully
+  - WebSocket-first transport = lower latency for real-time ceremony operations
+  - UI feedback on reconnect attempts = operator knows the app is trying to reconnect
+
+---
+Task ID: 2
+Agent: socket-resilience
+Task: Improve Android SocketManager connection resilience for crowded WiFi environments
+
+Work Log:
+- Changed companion object constants: MAX_QUEUE_SIZE 50→100, MAX_RETRIES 3→5
+- Changed socket options in connect(): reconnectionAttempts 20→Int.MAX_VALUE (never give up), reconnectionDelay 1000→500, reconnectionDelayMax 10000→5000, timeout 15000→10000
+- Added reconnect_failed handler: starts manual retry every 3s when socket.io gives up, with Indonesian error message
+- Added reconnect_attempt handler: logs each attempt number, shows "Menyambung ulang..." message
+- Added reconnect success handler: resets connectErrorCount, notifies "reconnected" listeners
+- Improved disconnect handler: detects "io server disconnect" and schedules manual reconnect after 2s
+- Added RECONNECTING state to ConnectionState enum in Models.kt
+
+Stage Summary:
+- Files changed: SocketManager.kt, Models.kt
+- Key improvements for crowded WiFi / ceremony environments:
+  - Socket never stops reconnecting (Int.MAX_VALUE attempts instead of 20)
+  - Faster reconnection start (500ms instead of 1000ms) with lower max delay (5s instead of 10s)
+  - Faster timeout detection (10s instead of 15s)
+  - Manual retry fallback if socket.io reconnection fails entirely (every 3s)
+  - Server-initiated disconnect now auto-reconnects after 2s
+  - Larger event queue (100 vs 50) and more retries (5 vs 3) for reliability
+  - RECONNECTING state available for UI feedback

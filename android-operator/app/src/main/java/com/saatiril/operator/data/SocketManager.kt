@@ -45,8 +45,8 @@ class SocketManager {
             SocketEvents.STUDENT_DONE,
             SocketEvents.STUDENT_RESET
         )
-        private const val MAX_QUEUE_SIZE = 50
-        private const val MAX_RETRIES = 3
+        private const val MAX_QUEUE_SIZE = 100  // was 50, increased for ceremonies
+        private const val MAX_RETRIES = 5       // was 3, more retries for crowded WiFi
 
         fun sha256(input: String): String {
             val digest = MessageDigest.getInstance("SHA-256")
@@ -149,10 +149,10 @@ class SocketManager {
                 path = "/"  // MUST match server config
                 transports = arrayOf("websocket", "polling")
                 reconnection = true
-                reconnectionAttempts = 20
-                reconnectionDelay = 1000
-                reconnectionDelayMax = 10_000
-                timeout = 15_000
+                reconnectionAttempts = Int.MAX_VALUE  // Never give up during ceremony!
+                reconnectionDelay = 500              // Start faster (500ms instead of 1000ms)
+                reconnectionDelayMax = 5_000         // Max 5s between retries (faster recovery)
+                timeout = 10_000                      // 10s timeout (was 15s, faster fail detection)
                 forceNew = true
             }
 
@@ -242,6 +242,17 @@ class SocketManager {
                 connectionState = ConnectionState.DISCONNECTED
                 stopPingInterval()
                 notifyListenersOnUiThread("state_changed", connectionState)
+
+                // If server initiated disconnect, schedule manual reconnect
+                val reason = args?.firstOrNull()?.toString() ?: ""
+                if (reason == "io server disconnect") {
+                    Log.i(TAG, "Server initiated disconnect — scheduling manual reconnect in 2s")
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        if (socket?.connected() != true) {
+                            socket?.connect()
+                        }
+                    }, 2000)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error in DISCONNECT handler: ${e.message}", e)
             }
@@ -272,6 +283,54 @@ class SocketManager {
                 notifyListenersOnUiThread("state_changed", connectionState)
             } catch (e: Exception) {
                 Log.e(TAG, "Error in CONNECT_ERROR handler: ${e.message}", e)
+            }
+        }
+
+        s.on(Socket.EVENT_RECONNECT_FAILED) {
+            try {
+                Log.e(TAG, "Reconnection failed after max attempts — starting manual retry")
+                // Manual retry every 3 seconds (like web client does every 5s)
+                val manualRetryHandler = Handler(Looper.getMainLooper())
+                val manualRetryRunnable = object : Runnable {
+                    override fun run() {
+                        if (socket?.connected() == true) return
+                        Log.i(TAG, "Manual reconnection attempt...")
+                        try {
+                            socket?.connect()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Manual reconnect error: ${e.message}")
+                        }
+                        manualRetryHandler.postDelayed(this, 3000)
+                    }
+                }
+                manualRetryHandler.postDelayed(manualRetryRunnable, 3000)
+                notifyListenersOnUiThread("connection_error",
+                    "Koneksi terputus. Mencoba menyambung ulang otomatis..."
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in RECONNECT_FAILED handler: ${e.message}", e)
+            }
+        }
+
+        s.on(Socket.EVENT_RECONNECT_ATTEMPT) { args ->
+            try {
+                val attempt = args?.firstOrNull()
+                Log.i(TAG, "Reconnection attempt: $attempt")
+                if (connectErrorCount < 3) {
+                    notifyListenersOnUiThread("connection_error", "Menyambung ulang... (percobaan $attempt)")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in RECONNECT_ATTEMPT handler: ${e.message}", e)
+            }
+        }
+
+        s.on(Socket.EVENT_RECONNECT) { args ->
+            try {
+                Log.i(TAG, "Reconnected after ${args?.firstOrNull()} attempts")
+                connectErrorCount = 0
+                notifyListenersOnUiThread("reconnected", null)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in RECONNECT handler: ${e.message}", e)
             }
         }
 

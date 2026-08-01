@@ -2250,34 +2250,37 @@ function connectToServer(ip) {
   if (explicitSocketPort) {
     serverUrl = `http://${ip}:${explicitSocketPort}`
     socketOptions = {
-      transports: ['polling', 'websocket'],
+      transports: ['websocket', 'polling'],
       upgrade: true,
       reconnection: true,
-      reconnectionAttempts: 10,
-      reconnectionDelay: 2000,
-      timeout: 15000,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 500,
+      reconnectionDelayMax: 5000,
+      timeout: 10000,
     }
   } else if (isCaddyGateway) {
     serverUrl = window.location.origin
     socketOptions = {
-      transports: ['polling', 'websocket'],
+      transports: ['websocket', 'polling'],
       upgrade: true,
       reconnection: true,
-      reconnectionAttempts: 10,
-      reconnectionDelay: 2000,
-      timeout: 15000,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 500,
+      reconnectionDelayMax: 5000,
+      timeout: 10000,
       query: { XTransformPort: String(SOCKET_PORT) },
     }
   } else {
     // Direct LAN connection — connect to Socket.io port 3003
     serverUrl = `http://${ip}:${SOCKET_PORT}`
     socketOptions = {
-      transports: ['polling', 'websocket'],
+      transports: ['websocket', 'polling'],
       upgrade: true,
       reconnection: true,
-      reconnectionAttempts: 10,
-      reconnectionDelay: 2000,
-      timeout: 15000,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 500,
+      reconnectionDelayMax: 5000,
+      timeout: 10000,
     }
   }
   
@@ -2349,7 +2352,11 @@ function connectToServer(ip) {
     console.log('[OP] Socket disconnected:', reason)
     stopLatencyPing()
     if (reason === 'io server disconnect') {
-      setConnectionState('disconnected', 'Server memutuskan koneksi. Coba hubungkan kembali.')
+      setConnectionState('disconnected', 'Server memutuskan koneksi. Mencoba menyambung ulang...')
+      setTimeout(function() {
+        console.log('[SAATIRIL] Manual reconnect after server disconnect...')
+        socket.connect()
+      }, 2000)
     } else if (reason === 'transport close') {
       setConnectionState('disconnected', 'Koneksi terputus. Mencoba menyambung ulang...')
     } else {
@@ -2368,7 +2375,7 @@ function connectToServer(ip) {
       console.log('[OP] WebSocket failed, waiting for polling fallback...')
       return
     } else if (msg.includes('timeout') || desc.includes('timeout')) {
-      errorMsg = 'Koneksi timeout (15 detik). Pastikan: (1) Server SAATIRIL berjalan, (2) IP benar, (3) HP dan server di jaringan WiFi yang sama, (4) Port 3003 tidak diblokir firewall.'
+      errorMsg = 'Koneksi timeout (10 detik). Pastikan: (1) Server SAATIRIL berjalan, (2) IP benar, (3) HP dan server di jaringan WiFi yang sama, (4) Port 3003 tidak diblokir firewall.'
     } else if (msg.includes('refused') || desc.includes('refused') || msg.includes('econnrefused')) {
       errorMsg = 'Koneksi ditolak (port 3003). Server SAATIRIL tidak berjalan di IP ini. Pastikan aplikasi admin sudah dibuka dan server aktif.'
     } else if (msg.includes('cors') || desc.includes('cors')) {
@@ -2379,6 +2386,29 @@ function connectToServer(ip) {
       errorMsg = 'Gagal terhubung: ' + err.message + '. Pastikan server SAATIRIL berjalan di ' + ip + ':3003'
     }
     setConnectionState('disconnected', errorMsg)
+  })
+
+  socket.on('reconnect_failed', function() {
+    console.error('[SAATIRIL] Reconnection failed — starting manual retry')
+    var manualRetry = setInterval(function() {
+      if (socket.connected) {
+        clearInterval(manualRetry)
+        return
+      }
+      console.log('[SAATIRIL] Manual reconnection attempt...')
+      socket.connect()
+    }, 3000)
+    setConnectionState('disconnected', 'Koneksi terputus. Mencoba menyambung ulang...')
+  })
+
+  socket.on('reconnect_attempt', function(attemptNumber) {
+    console.log('[SAATIRIL] Reconnection attempt #' + attemptNumber)
+    setConnectionState('connecting', 'Menyambung ulang... (' + attemptNumber + ')')
+  })
+
+  socket.on('reconnect', function(attemptNumber) {
+    console.log('[SAATIRIL] Reconnected after ' + attemptNumber + ' attempts')
+    setConnectionState('connected', 'Terhubung kembali!')
   })
 }
 

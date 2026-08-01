@@ -1930,7 +1930,10 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         <h3 className="text-xs font-semibold" style={{ color: '#ffffff' }}>
           Antrean: <span style={{ color: THEME.gold }} className="font-bold">{remainingCount}</span>
         </h3>
-        <span className="text-[10px]" style={{ color: THEME.muted }}>Ch.{myChannel}</span>
+        <div className="flex items-center gap-1.5">
+          <NetworkQualityBadge detailed={true} />
+          <span className="text-[10px]" style={{ color: THEME.muted }}>Ch.{myChannel}</span>
+        </div>
       </div>
 
       {!compact && (

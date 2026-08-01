@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
-import { Wifi, WifiOff, Signal, SignalHigh, SignalLow, SignalZero } from 'lucide-react'
+import { Wifi, WifiOff, Signal, SignalHigh, SignalLow, SignalZero, AlertTriangle, Clock } from 'lucide-react'
 import { getConnectionHealth, onLatencyUpdate, type ConnectionHealth } from '@/lib/socket'
 
 // ─── Theme ────────────────────────────────────────────────────────────────
@@ -14,7 +14,7 @@ const THEME = {
 }
 
 /**
- * Network quality indicator badge — shows latency and connection quality.
+ * Network quality indicator badge — shows latency, connection quality, and queue status.
  * Used in Operator and MC panels to help users identify network issues.
  *
  * Quality thresholds (LAN-optimized):
@@ -22,8 +22,19 @@ const THEME = {
  * - Good: <15ms
  * - Fair: <30ms
  * - Poor: >=30ms (network issues)
+ *
+ * Also shows:
+ * - Offline state with reconnect indicator
+ * - Queued events count (messages waiting to be sent)
+ * - Reconnect attempt count
  */
-export function NetworkQualityBadge() {
+
+interface NetworkQualityBadgeProps {
+  /** Show detailed info (queue, reconnect count) — default true for operator, false for MC */
+  detailed?: boolean
+}
+
+export function NetworkQualityBadge({ detailed = true }: NetworkQualityBadgeProps) {
   const [health, setHealth] = useState<ConnectionHealth>(getConnectionHealth())
 
   useEffect(() => {
@@ -32,17 +43,37 @@ export function NetworkQualityBadge() {
     return unsub
   }, [])
 
-  const { connected, latencyMs, avgLatencyMs, networkQuality } = health
+  const { connected, latencyMs, avgLatencyMs, networkQuality, queuedEvents, reconnectCount } = health
 
   if (!connected) {
     return (
-      <Badge
-        className="text-[9px] px-1.5 py-0 border-0 gap-1"
-        style={{ backgroundColor: 'rgba(248,113,113,0.2)', color: '#f87171' }}
-      >
-        <WifiOff className="size-3" />
-        Offline
-      </Badge>
+      <div className="flex items-center gap-1">
+        <Badge
+          className="text-[9px] px-1.5 py-0 border-0 gap-1"
+          style={{ backgroundColor: 'rgba(248,113,113,0.2)', color: '#f87171' }}
+        >
+          <WifiOff className="size-3" />
+          Offline
+        </Badge>
+        {reconnectCount > 0 && (
+          <Badge
+            className="text-[9px] px-1.5 py-0 border-0 gap-1"
+            style={{ backgroundColor: 'rgba(251,191,36,0.15)', color: '#fbbf24' }}
+          >
+            <Clock className="size-3" />
+            Reconnect #{reconnectCount}
+          </Badge>
+        )}
+        {queuedEvents > 0 && (
+          <Badge
+            className="text-[9px] px-1.5 py-0 border-0 gap-1"
+            style={{ backgroundColor: 'rgba(251,191,36,0.15)', color: '#fbbf24' }}
+          >
+            <AlertTriangle className="size-3" />
+            {queuedEvents} queued
+          </Badge>
+        )}
+      </div>
     )
   }
 
@@ -78,12 +109,23 @@ export function NetworkQualityBadge() {
   const latencyText = latencyMs >= 0 ? `${Math.round(latencyMs)}ms` : '...'
 
   return (
-    <Badge
-      className="text-[9px] px-1.5 py-0 border-0 gap-1"
-      style={{ backgroundColor: c.bg, color: c.color }}
-    >
-      {c.icon}
-      {latencyText}
-    </Badge>
+    <div className="flex items-center gap-1">
+      <Badge
+        className="text-[9px] px-1.5 py-0 border-0 gap-1"
+        style={{ backgroundColor: c.bg, color: c.color }}
+      >
+        {c.icon}
+        {latencyText}
+      </Badge>
+      {detailed && queuedEvents > 0 && (
+        <Badge
+          className="text-[9px] px-1.5 py-0 border-0 gap-1"
+          style={{ backgroundColor: 'rgba(251,191,36,0.15)', color: '#fbbf24' }}
+        >
+          <AlertTriangle className="size-3" />
+          {queuedEvents} queued
+        </Badge>
+      )}
+    </div>
   )
 }

@@ -594,10 +594,10 @@ function startSocketServer(): Promise<void> {
     socketServer = new SocketIOServer(httpForSocket, {
       path: '/',
       cors: { origin: '*', methods: ['GET', 'POST'] },
-      pingInterval: 10000,
-      pingTimeout: 20000,
+      pingInterval: 5000,
+      pingTimeout: 15000,
       maxHttpBufferSize: MAX_HTTP_BUFFER,
-      connectionStateRecovery: { maxDisconnectionDuration: 2 * 60 * 1000 },
+      connectionStateRecovery: { maxDisconnectionDuration: 5 * 60 * 1000 },
       transports: ['websocket', 'polling'],
       allowUpgrades: true,
     })

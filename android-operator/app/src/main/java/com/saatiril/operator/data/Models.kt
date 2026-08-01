@@ -206,6 +206,7 @@ data class FrameDataPayload(
 enum class ConnectionState {
     DISCONNECTED,
     CONNECTING,
+    RECONNECTING,   // actively reconnecting
     CONNECTED,
     AUTHENTICATING,
     AUTHENTICATED,
