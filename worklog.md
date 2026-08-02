@@ -739,3 +739,67 @@ Stage Summary:
 - MC panel queue badges also updated to pill shape
 - Mobile layout uses same floating toolbar with mutually exclusive panels
 - Files changed: operator-panel.tsx, mc-panel.tsx
+
+---
+Task ID: 2
+Agent: subagent
+Task: Fix MC Panel layout for sidebar use — add compact prop
+
+Work Log:
+- Read existing mc-panel.tsx (1311 lines) to understand current layout structure
+- Current layout: mobile (single-column vertical) + desktop (side-by-side 340px left + right queue)
+- Problem: desktop side-by-side layout doesn't fit in 380px sidebar
+- Changed function signature: `export function McPanel({ compact = false }: { compact?: boolean })`
+- Added compact desktop layout between mobile and normal desktop sections
+- Compact layout features:
+  - Single-column vertical layout (`flex flex-col gap-2 h-full p-3`)
+  - Target/Call card at top with compact padding (`p-3` instead of `p-4`, smaller heading text)
+  - Queue list below with `flex-1 min-h-0` and `ScrollArea` for scrolling
+  - No header row (No/NIM/Nama/Status grid) — uses compact rows like mobile layout
+  - Compact rows: `py-1.5` (vs `py-2` mobile), `text-[10px]` NIM with `w-14`, `text-[11px]` name
+  - Same simplified queue header as mobile (title + count badge + channel label)
+  - Photoshoot search card and sent students panel reuse existing render functions
+  - Normal desktop layout (side-by-side) and mobile layout remain unchanged
+- Lint passes with no errors
+- All socket events, handlers, and existing functionality preserved
+
+Stage Summary:
+- Added `compact` boolean prop to McPanel component (default: false)
+- When compact=true: single-column vertical layout for sidebar use
+- When compact=false: unchanged side-by-side desktop layout
+- Mobile layout untouched
+- File changed: src/components/saatiril/mc-panel.tsx
+
+---
+Task ID: 3
+Agent: main
+Task: Fix Operator Panel layout — queue below camera, toolbar at top, fullscreen exit
+
+Work Log:
+- Analyzed current desktop layout: horizontal flex with 300px sidebar for queue/info
+- Identified problems: queue hidden by default, floating toolbar covers camera, no fullscreen exit button
+- Added `Maximize, Minimize` imports from lucide-react
+- Extracted `toggleFullscreen` from inline keyboard handler to a standalone `useCallback` function
+- Added `exitFullscreen` function for the fullscreen exit button
+- Updated keyboard handler useEffect to depend on `toggleFullscreen`
+- Rewrote desktop layout from horizontal flex (main + sidebar) to single-column vertical layout:
+  - Camera Zone: full width, flex-1, with toolbar at top-right (was bottom-left)
+  - Fullscreen exit button: top-left when isFullscreen is true (z-30, semi-transparent dark bg)
+  - Floating toolbar: moved from bottom-left to top-right of camera view
+  - Added 4th toolbar button: Maximize/Minimize toggle for fullscreen
+  - Capture button: centered below camera, unchanged
+  - Target info row: compact single row below capture button (name + NIM + status badge + camera selector)
+  - Toggleable panels below target info: Shutter, Gridline, Queue (maxHeight: 30vh, overflow-y: auto)
+- Removed the 300px sidebar entirely
+- All toggleable panels use compact mode render functions
+- Mobile layout left completely unchanged
+- Lint passes with no errors
+
+Stage Summary:
+- Desktop layout changed from horizontal (camera + 300px sidebar) to vertical (camera → capture → target info → panels)
+- Floating toolbar moved from bottom-left to top-right of camera view
+- Added fullscreen exit button (top-left, visible when fullscreen)
+- Added fullscreen toggle button (4th toolbar button with Maximize/Minimize icon)
+- Target info row moved from sidebar to compact row below capture button
+- Queue panel now visible below capture button (maxHeight: 30vh, scrollable)
+- File changed: src/components/saatiril/operator-panel.tsx

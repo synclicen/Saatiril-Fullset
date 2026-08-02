@@ -566,13 +566,13 @@ export function MainApp() {
                 </Button>
               </div>
               {/* MC Sidebar content */}
-              <div className="flex-1 min-h-0 overflow-y-auto">
-                <McPanel />
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <McPanel compact />
               </div>
             </div>
 
             {/* Operator Panel (right, flex-1) */}
-            <div className="flex-1 min-h-0 overflow-y-auto relative">
+            <div className="flex-1 min-h-0 relative">
               {/* Toggle MC sidebar button (when sidebar is closed) */}
               {!mcSidebarOpen && (
                 <Button
