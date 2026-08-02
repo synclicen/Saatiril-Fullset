@@ -2021,6 +2021,31 @@ export function OperatorPanel() {
     )
   }
 
+  // ── Floating toolbar toggle button ──────────────────────────────────────
+  const renderToolbarButton = (
+    icon: React.ReactNode,
+    label: string,
+    isActive: boolean,
+    onClick: () => void,
+    badge?: React.ReactNode,
+  ) => (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition-all duration-200 cursor-pointer"
+      style={{
+        backgroundColor: isActive ? `${THEME.gold}22` : THEME.panel,
+        color: isActive ? THEME.gold : THEME.muted,
+        border: `1px solid ${isActive ? THEME.gold : THEME.border}`,
+        boxShadow: isActive ? `0 0 8px ${THEME.gold}22` : 'none',
+      }}
+      title={label}
+    >
+      {icon}
+      <span className="hidden lg:inline">{label}</span>
+      {badge}
+    </button>
+  )
+
   // ── MOBILE LAYOUT ────────────────────────────────────────────────────────
   if (isMobile) {
     return (
@@ -2033,9 +2058,9 @@ export function OperatorPanel() {
         >
           {renderCameraView()}
 
-          {/* ── Floating Toolbar (bottom-left of camera view) ──────────────── */}
+          {/* ── Floating Toolbar (top-right of camera view) ──────────────── */}
           <div
-            className="absolute bottom-2 left-2 z-20 flex items-center gap-1 rounded-xl px-1.5 py-1"
+            className="absolute top-2 right-2 z-20 flex items-center gap-1 rounded-xl px-1.5 py-1"
             style={{
               backgroundColor: `${THEME.panel}dd`,
               border: `1px solid ${THEME.border}`,
@@ -2208,31 +2233,6 @@ export function OperatorPanel() {
     )
   }
 
-  // ── Floating toolbar toggle button ──────────────────────────────────────
-  const renderToolbarButton = (
-    icon: React.ReactNode,
-    label: string,
-    isActive: boolean,
-    onClick: () => void,
-    badge?: React.ReactNode,
-  ) => (
-    <button
-      onClick={onClick}
-      className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition-all duration-200 cursor-pointer"
-      style={{
-        backgroundColor: isActive ? `${THEME.gold}22` : THEME.panel,
-        color: isActive ? THEME.gold : THEME.muted,
-        border: `1px solid ${isActive ? THEME.gold : THEME.border}`,
-        boxShadow: isActive ? `0 0 8px ${THEME.gold}22` : 'none',
-      }}
-      title={label}
-    >
-      {icon}
-      <span className="hidden lg:inline">{label}</span>
-      {badge}
-    </button>
-  )
-
   // ── DESKTOP LAYOUT ──────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ backgroundColor: THEME.bg }}>
@@ -2266,59 +2266,6 @@ export function OperatorPanel() {
                 </button>
               )}
 
-              {/* ── Floating Toolbar (top-right of camera view) ──────────────── */}
-              <div
-                className="absolute top-3 right-3 z-20 flex items-center gap-1.5 rounded-xl px-2 py-1.5"
-                style={{
-                  backgroundColor: `${THEME.panel}dd`,
-                  border: `1px solid ${THEME.border}`,
-                  backdropFilter: 'blur(12px)',
-                }}
-              >
-                {renderToolbarButton(
-                  <Camera className="size-3.5" />,
-                  'Shutter',
-                  showShutterPanel,
-                  () => setShowShutterPanel((v) => !v),
-                  shutterMode !== 'manual' ? (
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}55` }}>
-                      {shutterMode === 'ai' ? 'AI' : getTimerDuration(shutterMode) + 's'}
-                    </span>
-                  ) : undefined,
-                )}
-                {renderToolbarButton(
-                  <Grid3x3 className="size-3.5" />,
-                  'Grid',
-                  showGridlinePanel,
-                  () => setShowGridlinePanel((v) => !v),
-                  gridlineEnabled ? (
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}55` }}>
-                      {gridlineType === 'thirds' ? '⅓' : gridlineType === 'quarters' ? '¼' : gridlineType === 'crosshair' ? '+' : '✕'}
-                    </span>
-                  ) : undefined,
-                )}
-                {renderToolbarButton(
-                  <List className="size-3.5" />,
-                  'Antrean',
-                  showQueuePanel,
-                  () => setShowQueuePanel((v) => !v),
-                  remainingCount > 0 ? (
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{
-                      backgroundColor: remainingCount > 10 ? `${THEME.red}33` : `${THEME.gold}33`,
-                      color: remainingCount > 10 ? THEME.red : THEME.gold,
-                      border: `1px solid ${remainingCount > 10 ? `${THEME.red}55` : `${THEME.gold}55`}`,
-                    }}>
-                      {remainingCount}
-                    </span>
-                  ) : undefined,
-                )}
-                {renderToolbarButton(
-                  isFullscreen ? <Minimize className="size-3.5" /> : <Maximize className="size-3.5" />,
-                  isFullscreen ? 'Keluar FS' : 'Fullscreen',
-                  isFullscreen,
-                  toggleFullscreen,
-                )}
-              </div>
             </div>
 
             {/* Capture Button (full width of left panel) */}
@@ -2346,9 +2293,60 @@ export function OperatorPanel() {
           }}
         />
 
-        {/* RIGHT: Target info + toggleable panels */}
+        {/* RIGHT: Toolbar + Target info + toggleable panels */}
         <ResizablePanel defaultSize={35} minSize={15} maxSize={60}>
           <div className="flex flex-col h-full overflow-hidden" style={{ backgroundColor: THEME.panel }}>
+            {/* ── Toolbar Row (top of right panel, no longer covering camera) ── */}
+            <div
+              className="shrink-0 flex items-center gap-1.5 px-3 py-2 border-b"
+              style={{ borderColor: THEME.border }}
+            >
+              {renderToolbarButton(
+                <Camera className="size-3.5" />,
+                'Shutter',
+                showShutterPanel,
+                () => setShowShutterPanel((v) => !v),
+                shutterMode !== 'manual' ? (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}55` }}>
+                    {shutterMode === 'ai' ? 'AI' : getTimerDuration(shutterMode) + 's'}
+                  </span>
+                ) : undefined,
+              )}
+              {renderToolbarButton(
+                <Grid3x3 className="size-3.5" />,
+                'Grid',
+                showGridlinePanel,
+                () => setShowGridlinePanel((v) => !v),
+                gridlineEnabled ? (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}55` }}>
+                    {gridlineType === 'thirds' ? '⅓' : gridlineType === 'quarters' ? '¼' : gridlineType === 'crosshair' ? '+' : '✕'}
+                  </span>
+                ) : undefined,
+              )}
+              {renderToolbarButton(
+                <List className="size-3.5" />,
+                'Antrean',
+                showQueuePanel,
+                () => setShowQueuePanel((v) => !v),
+                remainingCount > 0 ? (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{
+                    backgroundColor: remainingCount > 10 ? `${THEME.red}33` : `${THEME.gold}33`,
+                    color: remainingCount > 10 ? THEME.red : THEME.gold,
+                    border: `1px solid ${remainingCount > 10 ? `${THEME.red}55` : `${THEME.gold}55`}`,
+                  }}>
+                    {remainingCount}
+                  </span>
+                ) : undefined,
+              )}
+              <div className="flex-1" />
+              {renderToolbarButton(
+                isFullscreen ? <Minimize className="size-3.5" /> : <Maximize className="size-3.5" />,
+                isFullscreen ? 'Keluar FS' : 'Fullscreen',
+                isFullscreen,
+                toggleFullscreen,
+              )}
+            </div>
+
             {/* Target Info Row — compact, always visible */}
             <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b" style={{ borderColor: THEME.border }}>
               <div

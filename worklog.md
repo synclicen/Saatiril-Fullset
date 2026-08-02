@@ -829,3 +829,24 @@ Stage Summary:
 - Users can drag the ResizableHandle to adjust panel sizes freely
 - All existing functionality preserved (camera view, capture button, toolbar, toggle panels)
 - Files changed: src/components/saatiril/operator-panel.tsx
+
+---
+Task ID: 3
+Agent: main
+Task: Move floating toolbar from camera overlay to top of right panel
+
+Work Log:
+- Analyzed user screenshot showing toolbar (Shutter, Grid, Antrean, Keluar FS) overlaying the camera view
+- Moved the desktop floating toolbar from inside the camera zone (absolute top-3 right-3) to the top of the right panel
+- Moved the mobile floating toolbar from bottom-left to top-right of the camera view
+- Fixed "Cannot access 'renderToolbarButton' before initialization" error by moving the function definition before the mobile layout section
+- Verified desktop layout with VLM: toolbar buttons are now at the top of the right panel, camera view is clear without any overlay
+- Verified mobile layout: no React crashes, toolbar buttons are properly positioned
+- Lint passes, no runtime errors
+
+Stage Summary:
+- Desktop toolbar moved from camera overlay to top of right panel (above target info)
+- Mobile toolbar moved from bottom-left to top-right of camera view
+- renderToolbarButton function moved before mobile layout to fix hoisting issue
+- Camera view is now clear without any overlay covering it
+- Files changed: src/components/saatiril/operator-panel.tsx
