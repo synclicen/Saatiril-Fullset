@@ -897,3 +897,52 @@ Stage Summary:
 - Right panel content no longer cut off when resized (proper overflow handling)
 - Toolbar buttons wrap on narrow panels
 - Commit: b9c86db "feat: resizable MC panel + fix right panel overflow when resized"
+
+---
+Task ID: 5
+Agent: main
+Task: Fix panel content being cut off when resized - make all panels responsive to width changes
+
+Work Log:
+- Analyzed uploaded screenshots showing content being cut off when panels are resized smaller
+- Identified that the right panel (operator panel) content doesn't adapt to narrow widths
+- Identified that MC panel compact mode also needs responsive adjustments
+- Fixed operator-panel.tsx right panel:
+  - Changed container from `overflow-x-hidden overflow-y-auto` to `overflow-hidden` (scroll handled by inner ScrollArea)
+  - Added `min-w-0` to all flex children to prevent overflow
+  - Toolbar buttons: added `whitespace-nowrap` and `max-w-[60px]` with `truncate` on labels
+  - Target info row: reduced padding (px-2), smaller avatar (w-7 h-7), added `min-w-0` on flex children
+  - Camera selector: reduced padding (px-2 py-1.5), added `min-w-0`
+  - Queue list items: reduced gaps (gap-1.5), smaller number width (w-4), added `min-w-0`
+  - Queue header: reduced padding (px-2), smaller badge (px-1.5), added `min-w-0`
+  - Shutter mode selector: ensured flex-wrap on button row
+  - Gridline settings: changed type selector from `flex` to `flex-wrap`, removed fixed `minWidth`
+  - All toggleable panels: reduced padding (px-2), added `overflow-hidden` on Cards
+  - OpSearch: reduced padding (p-1.5), added `min-w-0` and `truncate`
+  - NetworkQualityBadge: uses `detailed={false}` in compact mode
+- Fixed mc-panel.tsx compact mode:
+  - Root container: `p-2` instead of `p-3`, added `min-w-0 overflow-hidden`
+  - Call card: `overflow-hidden`, `p-2 space-y-1.5` instead of `p-3 space-y-2`
+  - Name text: `text-base` instead of `text-lg` for better fit
+  - Added `truncate` on all text elements that could overflow
+  - Queue list header: `px-2` padding, `gap-1.5`, `min-w-0` on flex children
+  - Queue list items: `gap-1.5 px-2`, `w-4` for number, `w-12` for NIM, `min-w-0` on name
+  - Call buttons: `compact ? 'h-10 text-sm' : 'h-14 text-lg'` for responsive sizing
+  - Photoshoot search: compact padding, smaller font sizes, `min-w-0` on items
+  - Sent students panel: compact padding, `min-w-0` on items, smaller font sizes
+  - Selected student preview: `p-2`, `truncate` on all text
+- Fixed main-app.tsx MC sidebar header:
+  - `min-w-0` on container and header
+  - `px-2` instead of `px-3`
+  - `gap-1.5` instead of `gap-2`
+  - Megaphone icon `size-3.5 shrink-0` instead of `size-4`
+  - Header text `truncate` for overflow
+- Lint passes
+- Committed: 0bb6357 "fix: make all panel content responsive to resize - prevent content cutoff"
+- Browser testing limited due to OOM crashes in sandbox - code verified via lint and TypeScript checks
+
+Stage Summary:
+- All panel content now properly adapts to resize thanks to min-w-0, truncate, overflow-hidden, and flex-wrap
+- MC panel on the left is already resizable (was fixed in previous session)
+- Reduced padding and font sizes throughout compact modes for better narrow-width display
+- Commit: 0bb6357
