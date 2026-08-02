@@ -2038,7 +2038,7 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
       title={label}
     >
       {icon}
-      <span className="hidden lg:inline">{label}</span>
+      <span>{label}</span>
       {badge}
     </button>
   )
@@ -2274,10 +2274,10 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
 
         {/* RIGHT: Toolbar + Target info + toggleable panels */}
         <ResizablePanel defaultSize={35} minSize={15} maxSize={60}>
-          <div className="flex flex-col h-full overflow-hidden" style={{ backgroundColor: THEME.panel }}>
+          <div className="flex flex-col h-full min-w-0 overflow-x-hidden overflow-y-auto" style={{ backgroundColor: THEME.panel }}>
             {/* ── Toolbar Row (top of right panel, no longer covering camera) ── */}
             <div
-              className="shrink-0 flex items-center gap-1.5 px-3 py-2 border-b"
+              className="shrink-0 flex flex-wrap items-center gap-1.5 px-2 py-2 border-b"
               style={{ borderColor: THEME.border }}
             >
               {renderToolbarButton(
@@ -2392,7 +2392,7 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
             </div>
 
             {/* Scrollable panels area */}
-            <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
               {/* Shutter Mode Panel — toggleable */}
               {showShutterPanel && (
                 <div className="px-3 py-2 border-b" style={{ borderColor: THEME.border }}>

@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable'
 import {
   Select,
   SelectContent,
@@ -651,69 +652,74 @@ export function MainApp() {
       <main className={`flex-1 min-h-0 overflow-hidden ${appFullscreen ? 'pt-0' : ''}`}>
         {/* ── LIVE VIEW: MC sidebar + Operator panel side by side ──────────── */}
         {activeView === 'live' && (
-          <div className="flex h-full">
-            {/* MC Sidebar (left) — hidden in fullscreen when sidebar is closed */}
-            <div
-              className="shrink-0 flex flex-col border-r transition-all duration-300 ease-in-out"
-              style={{
-                width: mcSidebarOpen ? '380px' : '0px',
-                backgroundColor: THEME.panel,
-                borderColor: THEME.border,
-                overflow: 'hidden',
-              }}
-            >
-              {/* MC Sidebar header */}
-              <div
-                className="shrink-0 flex items-center justify-between px-3 py-2 border-b"
-                style={{ borderColor: THEME.border }}
-              >
-                <div className="flex items-center gap-2">
-                  <Megaphone className="size-4" style={{ color: THEME.gold }} />
-                  <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: THEME.gold }}>
-                    Panel MC
-                  </h2>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37] cursor-pointer"
-                  onClick={() => setMcSidebarOpen(false)}
-                  title="Sembunyikan panel MC"
-                >
-                  <PanelLeftClose className="size-4" />
-                </Button>
-              </div>
-              {/* MC Sidebar content */}
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <McPanel compact />
-              </div>
-            </div>
+          <ResizablePanelGroup direction="horizontal" className="h-full">
+            {/* MC Sidebar (left, resizable) */}
+            {mcSidebarOpen && (
+              <>
+                <ResizablePanel defaultSize={22} minSize={12} maxSize={40}>
+                  <div className="flex flex-col h-full" style={{ backgroundColor: THEME.panel }}>
+                    {/* MC Sidebar header */}
+                    <div
+                      className="shrink-0 flex items-center justify-between px-3 py-2 border-b"
+                      style={{ borderColor: THEME.border }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Megaphone className="size-4" style={{ color: THEME.gold }} />
+                        <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: THEME.gold }}>
+                          Panel MC
+                        </h2>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37] cursor-pointer"
+                        onClick={() => setMcSidebarOpen(false)}
+                        title="Sembunyikan panel MC"
+                      >
+                        <PanelLeftClose className="size-4" />
+                      </Button>
+                    </div>
+                    {/* MC Sidebar content */}
+                    <div className="flex-1 min-h-0 overflow-hidden">
+                      <McPanel compact />
+                    </div>
+                  </div>
+                </ResizablePanel>
+                <ResizableHandle
+                  withHandle
+                  className="w-1.5 hover:w-2 transition-all duration-150"
+                  style={{ backgroundColor: THEME.border }}
+                />
+              </>
+            )}
 
             {/* Operator Panel (right, flex-1) */}
-            <div className="flex-1 min-h-0 relative">
-              {/* Toggle MC sidebar button (when sidebar is closed, not fullscreen) */}
-              {!mcSidebarOpen && !appFullscreen && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="absolute top-2 left-2 z-10 size-8 text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37] cursor-pointer"
-                  style={{
-                    backgroundColor: `${THEME.panel}cc`,
-                    borderWidth: 1,
-                    borderColor: THEME.border,
-                  }}
-                  onClick={() => setMcSidebarOpen(true)}
-                  title="Tampilkan panel MC"
-                >
-                  <PanelLeftOpen className="size-4" />
-                </Button>
-              )}
-              <OperatorPanel
-                isAppFullscreen={appFullscreen}
-                onToggleAppFullscreen={toggleAppFullscreen}
-              />
-            </div>
-          </div>
+            <ResizablePanel defaultSize={mcSidebarOpen ? 78 : 100} minSize={40}>
+              <div className="h-full relative">
+                {/* Toggle MC sidebar button (when sidebar is closed, not fullscreen) */}
+                {!mcSidebarOpen && !appFullscreen && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="absolute top-2 left-2 z-10 size-8 text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37] cursor-pointer"
+                    style={{
+                      backgroundColor: `${THEME.panel}cc`,
+                      borderWidth: 1,
+                      borderColor: THEME.border,
+                    }}
+                    onClick={() => setMcSidebarOpen(true)}
+                    title="Tampilkan panel MC"
+                  >
+                    <PanelLeftOpen className="size-4" />
+                  </Button>
+                )}
+                <OperatorPanel
+                  isAppFullscreen={appFullscreen}
+                  onToggleAppFullscreen={toggleAppFullscreen}
+                />
+              </div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
         )}
 
         {/* ── ADMIN VIEW: Full-screen admin dashboard ──────────────────────── */}
