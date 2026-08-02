@@ -463,7 +463,7 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
         return (
           <Button
             onClick={() => handleResetForRetake(selectedStudent)}
-            className={`w-full font-bold cursor-pointer transition-all duration-200 active:scale-[0.98] ${isMobile ? 'h-14 text-base' : 'h-14 text-lg hover:scale-[1.02]'}`}
+            className={`w-full font-bold cursor-pointer transition-all duration-200 active:scale-[0.98] ${isMobile ? 'h-14 text-base' : compact ? 'h-10 text-sm hover:scale-[1.02]' : 'h-14 text-lg hover:scale-[1.02]'}`}
             style={{
               backgroundColor: THEME.gold,
               color: THEME.bg,
@@ -471,7 +471,7 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
               boxShadow: `0 0 20px ${THEME.gold}44`,
             }}
           >
-            <RotateCcw className="size-5" />
+            <RotateCcw className="size-4" />
             RESET & KIRIM ULANG
           </Button>
         )
@@ -480,7 +480,7 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
         <Button
           disabled={!selectedStudent}
           onClick={handleSendToOperator}
-          className={`w-full font-bold cursor-pointer transition-all duration-200 active:scale-[0.98] ${isMobile ? 'h-14 text-base' : 'h-14 text-lg hover:scale-[1.02]'}`}
+          className={`w-full font-bold cursor-pointer transition-all duration-200 active:scale-[0.98] ${isMobile ? 'h-14 text-base' : compact ? 'h-10 text-sm hover:scale-[1.02]' : 'h-14 text-lg hover:scale-[1.02]'}`}
           style={{
             backgroundColor: selectedStudent ? THEME.emerald : THEME.panel,
             color: selectedStudent ? THEME.bg : THEME.muted,
@@ -488,7 +488,7 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
             boxShadow: selectedStudent ? `0 0 20px ${THEME.emerald}44` : 'none',
           }}
         >
-          <Send className="size-5" />
+          <Send className="size-4" />
           {dualPhotoshoot ? 'KIRIM KE 2 KAMERA' : 'KIRIM KE OPERATOR'}
         </Button>
       )
@@ -500,14 +500,14 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
         <div className="space-y-2">
           <Button
             disabled
-            className={`w-full font-bold cursor-not-allowed ${isMobile ? 'h-12 text-sm' : 'h-14 text-lg'}`}
+            className={`w-full font-bold cursor-not-allowed ${isMobile ? 'h-12 text-sm' : compact ? 'h-10 text-sm' : 'h-14 text-lg'}`}
             style={{
               backgroundColor: THEME.panel,
               color: THEME.muted,
               border: `2px solid ${THEME.border}`,
             }}
           >
-            <Loader2 className="size-5 animate-spin" />
+            <Loader2 className="size-4 animate-spin" />
             {opProgressText || 'TUNGGU KAMERA...'}
           </Button>
         </div>
@@ -518,7 +518,7 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
       return (
         <Button
           onClick={handleCallNow}
-          className={`w-full font-bold cursor-pointer transition-all duration-200 active:scale-[0.98] ${isMobile ? 'h-14 text-base' : 'h-14 text-lg hover:scale-[1.02]'}`}
+          className={`w-full font-bold cursor-pointer transition-all duration-200 active:scale-[0.98] ${isMobile ? 'h-14 text-base' : compact ? 'h-10 text-sm hover:scale-[1.02]' : 'h-14 text-lg hover:scale-[1.02]'}`}
           style={{
             backgroundColor: THEME.gold,
             color: THEME.bg,
@@ -526,7 +526,7 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
             boxShadow: `0 0 20px ${THEME.gold}44`,
           }}
         >
-          <Megaphone className="size-5" />
+          <Megaphone className={compact ? 'size-4' : 'size-5'} />
           PANGGIL SEKARANG
         </Button>
       )
@@ -535,7 +535,7 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
     return (
       <Button
         disabled
-        className={`w-full font-bold cursor-not-allowed ${isMobile ? 'h-12 text-sm' : 'h-14 text-lg'}`}
+        className={`w-full font-bold cursor-not-allowed ${isMobile ? 'h-12 text-sm' : compact ? 'h-10 text-sm' : 'h-14 text-lg'}`}
         style={{
           backgroundColor: THEME.panel,
           color: THEME.muted,
@@ -543,7 +543,7 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
           opacity: 0.6,
         }}
       >
-        <Users className="size-5" />
+        <Users className={compact ? 'size-4' : 'size-5'} />
         ANTREAN HABIS
       </Button>
     )
@@ -659,16 +659,16 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
   // ── Photoshoot: search input + results
   const renderPhotoshootSearch = () => (
     <Card
-      className="shrink-0 border-2 rounded-xl"
+      className="shrink-0 border-2 rounded-xl overflow-hidden"
       style={{
         backgroundColor: THEME.card,
         borderColor: THEME.emerald,
         boxShadow: `0 0 20px ${THEME.emerald}22`,
       }}
     >
-      <CardContent className="p-3 space-y-2">
+      <CardContent className={compact ? 'p-2 space-y-1.5' : 'p-3 space-y-2'}>
         <p
-          className="text-[10px] font-semibold uppercase tracking-widest"
+          className={`font-semibold uppercase tracking-widest ${compact ? 'text-[8px]' : 'text-[10px]'}`}
           style={{ color: THEME.emerald }}
         >
           Cari Peserta — Urutan Bebas
@@ -699,16 +699,16 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
                 <button
                   key={student.id}
                   onClick={() => setSelectedStudent(student)}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/5 cursor-pointer"
+                  className="w-full flex items-center gap-1.5 px-2 py-1.5 text-left transition-colors hover:bg-white/5 cursor-pointer min-w-0"
                   style={{
                     backgroundColor: selectedStudent?.id === student.id ? `${THEME.emerald}22` : 'transparent',
                     borderLeft: selectedStudent?.id === student.id ? `3px solid ${THEME.emerald}` : `3px solid transparent`,
                   }}
                 >
-                  <span className="text-xs font-mono truncate w-16 shrink-0" style={{ color: THEME.muted }}>
+                  <span className={`font-mono truncate shrink-0 ${compact ? 'text-[9px] w-12' : 'text-xs w-16'}`} style={{ color: THEME.muted }}>
                     {student.nim}
                   </span>
-                  <span className="text-xs font-medium truncate flex-1" style={{ color: '#ffffff' }}>
+                  <span className={`font-medium truncate flex-1 min-w-0 ${compact ? 'text-[10px]' : 'text-xs'}`} style={{ color: '#ffffff' }}>
                     {student.nama}
                   </span>
                   {renderStatusBadge(student.status)}
@@ -721,14 +721,14 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
         {/* Selected student preview */}
         {selectedStudent && (
           <div
-            className="rounded-lg p-2.5"
+            className="rounded-lg p-2 min-w-0"
             style={{
               backgroundColor: selectedStudent.status === 'done' ? `${THEME.gold}15` : `${THEME.emerald}15`,
               border: `1px solid ${selectedStudent.status === 'done' ? `${THEME.gold}55` : `${THEME.emerald}33`}`,
             }}
           >
             <p
-              className="text-[10px] font-semibold uppercase tracking-wider"
+              className={`font-semibold uppercase tracking-wider ${compact ? 'text-[8px]' : 'text-[10px]'}`}
               style={{ color: selectedStudent.status === 'done' ? THEME.gold : THEME.emerald }}
             >
               {selectedStudent.status === 'done' ? '⚠ Peserta Sudah Difoto' : 'Peserta Dipilih'}
@@ -736,11 +736,11 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
             <p className="text-sm font-bold truncate" style={{ color: '#ffffff' }}>
               {selectedStudent.nama}
             </p>
-            <p className="text-xs font-mono" style={{ color: THEME.muted }}>
+            <p className="text-xs font-mono truncate" style={{ color: THEME.muted }}>
               {selectedStudent.nim}
             </p>
             {selectedStudent.status === 'done' && (
-              <p className="text-[10px] mt-1" style={{ color: THEME.gold }}>
+              <p className="text-[10px] mt-1 truncate" style={{ color: THEME.gold }}>
                 Klik RESET & KIRIM ULANG untuk memfoto ulang.
               </p>
             )}
@@ -758,24 +758,24 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
 
     return (
       <Card
-        className="shrink-0 border rounded-xl"
+        className="shrink-0 border rounded-xl overflow-hidden"
         style={{ backgroundColor: THEME.card, borderColor: THEME.cyan }}
       >
-        <CardContent className="p-3 space-y-2">
-          <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: THEME.cyan }}>
+        <CardContent className={compact ? 'p-2 space-y-1.5' : 'p-3 space-y-2'}>
+          <p className={`font-semibold uppercase tracking-widest ${compact ? 'text-[8px]' : 'text-[10px]'}`} style={{ color: THEME.cyan }}>
             <Camera className="size-3 inline mr-1" />
             Dikirim ke Operator ({sentStudents.length})
           </p>
-          <div className="max-h-48 overflow-y-auto space-y-1.5">
+          <div className="max-h-48 overflow-y-auto space-y-1">
             {sentStudents.map((student) => {
               const completion = getStudentChannelCompletion(student.id)
               return (
                 <div
                   key={student.id}
-                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
+                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg min-w-0"
                   style={{ backgroundColor: `${THEME.cyan}0a`, border: `1px solid ${THEME.cyan}22` }}
                 >
-                  <span className="text-xs font-medium truncate flex-1" style={{ color: '#ffffff' }}>
+                  <span className={`font-medium truncate flex-1 min-w-0 ${compact ? 'text-[10px]' : 'text-xs'}`} style={{ color: '#ffffff' }}>
                     {student.nama}
                   </span>
                   {dualPhotoshoot ? (
@@ -1001,18 +1001,18 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
   // ── COMPACT DESKTOP LAYOUT — single-column vertical for sidebar use
   if (compact) {
     return (
-      <div className="flex flex-col gap-2 h-full p-3" style={{ backgroundColor: THEME.bg }}>
+      <div className="flex flex-col gap-2 h-full p-2 min-w-0 overflow-hidden" style={{ backgroundColor: THEME.bg }}>
         {/* Call Panel — compact */}
         {photoshoot ? renderPhotoshootSearch() : (
           <Card
-            className="shrink-0 border-2 rounded-xl"
+            className="shrink-0 border-2 rounded-xl overflow-hidden"
             style={{
               backgroundColor: THEME.card,
               borderColor: THEME.gold,
               boxShadow: `0 0 20px ${THEME.gold}22`,
             }}
           >
-            <CardContent className="p-3 space-y-2">
+            <CardContent className="p-2 space-y-1.5">
               <p
                 className="text-[10px] font-semibold uppercase tracking-widest"
                 style={{ color: THEME.gold }}
@@ -1021,23 +1021,23 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
               </p>
 
               {nextPending ? (
-                <div className="space-y-0.5">
-                  <p className="text-lg font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
+                <div className="space-y-0.5 min-w-0">
+                  <p className="text-base font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
                     {nextPending.nama}
                   </p>
-                  <p className="text-xs font-mono" style={{ color: THEME.muted }}>
+                  <p className="text-xs font-mono truncate" style={{ color: THEME.muted }}>
                     {nextPending.nim}
                   </p>
                 </div>
               ) : currentlyActive ? (
-                <div className="space-y-0.5">
-                  <p className="text-xs font-semibold leading-tight" style={{ color: THEME.gold }}>
+                <div className="space-y-0.5 min-w-0">
+                  <p className="text-xs font-semibold leading-tight truncate" style={{ color: THEME.gold }}>
                     Sedang difoto:
                   </p>
-                  <p className="text-lg font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
+                  <p className="text-base font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
                     {currentlyActive.nama}
                   </p>
-                  <p className="text-xs font-mono" style={{ color: THEME.muted }}>
+                  <p className="text-xs font-mono truncate" style={{ color: THEME.muted }}>
                     {currentlyActive.nim}
                   </p>
                   {opProgressText && (
@@ -1069,15 +1069,15 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
           style={{ backgroundColor: THEME.card, borderColor: THEME.border }}
         >
           <div
-            className="shrink-0 flex items-center justify-between px-3 py-2"
+            className="shrink-0 flex items-center justify-between px-2 py-2 min-w-0"
             style={{ borderBottom: `1px solid ${THEME.border}` }}
           >
-            <div className="flex items-center gap-2">
-              <h3 className="text-xs font-semibold" style={{ color: '#ffffff' }}>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <h3 className="text-xs font-semibold shrink-0" style={{ color: '#ffffff' }}>
                 {photoshoot ? 'Daftar Peserta' : 'Antrean'}
               </h3>
               <span
-                className="text-xs font-bold px-2 py-0.5 rounded-full"
+                className="text-xs font-bold px-1.5 py-0.5 rounded-full shrink-0"
                 style={{
                   backgroundColor: remainingCount > 10 ? 'rgba(239,68,68,0.2)' : remainingCount > 0 ? `${THEME.gold}33` : `${THEME.border}44`,
                   color: remainingCount > 10 ? '#ef4444' : remainingCount > 0 ? (photoshoot ? THEME.emerald : THEME.gold) : THEME.muted,
@@ -1087,7 +1087,7 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
                 {remainingCount}
               </span>
             </div>
-            <span className="text-[10px]" style={{ color: THEME.muted }}>
+            <span className="text-[10px] shrink-0" style={{ color: THEME.muted }}>
               {photoshoot ? (dualPhotoshoot ? '2 Kamera' : 'Photoshoot') : `Ch.${myChannel}`}
             </span>
           </div>
@@ -1107,7 +1107,7 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
                     <div
                       key={student.id}
                       ref={isActive ? activeRowRef : isNext ? nextRowRef : undefined}
-                      className="flex items-center gap-2 px-3 py-1.5 transition-colors duration-200 cursor-pointer"
+                      className="flex items-center gap-1.5 px-2 py-1.5 transition-colors duration-200 cursor-pointer min-w-0"
                       style={getRowStyle(student)}
                       onClick={() => {
                         if (photoshoot) {
@@ -1116,14 +1116,14 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
                         }
                       }}
                     >
-                      <span className="text-[10px] font-mono w-5 shrink-0" style={{ color: THEME.muted }}>
+                      <span className="text-[10px] font-mono w-4 shrink-0 text-center" style={{ color: THEME.muted }}>
                         {idx + 1}
                       </span>
-                      <span className="text-[10px] font-mono truncate w-14 shrink-0" style={{ color: THEME.muted }}>
+                      <span className="text-[10px] font-mono truncate w-12 shrink-0" style={{ color: THEME.muted }}>
                         {student.nim}
                       </span>
                       <span
-                        className={`text-[11px] font-medium truncate flex-1 ${student.status === 'done' ? 'line-through' : ''}`}
+                        className={`text-[11px] font-medium truncate flex-1 min-w-0 ${student.status === 'done' ? 'line-through' : ''}`}
                         style={{
                           color: isActive ? THEME.gold : selectedStudent?.id === student.id ? THEME.emerald : student.status === 'sent' ? THEME.cyan : student.status === 'done' ? THEME.muted : '#ffffff',
                         }}

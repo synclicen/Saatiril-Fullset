@@ -657,15 +657,15 @@ export function MainApp() {
             {mcSidebarOpen && (
               <>
                 <ResizablePanel defaultSize={22} minSize={12} maxSize={40}>
-                  <div className="flex flex-col h-full" style={{ backgroundColor: THEME.panel }}>
+                  <div className="flex flex-col h-full min-w-0" style={{ backgroundColor: THEME.panel }}>
                     {/* MC Sidebar header */}
                     <div
-                      className="shrink-0 flex items-center justify-between px-3 py-2 border-b"
+                      className="shrink-0 flex items-center justify-between px-2 py-2 border-b min-w-0"
                       style={{ borderColor: THEME.border }}
                     >
-                      <div className="flex items-center gap-2">
-                        <Megaphone className="size-4" style={{ color: THEME.gold }} />
-                        <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: THEME.gold }}>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Megaphone className="size-3.5 shrink-0" style={{ color: THEME.gold }} />
+                        <h2 className="text-xs font-bold uppercase tracking-wider truncate" style={{ color: THEME.gold }}>
                           Panel MC
                         </h2>
                       </div>
