@@ -661,3 +661,26 @@ Stage Summary:
 - Mobile responsive: tabs are tappable and content is readable
 - The "monitor mode" was not a separate mode in code - it was the previous split-view behavior
 - All functionality preserved: socket events, channel selection, LAN IP, connection quality
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Fix blank preview panel - dev server had crashed and needed restart
+
+Work Log:
+- User reported preview panel was empty/blank
+- Discovered dev server had crashed (Next.js processes were stuck/unresponsive)
+- Killed all stuck processes (next-server, bun processes)
+- Restarted dev server using bash .zscripts/dev.sh
+- Verified page loads correctly with curl (HTTP 200)
+- Verified with agent-browser: Project Hub shows correctly
+- Created test project "Wisuda Test 2026" and verified tab-based UI works
+- All 3 tabs (Operator, MC, Admin) work correctly
+- No console errors
+- Mini-services (socket.io on port 3003, operator-web on port 3005) running correctly
+
+Stage Summary:
+- Root cause: Dev server crashed/stuck, not a code issue
+- Fix: Restarted dev server with .zscripts/dev.sh
+- All functionality verified working after restart
+- Tab-based UI is functioning correctly across all 3 panels
