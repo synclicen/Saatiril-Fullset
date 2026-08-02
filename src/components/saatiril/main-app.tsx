@@ -6,6 +6,8 @@ import {
   Camera,
   LayoutDashboard,
   Megaphone,
+  PanelLeftClose,
+  PanelLeftOpen,
   Loader2,
   Wifi,
   Copy,
@@ -13,7 +15,6 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -21,7 +22,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useSaatirilStore, type Project, type CameraMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync, preservePhotoHistoryOnSync, isDualMode, isPhotoshootMode } from '@/store/use-saatiril-store'
 import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth, setSessionPassword, clearSessionPassword, reidentifyWithPassword, isSocketAuthenticated, isServerPasswordRequired, resendSessionPasswordHash, getSocketAuthState } from '@/lib/socket'
 
@@ -43,8 +43,8 @@ const THEME = {
   red: '#ef4444',
 } as const
 
-// ─── Tab type ─────────────────────────────────────────────────────────────────
-type PanelTab = 'operator' | 'mc' | 'admin'
+// ─── View type ────────────────────────────────────────────────────────────────
+type MainView = 'live' | 'admin'
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export function MainApp() {
@@ -60,7 +60,8 @@ export function MainApp() {
   const loadProjectsFromStorage = useSaatirilStore((s) => s.loadProjectsFromStorage)
 
   // ── Local state ────────────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<PanelTab>('operator')
+  const [activeView, setActiveView] = useState<MainView>('live')
+  const [mcSidebarOpen, setMcSidebarOpen] = useState(true)
   const [serverConnected, setServerConnected] = useState(false)
   const [connectionQuality, setConnectionQuality] = useState<'good' | 'degraded' | 'disconnected'>('disconnected')
   const [lanIP, setLanIP] = useState<string>('')
@@ -103,7 +104,6 @@ export function MainApp() {
       setTimeout(() => {
         pc.close()
         if (!lanIPFoundRef.current && typeof window !== 'undefined') {
-          // Try using the hostname from current URL
           const hostname = window.location.hostname
           if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
             setLanIP(hostname)
@@ -155,7 +155,6 @@ export function MainApp() {
       setServerConnected(true)
       setConnectionQuality('good')
 
-      // Admin: if project has a session password, (re-)set it on the server
       const curProj = useSaatirilStore.getState().currentProject
       if (curProj) {
         if (curProj.config.sessionPassword && curProj.config.sessionPassword !== '__PASSWORD_SET__') {
@@ -178,7 +177,6 @@ export function MainApp() {
       setConnectionQuality('disconnected')
     }
 
-    // ── Auth event handlers ────────────────────────────────────────────────
     const handleAuthRequirement = (data: { passwordRequired: boolean }) => {
       console.log('[SAATIRIL] auth-requirement received:', data.passwordRequired)
       setServerRequiresPassword(data.passwordRequired)
@@ -205,14 +203,12 @@ export function MainApp() {
     socket.on('auth-success', handleAuthSuccess)
     socket.on('auth-failed', handleAuthFailed)
 
-    // ── Sync React state with socket module state on mount ──────────────────
     queueMicrotask(() => {
       const authState = getSocketAuthState()
       if (authState.connected) {
         setServerConnected(true)
         setConnectionQuality('good')
 
-        // Admin: ensure session password is set on the server
         const curProj = useSaatirilStore.getState().currentProject
         if (curProj) {
           if (curProj.config.sessionPassword && curProj.config.sessionPassword !== '__PASSWORD_SET__') {
@@ -262,7 +258,6 @@ export function MainApp() {
       const curProj = useSaatirilStore.getState().currentProject
 
       if (data.project) {
-        // For admin: merge database with incoming (prevents channel data overwrite in dual mode)
         if (curProj && data.project.id === curProj.id) {
           const mergedDb = mergeDatabases(curProj.database, data.project.database)
           const mergedConfig = preserveFrameOnSync(data.project.config, curProj.config)
@@ -283,7 +278,6 @@ export function MainApp() {
     const handleRequestState = () => {
       const curProj = useSaatirilStore.getState().currentProject
       if (curProj) {
-        // Ensure frame data is actual base64, not '__FRAME_SAVED__' marker.
         let frameToSend = curProj.config.frame
         if (frameToSend === '__FRAME_SAVED__') {
           let savedFrame = typeof window !== 'undefined'
@@ -323,13 +317,11 @@ export function MainApp() {
           },
           photoHistory: curProj.photoHistory.map(h => ({ ...h, photos: [] })),
         }
-        // Remove internal fields that should never be sent over the LAN
         delete (safeProject as any)._sessionPasswordHash
         emitLocal('SYNC_DB', { project: safeProject })
       }
     }
 
-    // ── REQUEST_FRAME: Non-admin requests frame data from admin ───────────
     const handleRequestFrame = (data: { projectId: string; requesterRole: string }) => {
       const curProj = useSaatirilStore.getState().currentProject
       if (!curProj || curProj.id !== data.projectId) return
@@ -363,7 +355,6 @@ export function MainApp() {
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleBack = useCallback(() => {
-    // Save project state before navigating back to hub
     const store = useSaatirilStore.getState()
     if (store.currentProject) {
       store.saveProjectsToStorageNow()
@@ -415,6 +406,33 @@ export function MainApp() {
             <h1 className="truncate text-sm font-bold text-white sm:text-base">
               {currentProject?.name ?? 'Saatiril'}
             </h1>
+          </div>
+
+          {/* View toggle: Live / Admin */}
+          <div className="flex items-center gap-1 rounded-lg p-1" style={{ backgroundColor: `${THEME.bg}88` }}>
+            <button
+              onClick={() => setActiveView('live')}
+              className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer"
+              style={{
+                backgroundColor: activeView === 'live' ? `${THEME.gold}22` : 'transparent',
+                color: activeView === 'live' ? THEME.gold : THEME.muted,
+              }}
+            >
+              <Megaphone className="size-3.5" />
+              <span className="hidden sm:inline">MC + Operator</span>
+              <span className="sm:hidden">Live</span>
+            </button>
+            <button
+              onClick={() => setActiveView('admin')}
+              className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer"
+              style={{
+                backgroundColor: activeView === 'admin' ? 'rgba(167,139,250,0.15)' : 'transparent',
+                color: activeView === 'admin' ? '#a78bfa' : THEME.muted,
+              }}
+            >
+              <LayoutDashboard className="size-3.5" />
+              <span>Admin</span>
+            </button>
           </div>
 
           {/* Channel selector (dual mode) */}
@@ -511,78 +529,78 @@ export function MainApp() {
         </div>
       </header>
 
-      {/* ── Tab Navigation Bar ───────────────────────────────────────────────── */}
-      <nav
-        className="shrink-0 border-b z-10"
-        style={{
-          backgroundColor: THEME.panel,
-          borderColor: THEME.border,
-        }}
-      >
-        <Tabs
-          value={activeTab}
-          onValueChange={(v) => setActiveTab(v as PanelTab)}
-          className="flex flex-col gap-0"
-        >
-          <TabsList
-            className="inline-flex h-11 w-full items-center justify-center gap-1 rounded-none border-0 bg-transparent p-1 sm:gap-2"
-          >
-            <TabsTrigger
-              value="operator"
-              className="flex-1 h-9 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all data-[state=active]:shadow-md sm:text-sm"
-              style={{
-                color: activeTab === 'operator' ? THEME.cyan : THEME.muted,
-                backgroundColor: activeTab === 'operator' ? `${THEME.cyan}18` : 'transparent',
-              }}
-            >
-              <Camera className="size-4" />
-              <span>Operator</span>
-            </TabsTrigger>
-            <TabsTrigger
-              value="mc"
-              className="flex-1 h-9 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all data-[state=active]:shadow-md sm:text-sm"
-              style={{
-                color: activeTab === 'mc' ? THEME.gold : THEME.muted,
-                backgroundColor: activeTab === 'mc' ? `${THEME.gold}18` : 'transparent',
-              }}
-            >
-              <Megaphone className="size-4" />
-              <span>MC</span>
-            </TabsTrigger>
-            <TabsTrigger
-              value="admin"
-              className="flex-1 h-9 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all data-[state=active]:shadow-md sm:text-sm"
-              style={{
-                color: activeTab === 'admin' ? '#a78bfa' : THEME.muted,
-                backgroundColor: activeTab === 'admin' ? 'rgba(167,139,250,0.1)' : 'transparent',
-              }}
-            >
-              <LayoutDashboard className="size-4" />
-              <span>Admin</span>
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </nav>
-
-      {/* ── Main Content Area — Full-screen tab content ──────────────────────── */}
+      {/* ── Main Content Area ────────────────────────────────────────────────── */}
       <main className="flex-1 min-h-0 overflow-hidden">
-        <div className="h-full overflow-y-auto" style={{ backgroundColor: THEME.bg }}>
-          {activeTab === 'operator' && (
-            <div className="p-3 sm:p-4 md:p-6">
+        {/* ── LIVE VIEW: MC sidebar + Operator panel side by side ──────────── */}
+        {activeView === 'live' && (
+          <div className="flex h-full">
+            {/* MC Sidebar (left) */}
+            <div
+              className="shrink-0 flex flex-col border-r transition-all duration-300 ease-in-out"
+              style={{
+                width: mcSidebarOpen ? '380px' : '0px',
+                backgroundColor: THEME.panel,
+                borderColor: THEME.border,
+                overflow: 'hidden',
+              }}
+            >
+              {/* MC Sidebar header */}
+              <div
+                className="shrink-0 flex items-center justify-between px-3 py-2 border-b"
+                style={{ borderColor: THEME.border }}
+              >
+                <div className="flex items-center gap-2">
+                  <Megaphone className="size-4" style={{ color: THEME.gold }} />
+                  <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: THEME.gold }}>
+                    Panel MC
+                  </h2>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37] cursor-pointer"
+                  onClick={() => setMcSidebarOpen(false)}
+                  title="Sembunyikan panel MC"
+                >
+                  <PanelLeftClose className="size-4" />
+                </Button>
+              </div>
+              {/* MC Sidebar content */}
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <McPanel />
+              </div>
+            </div>
+
+            {/* Operator Panel (right, flex-1) */}
+            <div className="flex-1 min-h-0 overflow-y-auto relative">
+              {/* Toggle MC sidebar button (when sidebar is closed) */}
+              {!mcSidebarOpen && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute top-2 left-2 z-10 size-8 text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37] cursor-pointer"
+                  style={{
+                    backgroundColor: `${THEME.panel}cc`,
+                    borderWidth: 1,
+                    borderColor: THEME.border,
+                  }}
+                  onClick={() => setMcSidebarOpen(true)}
+                  title="Tampilkan panel MC"
+                >
+                  <PanelLeftOpen className="size-4" />
+                </Button>
+              )}
               <OperatorPanel />
             </div>
-          )}
-          {activeTab === 'mc' && (
-            <div className="p-3 sm:p-4 md:p-6">
-              <McPanel />
-            </div>
-          )}
-          {activeTab === 'admin' && (
-            <div className="p-3 sm:p-4 md:p-6">
-              <AdminDashboard />
-            </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {/* ── ADMIN VIEW: Full-screen admin dashboard ──────────────────────── */}
+        {activeView === 'admin' && (
+          <div className="h-full overflow-y-auto p-3 sm:p-4 md:p-6">
+            <AdminDashboard />
+          </div>
+        )}
       </main>
 
       {/* ── Footer (sticky to bottom) ─────────────────────────────────────── */}

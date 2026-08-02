@@ -684,3 +684,30 @@ Stage Summary:
 - Fix: Restarted dev server with .zscripts/dev.sh
 - All functionality verified working after restart
 - Tab-based UI is functioning correctly across all 3 panels
+
+---
+Task ID: 3
+Agent: Main Agent
+Task: Redesign layout so MC + Operator are visible together (no tab switching)
+
+Work Log:
+- User feedback: Tab-based navigation is difficult for field operators during live events
+- Requirement: MC and Operator must be visible in the same screen simultaneously
+- Admin can remain as a separate view since it's less frequently used during events
+- Redesigned main-app.tsx from 3-tab layout to a combined MC+Operator view
+- New layout: MC sidebar (left, 380px, collapsible) + Operator panel (right, flex-1)
+- Added toggle button in header: "MC + Operator" (live view) / "Admin" (admin view)
+- MC sidebar can be collapsed/expanded with a toggle button
+- When sidebar is hidden, a small button appears on the Operator panel to re-open it
+- Verified with agent-browser: all views work correctly
+- Live view: MC sidebar with call button + queue list, Operator panel with camera controls
+- Admin view: Full-screen admin dashboard
+- Sidebar toggle: Collapsible MC sidebar with smooth animation
+- No console errors
+
+Stage Summary:
+- Changed from 3-tab layout to combined MC+Operator live view
+- MC panel is a collapsible sidebar (left) next to Operator panel (right)
+- Admin is a separate view accessed via header toggle
+- MC sidebar can be hidden/shown for more Operator space
+- Layout is clean, professional, and field-friendly
