@@ -221,7 +221,12 @@ interface SyncDbData {
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
-export function OperatorPanel() {
+export interface OperatorPanelProps {
+  isAppFullscreen?: boolean
+  onToggleAppFullscreen?: () => void
+}
+
+export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }: OperatorPanelProps) {
   const isMobile = useIsMobile()
   const { toast } = useToast()
 
@@ -1168,23 +1173,21 @@ export function OperatorPanel() {
   // ── Keyboard shortcuts (physical shutter for camera operator) ──────────────
   // Space / Enter → trigger capture (same as clicking the FOTO button)
   // Esc           → cancel a running countdown timer
-  // F             → toggle browser fullscreen (hands-free operation)
+  // F             → toggle app-wide fullscreen (hands-free operation)
   const cancelTimerRef = useRef(cancelTimer)
   useEffect(() => { cancelTimerRef.current = cancelTimer }, [cancelTimer])
-  const [isFullscreen, setIsFullscreen] = useState(false)
 
+  // Fullscreen is now managed by the parent (main-app) via props
+  const isFullscreen = isAppFullscreen
   const toggleFullscreen = useCallback(() => {
-    const docEl = document.documentElement
-    if (!document.fullscreenElement) {
-      docEl.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {})
-    } else {
-      document.exitFullscreen?.().then(() => setIsFullscreen(false)).catch(() => {})
-    }
-  }, [])
-
+    onToggleAppFullscreen?.()
+  }, [onToggleAppFullscreen])
   const exitFullscreen = useCallback(() => {
-    document.exitFullscreen?.().then(() => setIsFullscreen(false)).catch(() => {})
-  }, [])
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.().catch(() => {})
+    }
+    onToggleAppFullscreen?.()
+  }, [onToggleAppFullscreen])
 
   useEffect(() => {
     // Keyboard shortcut handler
@@ -1219,15 +1222,9 @@ export function OperatorPanel() {
       }
     }
 
-    const onFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement)
-    }
-
     window.addEventListener('keydown', onKeyDown)
-    document.addEventListener('fullscreenchange', onFullscreenChange)
     return () => {
       window.removeEventListener('keydown', onKeyDown)
-      document.removeEventListener('fullscreenchange', onFullscreenChange)
     }
   }, [toggleFullscreen])
 
@@ -2247,24 +2244,6 @@ export function OperatorPanel() {
               className="flex-1 flex items-center justify-center min-h-0 p-2 relative"
             >
               {renderCameraView()}
-
-              {/* ── Fullscreen Exit Button (top-left, visible when fullscreen) ── */}
-              {isFullscreen && (
-                <button
-                  onClick={exitFullscreen}
-                  className="absolute top-3 left-3 z-30 flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all duration-200 hover:bg-white/20"
-                  style={{
-                    backgroundColor: 'rgba(0,0,0,0.7)',
-                    color: '#ffffff',
-                    border: `1px solid ${THEME.border}`,
-                    backdropFilter: 'blur(12px)',
-                  }}
-                  title="Keluar Fullscreen"
-                >
-                  <X className="size-3.5" />
-                  <span>Keluar Fullscreen</span>
-                </button>
-              )}
 
             </div>
 

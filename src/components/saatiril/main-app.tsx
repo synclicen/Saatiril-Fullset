@@ -12,6 +12,7 @@ import {
   Wifi,
   Copy,
   Check,
+  Minimize,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -62,6 +63,7 @@ export function MainApp() {
   // ── Local state ────────────────────────────────────────────────────────────
   const [activeView, setActiveView] = useState<MainView>('live')
   const [mcSidebarOpen, setMcSidebarOpen] = useState(true)
+  const [appFullscreen, setAppFullscreen] = useState(false)
   const [serverConnected, setServerConnected] = useState(false)
   const [connectionQuality, setConnectionQuality] = useState<'good' | 'degraded' | 'disconnected'>('disconnected')
   const [lanIP, setLanIP] = useState<string>('')
@@ -82,6 +84,32 @@ export function MainApp() {
 
   // ── Derived values ─────────────────────────────────────────────────────────
   const isDualModeVal = isDualMode(currentProject?.config.mode ?? 'single')
+
+  // ── App-wide fullscreen management ──────────────────────────────────────────
+  const toggleAppFullscreen = useCallback(() => {
+    setAppFullscreen((prev) => {
+      const next = !prev
+      if (next) {
+        // Enter fullscreen: request browser fullscreen + hide chrome
+        document.documentElement.requestFullscreen?.().catch(() => {})
+      } else {
+        // Exit fullscreen
+        document.exitFullscreen?.().catch(() => {})
+      }
+      return next
+    })
+  }, [])
+
+  // Sync state if user exits browser fullscreen via Escape or browser UI
+  useEffect(() => {
+    const onFsChange = () => {
+      if (!document.fullscreenElement) {
+        setAppFullscreen(false)
+      }
+    }
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => document.removeEventListener('fullscreenchange', onFsChange)
+  }, [])
 
   // ── Detect LAN IP via WebRTC ───────────────────────────────────────────────
   const lanIPFoundRef = useRef(false)
@@ -381,160 +409,250 @@ export function MainApp() {
   // ── Main render ───────────────────────────────────────────────────────────
   return (
     <div className="flex h-dvh flex-col" style={{ backgroundColor: THEME.bg }}>
-      {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <header
-        className="shrink-0 border-b backdrop-blur-sm z-20"
-        style={{
-          backgroundColor: `${THEME.panel}ee`,
-          borderColor: THEME.border,
-        }}
-      >
-        <div className="flex items-center gap-2 px-2 py-2 sm:gap-3 sm:px-4 md:gap-4 md:px-6">
-          {/* Back button */}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleBack}
-            className="shrink-0 text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37]"
-            aria-label="Kembali ke hub"
+      {/* ── Header (hidden in fullscreen) ─────────────────────────────────────── */}
+      {!appFullscreen && (
+        <header
+          className="shrink-0 border-b backdrop-blur-sm z-20"
+          style={{
+            backgroundColor: `${THEME.panel}ee`,
+            borderColor: THEME.border,
+          }}
+        >
+          <div className="flex items-center gap-2 px-2 py-2 sm:gap-3 sm:px-4 md:gap-4 md:px-6">
+            {/* Back button */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleBack}
+              className="shrink-0 text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37]"
+              aria-label="Kembali ke hub"
+            >
+              <ArrowLeft className="size-5" />
+            </Button>
+
+            {/* Project name */}
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-sm font-bold text-white sm:text-base">
+                {currentProject?.name ?? 'Saatiril'}
+              </h1>
+            </div>
+
+            {/* View toggle: Live / Admin */}
+            <div className="flex items-center gap-1 rounded-lg p-1" style={{ backgroundColor: `${THEME.bg}88` }}>
+              <button
+                onClick={() => setActiveView('live')}
+                className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer"
+                style={{
+                  backgroundColor: activeView === 'live' ? `${THEME.gold}22` : 'transparent',
+                  color: activeView === 'live' ? THEME.gold : THEME.muted,
+                }}
+              >
+                <Megaphone className="size-3.5" />
+                <span className="hidden sm:inline">MC + Operator</span>
+                <span className="sm:hidden">Live</span>
+              </button>
+              <button
+                onClick={() => setActiveView('admin')}
+                className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer"
+                style={{
+                  backgroundColor: activeView === 'admin' ? 'rgba(167,139,250,0.15)' : 'transparent',
+                  color: activeView === 'admin' ? '#a78bfa' : THEME.muted,
+                }}
+              >
+                <LayoutDashboard className="size-3.5" />
+                <span>Admin</span>
+              </button>
+            </div>
+
+            {/* Channel selector (dual mode) */}
+            {isDualModeVal && (
+              <div className="flex items-center gap-2">
+                <span className="hidden text-[10px] font-medium uppercase tracking-wider sm:inline" style={{ color: THEME.muted }}>
+                  Jalur
+                </span>
+                <Select value={String(myChannel)} onValueChange={handleChannelSelect}>
+                  <SelectTrigger
+                    size="sm"
+                    className="h-7 gap-1 border px-2 text-xs"
+                    style={{
+                      backgroundColor: THEME.card,
+                      borderColor: THEME.border,
+                      color: THEME.muted,
+                    }}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent
+                    className="border"
+                    style={{
+                      backgroundColor: THEME.panel,
+                      borderColor: THEME.border,
+                    }}
+                  >
+                    <SelectItem
+                      value="1"
+                      className="text-xs"
+                      style={{ color: THEME.gold }}
+                    >
+                      Jalur 1 — Kiri
+                    </SelectItem>
+                    <SelectItem
+                      value="2"
+                      className="text-xs"
+                      style={{ color: THEME.cyan }}
+                    >
+                      Jalur 2 — Kanan
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* LAN IP indicator */}
+            {lanIP && (
+              <button
+                onClick={handleCopyIP}
+                className="hidden sm:flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-white/10 cursor-pointer"
+                title="Klik untuk salin alamat LAN"
+              >
+                <Wifi className="size-3" style={{ color: THEME.gold }} />
+                <span className="text-[10px] font-mono font-medium" style={{ color: THEME.gold }}>
+                  {lanIP}:{httpPort}
+                </span>
+                {copiedIP ? (
+                  <Check className="size-3" style={{ color: '#22c55e' }} />
+                ) : (
+                  <Copy className="size-3" style={{ color: THEME.muted }} />
+                )}
+              </button>
+            )}
+
+            {/* Server status with connection quality */}
+            <div className="flex shrink-0 items-center gap-1.5" title={connectionQuality === 'good' ? 'Koneksi LAN stabil' : connectionQuality === 'degraded' ? 'Koneksi tidak stabil — gunakan WiFi 5GHz atau Hotspot langsung' : 'Tidak terhubung — coba Hotspot langsung dari Admin'}>
+              <span
+                className="size-2 rounded-full"
+                style={{
+                  backgroundColor: connectionQuality === 'good' ? '#22c55e' : connectionQuality === 'degraded' ? '#f59e0b' : '#ef4444',
+                  boxShadow: connectionQuality === 'good'
+                    ? '0 0 6px #22c55e88'
+                    : connectionQuality === 'degraded'
+                      ? '0 0 6px #f59e0b88'
+                      : '0 0 6px #ef444488',
+                  animation: connectionQuality === 'degraded' ? 'pulse 2s infinite' : 'none',
+                }}
+              />
+              <span className="hidden text-[10px] font-medium sm:inline" style={{ color: connectionQuality === 'good' ? '#22c55e' : connectionQuality === 'degraded' ? '#f59e0b' : THEME.muted }}>
+                {connectionQuality === 'good' ? 'LAN' : connectionQuality === 'degraded' ? 'LAN ⚠' : 'OFFLINE'}
+              </span>
+            </div>
+            {/* WiFi congestion tip for degraded/disconnected */}
+            {connectionQuality !== 'good' && (
+              <div
+                className="hidden sm:flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px]"
+                style={{ backgroundColor: connectionQuality === 'disconnected' ? 'rgba(239,68,68,0.1)' : 'rgba(245,158,11,0.1)', color: connectionQuality === 'disconnected' ? '#f87171' : '#fbbf24' }}
+              >
+                <Wifi className="size-3" />
+                {connectionQuality === 'disconnected' ? 'Hotspot?' : '5GHz?'}
+              </div>
+            )}
+          </div>
+        </header>
+      )}
+
+      {/* ── Fullscreen floating toolbar (visible only in fullscreen) ────────── */}
+      {appFullscreen && (
+        <div
+          className="absolute top-0 left-0 right-0 z-50 flex items-center gap-2 px-3 py-2 transition-all duration-300"
+          style={{
+            backgroundColor: 'rgba(0,0,0,0.75)',
+            backdropFilter: 'blur(12px)',
+            borderBottom: `1px solid ${THEME.border}44`,
+          }}
+        >
+          {/* Exit fullscreen button */}
+          <button
+            onClick={toggleAppFullscreen}
+            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all duration-200 hover:bg-white/20"
+            style={{
+              backgroundColor: `${THEME.red}33`,
+              color: THEME.red,
+              border: `1px solid ${THEME.red}55`,
+            }}
+            title="Keluar Fullscreen (F)"
           >
-            <ArrowLeft className="size-5" />
-          </Button>
+            <Minimize className="size-3.5" />
+            <span>Keluar Fullscreen</span>
+          </button>
 
           {/* Project name */}
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-sm font-bold text-white sm:text-base">
-              {currentProject?.name ?? 'Saatiril'}
-            </h1>
-          </div>
+          <span className="text-xs font-medium truncate" style={{ color: THEME.muted }}>
+            {currentProject?.name ?? 'Saatiril'}
+          </span>
 
-          {/* View toggle: Live / Admin */}
-          <div className="flex items-center gap-1 rounded-lg p-1" style={{ backgroundColor: `${THEME.bg}88` }}>
+          <div className="flex-1" />
+
+          {/* View toggle in fullscreen */}
+          <div className="flex items-center gap-1 rounded-lg p-0.5" style={{ backgroundColor: `${THEME.bg}88` }}>
             <button
               onClick={() => setActiveView('live')}
-              className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer"
+              className="flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-all cursor-pointer"
               style={{
                 backgroundColor: activeView === 'live' ? `${THEME.gold}22` : 'transparent',
                 color: activeView === 'live' ? THEME.gold : THEME.muted,
               }}
             >
-              <Megaphone className="size-3.5" />
-              <span className="hidden sm:inline">MC + Operator</span>
-              <span className="sm:hidden">Live</span>
+              <Megaphone className="size-3" />
+              <span>Live</span>
             </button>
             <button
               onClick={() => setActiveView('admin')}
-              className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer"
+              className="flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-all cursor-pointer"
               style={{
                 backgroundColor: activeView === 'admin' ? 'rgba(167,139,250,0.15)' : 'transparent',
                 color: activeView === 'admin' ? '#a78bfa' : THEME.muted,
               }}
             >
-              <LayoutDashboard className="size-3.5" />
+              <LayoutDashboard className="size-3" />
               <span>Admin</span>
             </button>
           </div>
 
-          {/* Channel selector (dual mode) */}
-          {isDualModeVal && (
-            <div className="flex items-center gap-2">
-              <span className="hidden text-[10px] font-medium uppercase tracking-wider sm:inline" style={{ color: THEME.muted }}>
-                Jalur
-              </span>
-              <Select value={String(myChannel)} onValueChange={handleChannelSelect}>
-                <SelectTrigger
-                  size="sm"
-                  className="h-7 gap-1 border px-2 text-xs"
-                  style={{
-                    backgroundColor: THEME.card,
-                    borderColor: THEME.border,
-                    color: THEME.muted,
-                  }}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent
-                  className="border"
-                  style={{
-                    backgroundColor: THEME.panel,
-                    borderColor: THEME.border,
-                  }}
-                >
-                  <SelectItem
-                    value="1"
-                    className="text-xs"
-                    style={{ color: THEME.gold }}
-                  >
-                    Jalur 1 — Kiri
-                  </SelectItem>
-                  <SelectItem
-                    value="2"
-                    className="text-xs"
-                    style={{ color: THEME.cyan }}
-                  >
-                    Jalur 2 — Kanan
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-
-          {/* LAN IP indicator */}
-          {lanIP && (
+          {/* MC sidebar toggle in fullscreen */}
+          {activeView === 'live' && (
             <button
-              onClick={handleCopyIP}
-              className="hidden sm:flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-white/10 cursor-pointer"
-              title="Klik untuk salin alamat LAN"
+              onClick={() => setMcSidebarOpen((v) => !v)}
+              className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider cursor-pointer transition-all duration-200 hover:bg-white/10"
+              style={{
+                backgroundColor: mcSidebarOpen ? `${THEME.gold}22` : THEME.panel,
+                color: mcSidebarOpen ? THEME.gold : THEME.muted,
+                border: `1px solid ${mcSidebarOpen ? THEME.gold : THEME.border}`,
+              }}
+              title={mcSidebarOpen ? 'Sembunyikan Panel MC' : 'Tampilkan Panel MC'}
             >
-              <Wifi className="size-3" style={{ color: THEME.gold }} />
-              <span className="text-[10px] font-mono font-medium" style={{ color: THEME.gold }}>
-                {lanIP}:{httpPort}
-              </span>
-              {copiedIP ? (
-                <Check className="size-3" style={{ color: '#22c55e' }} />
-              ) : (
-                <Copy className="size-3" style={{ color: THEME.muted }} />
-              )}
+              {mcSidebarOpen ? <PanelLeftClose className="size-3.5" /> : <PanelLeftOpen className="size-3.5" />}
+              <span>MC</span>
             </button>
           )}
 
-          {/* Server status with connection quality */}
-          <div className="flex shrink-0 items-center gap-1.5" title={connectionQuality === 'good' ? 'Koneksi LAN stabil' : connectionQuality === 'degraded' ? 'Koneksi tidak stabil — gunakan WiFi 5GHz atau Hotspot langsung' : 'Tidak terhubung — coba Hotspot langsung dari Admin'}>
+          {/* Connection quality */}
+          <div className="flex items-center gap-1">
             <span
               className="size-2 rounded-full"
               style={{
                 backgroundColor: connectionQuality === 'good' ? '#22c55e' : connectionQuality === 'degraded' ? '#f59e0b' : '#ef4444',
-                boxShadow: connectionQuality === 'good'
-                  ? '0 0 6px #22c55e88'
-                  : connectionQuality === 'degraded'
-                    ? '0 0 6px #f59e0b88'
-                    : '0 0 6px #ef444488',
-                animation: connectionQuality === 'degraded' ? 'pulse 2s infinite' : 'none',
+                boxShadow: `0 0 6px ${connectionQuality === 'good' ? '#22c55e88' : connectionQuality === 'degraded' ? '#f59e0b88' : '#ef444488'}`,
               }}
             />
-            <span className="hidden text-[10px] font-medium sm:inline" style={{ color: connectionQuality === 'good' ? '#22c55e' : connectionQuality === 'degraded' ? '#f59e0b' : THEME.muted }}>
-              {connectionQuality === 'good' ? 'LAN' : connectionQuality === 'degraded' ? 'LAN ⚠' : 'OFFLINE'}
-            </span>
           </div>
-          {/* WiFi congestion tip for degraded/disconnected */}
-          {connectionQuality !== 'good' && (
-            <div
-              className="hidden sm:flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px]"
-              style={{ backgroundColor: connectionQuality === 'disconnected' ? 'rgba(239,68,68,0.1)' : 'rgba(245,158,11,0.1)', color: connectionQuality === 'disconnected' ? '#f87171' : '#fbbf24' }}
-            >
-              <Wifi className="size-3" />
-              {connectionQuality === 'disconnected' ? 'Hotspot?' : '5GHz?'}
-            </div>
-          )}
         </div>
-      </header>
+      )}
 
       {/* ── Main Content Area ────────────────────────────────────────────────── */}
-      <main className="flex-1 min-h-0 overflow-hidden">
+      <main className={`flex-1 min-h-0 overflow-hidden ${appFullscreen ? 'pt-0' : ''}`}>
         {/* ── LIVE VIEW: MC sidebar + Operator panel side by side ──────────── */}
         {activeView === 'live' && (
           <div className="flex h-full">
-            {/* MC Sidebar (left) */}
+            {/* MC Sidebar (left) — hidden in fullscreen when sidebar is closed */}
             <div
               className="shrink-0 flex flex-col border-r transition-all duration-300 ease-in-out"
               style={{
@@ -573,8 +691,8 @@ export function MainApp() {
 
             {/* Operator Panel (right, flex-1) */}
             <div className="flex-1 min-h-0 relative">
-              {/* Toggle MC sidebar button (when sidebar is closed) */}
-              {!mcSidebarOpen && (
+              {/* Toggle MC sidebar button (when sidebar is closed, not fullscreen) */}
+              {!mcSidebarOpen && !appFullscreen && (
                 <Button
                   variant="ghost"
                   size="icon"
@@ -590,7 +708,10 @@ export function MainApp() {
                   <PanelLeftOpen className="size-4" />
                 </Button>
               )}
-              <OperatorPanel />
+              <OperatorPanel
+                isAppFullscreen={appFullscreen}
+                onToggleAppFullscreen={toggleAppFullscreen}
+              />
             </div>
           </div>
         )}
@@ -603,18 +724,20 @@ export function MainApp() {
         )}
       </main>
 
-      {/* ── Footer (sticky to bottom) ─────────────────────────────────────── */}
-      <footer
-        className="shrink-0 border-t"
-        style={{
-          backgroundColor: `${THEME.panel}88`,
-          borderColor: `${THEME.border}44`,
-        }}
-      >
-        <div className="space-y-0.5 px-4 py-1.5 sm:px-6 sm:py-2">
-          <SaatirilFooterLines />
-        </div>
-      </footer>
+      {/* ── Footer (hidden in fullscreen) ──────────────────────────────────── */}
+      {!appFullscreen && (
+        <footer
+          className="shrink-0 border-t"
+          style={{
+            backgroundColor: `${THEME.panel}88`,
+            borderColor: `${THEME.border}44`,
+          }}
+        >
+          <div className="space-y-0.5 px-4 py-1.5 sm:px-6 sm:py-2">
+            <SaatirilFooterLines />
+          </div>
+        </footer>
+      )}
     </div>
   )
 }
