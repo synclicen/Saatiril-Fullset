@@ -850,3 +850,26 @@ Stage Summary:
 - renderToolbarButton function moved before mobile layout to fix hoisting issue
 - Camera view is now clear without any overlay covering it
 - Files changed: src/components/saatiril/operator-panel.tsx
+
+---
+Task ID: 4
+Agent: main
+Task: Redesign fullscreen to be app-wide with floating toolbar
+
+Work Log:
+- Analyzed user complaint: fullscreen only worked on operator panel, couldn't navigate back or switch views
+- Moved fullscreen state from operator-panel (internal useState) to main-app level (props-based)
+- Added `isAppFullscreen` and `onToggleAppFullscreen` props to OperatorPanel
+- In main-app: when fullscreen, hide header, footer; show floating toolbar at top
+- Floating toolbar contains: "Keluar Fullscreen" button, LIVE/ADMIN toggle, MC panel toggle, connection quality
+- Browser fullscreen (document.documentElement.requestFullscreen) syncs with app state
+- Added fullscreenchange event listener to sync state when user exits via Escape
+- Removed internal fullscreen exit button from operator panel camera zone (now handled by main-app toolbar)
+- Verified: enter fullscreen from operator panel, exit from floating toolbar, navigate between views
+- Build passes, lint passes, committed and pushed
+
+Stage Summary:
+- Fullscreen is now APP-WIDE, not just operator panel
+- When fullscreen: header & footer hidden, floating toolbar with all controls visible at top
+- User can: exit fullscreen, switch LIVE/ADMIN, toggle MC panel — all from floating toolbar
+- Commit: 5e1ad5f "feat: app-wide fullscreen with floating toolbar (exit, LIVE/ADMIN, MC toggle)"
