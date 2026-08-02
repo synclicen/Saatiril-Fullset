@@ -6,12 +6,10 @@ import {
   Camera,
   LayoutDashboard,
   Megaphone,
-  Radio,
   Loader2,
   Wifi,
   Copy,
   Check,
-  Lock,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -23,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useSaatirilStore, type Project, type CameraMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync, preservePhotoHistoryOnSync, isDualMode, isPhotoshootMode } from '@/store/use-saatiril-store'
 import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth, setSessionPassword, clearSessionPassword, reidentifyWithPassword, isSocketAuthenticated, isServerPasswordRequired, resendSessionPasswordHash, getSocketAuthState } from '@/lib/socket'
 
@@ -44,6 +43,9 @@ const THEME = {
   red: '#ef4444',
 } as const
 
+// ─── Tab type ─────────────────────────────────────────────────────────────────
+type PanelTab = 'operator' | 'mc' | 'admin'
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export function MainApp() {
   // ── License gate ─────────────────────────────────────────────────────────
@@ -58,6 +60,7 @@ export function MainApp() {
   const loadProjectsFromStorage = useSaatirilStore((s) => s.loadProjectsFromStorage)
 
   // ── Local state ────────────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<PanelTab>('operator')
   const [serverConnected, setServerConnected] = useState(false)
   const [connectionQuality, setConnectionQuality] = useState<'good' | 'degraded' | 'disconnected'>('disconnected')
   const [lanIP, setLanIP] = useState<string>('')
@@ -414,19 +417,6 @@ export function MainApp() {
             </h1>
           </div>
 
-          {/* Mode badge — unified admin */}
-          <Badge
-            className="shrink-0 gap-1 border-none px-2 py-1 text-[9px] font-semibold uppercase tracking-wider sm:text-[10px] md:text-xs md:gap-1.5 md:px-2.5"
-            style={{
-              backgroundColor: `${THEME.gold}22`,
-              color: THEME.gold,
-            }}
-          >
-            <LayoutDashboard className="size-3" />
-            <span className="hidden md:inline">Admin Control Center</span>
-            <span className="md:hidden">Admin</span>
-          </Badge>
-
           {/* Channel selector (dual mode) */}
           {isDualModeVal && (
             <div className="flex items-center gap-2">
@@ -471,7 +461,7 @@ export function MainApp() {
             </div>
           )}
 
-          {/* LAN IP indicator — hidden on mobile to save space */}
+          {/* LAN IP indicator */}
           {lanIP && (
             <button
               onClick={handleCopyIP}
@@ -521,50 +511,77 @@ export function MainApp() {
         </div>
       </header>
 
-      {/* ── Main Content Area — 3-panel unified layout ──────────────────────── */}
+      {/* ── Tab Navigation Bar ───────────────────────────────────────────────── */}
+      <nav
+        className="shrink-0 border-b z-10"
+        style={{
+          backgroundColor: THEME.panel,
+          borderColor: THEME.border,
+        }}
+      >
+        <Tabs
+          value={activeTab}
+          onValueChange={(v) => setActiveTab(v as PanelTab)}
+          className="flex flex-col gap-0"
+        >
+          <TabsList
+            className="inline-flex h-11 w-full items-center justify-center gap-1 rounded-none border-0 bg-transparent p-1 sm:gap-2"
+          >
+            <TabsTrigger
+              value="operator"
+              className="flex-1 h-9 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all data-[state=active]:shadow-md sm:text-sm"
+              style={{
+                color: activeTab === 'operator' ? THEME.cyan : THEME.muted,
+                backgroundColor: activeTab === 'operator' ? `${THEME.cyan}18` : 'transparent',
+              }}
+            >
+              <Camera className="size-4" />
+              <span>Operator</span>
+            </TabsTrigger>
+            <TabsTrigger
+              value="mc"
+              className="flex-1 h-9 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all data-[state=active]:shadow-md sm:text-sm"
+              style={{
+                color: activeTab === 'mc' ? THEME.gold : THEME.muted,
+                backgroundColor: activeTab === 'mc' ? `${THEME.gold}18` : 'transparent',
+              }}
+            >
+              <Megaphone className="size-4" />
+              <span>MC</span>
+            </TabsTrigger>
+            <TabsTrigger
+              value="admin"
+              className="flex-1 h-9 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all data-[state=active]:shadow-md sm:text-sm"
+              style={{
+                color: activeTab === 'admin' ? '#a78bfa' : THEME.muted,
+                backgroundColor: activeTab === 'admin' ? 'rgba(167,139,250,0.1)' : 'transparent',
+              }}
+            >
+              <LayoutDashboard className="size-4" />
+              <span>Admin</span>
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </nav>
+
+      {/* ── Main Content Area — Full-screen tab content ──────────────────────── */}
       <main className="flex-1 min-h-0 overflow-hidden">
-        <div className="flex h-full flex-col lg:flex-row gap-0">
-          {/* ── Left Column: Admin Dashboard + MC Panel ─────────────────────── */}
-          <div className="flex flex-col lg:w-[40%] h-full border-r-0 lg:border-r" style={{ borderColor: THEME.border }}>
-            {/* Admin Dashboard (compact/summary) */}
-            <div className="flex-1 min-h-0 overflow-y-auto border-b" style={{ borderColor: `${THEME.border}66` }}>
-              <div className="p-2 sm:p-3">
-                <div className="flex items-center gap-2 mb-2 px-1">
-                  <LayoutDashboard className="size-4" style={{ color: THEME.gold }} />
-                  <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: THEME.gold }}>
-                    Admin Dashboard
-                  </h2>
-                </div>
-                <AdminDashboard />
-              </div>
-            </div>
-
-            {/* MC Panel (compact) */}
-            <div className="flex-1 min-h-0 overflow-y-auto">
-              <div className="p-2 sm:p-3">
-                <div className="flex items-center gap-2 mb-2 px-1">
-                  <Megaphone className="size-4" style={{ color: THEME.gold }} />
-                  <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: THEME.gold }}>
-                    Panel MC
-                  </h2>
-                </div>
-                <McPanel />
-              </div>
-            </div>
-          </div>
-
-          {/* ── Right Column: Operator Panel (full width) ───────────────────── */}
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <div className="p-2 sm:p-3">
-              <div className="flex items-center gap-2 mb-2 px-1">
-                <Camera className="size-4" style={{ color: THEME.cyan }} />
-                <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: THEME.cyan }}>
-                  Panel Operator
-                </h2>
-              </div>
+        <div className="h-full overflow-y-auto" style={{ backgroundColor: THEME.bg }}>
+          {activeTab === 'operator' && (
+            <div className="p-3 sm:p-4 md:p-6">
               <OperatorPanel />
             </div>
-          </div>
+          )}
+          {activeTab === 'mc' && (
+            <div className="p-3 sm:p-4 md:p-6">
+              <McPanel />
+            </div>
+          )}
+          {activeTab === 'admin' && (
+            <div className="p-3 sm:p-4 md:p-6">
+              <AdminDashboard />
+            </div>
+          )}
         </div>
       </main>
 

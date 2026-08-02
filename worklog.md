@@ -635,3 +635,29 @@ Stage Summary:
 - Responsive layout: side-by-side on desktop, stacked on mobile
 - Lint passes with no errors
 - Pre-existing TS error in operator-panel.tsx line 596 is unrelated to this change
+
+---
+Task ID: 1
+Agent: Main Agent
+Task: Redesign main-app.tsx from cramped split-view to clean tab-based UI
+
+Work Log:
+- Analyzed user's uploaded screenshot showing cramped 3-panel split view layout
+- Read current main-app.tsx, admin-dashboard.tsx, mc-panel.tsx, operator-panel.tsx, and store
+- Identified the root issue: Admin Dashboard + MC Panel + Operator Panel all crammed into split view
+- Designed tab-based UI with 3 tabs: Operator, MC, Admin
+- Each tab gets full screen space instead of cramped split view
+- Used shadcn/ui Tabs component for navigation
+- Removed "monitor mode" concept (no separate monitor mode in CameraMode)
+- Tested with agent-browser: all 3 tabs work correctly
+- Verified desktop view (1280x800) and mobile view (375x812)
+- No console errors related to our changes
+- Lint passes cleanly
+
+Stage Summary:
+- Replaced cramped split-view layout with clean tab-based interface
+- Each panel (Operator, MC, Admin) now gets full screen space
+- Tab bar is clearly visible with icons and color-coded active states
+- Mobile responsive: tabs are tappable and content is readable
+- The "monitor mode" was not a separate mode in code - it was the previous split-view behavior
+- All functionality preserved: socket events, channel selection, LAN IP, connection quality
