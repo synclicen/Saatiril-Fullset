@@ -803,3 +803,29 @@ Stage Summary:
 - Target info row moved from sidebar to compact row below capture button
 - Queue panel now visible below capture button (maxHeight: 30vh, scrollable)
 - File changed: src/components/saatiril/operator-panel.tsx
+
+---
+Task ID: 1
+Agent: main
+Task: Redesign operator panel with resizable panels - camera center, queue/controls on right
+
+Work Log:
+- Read current operator-panel.tsx desktop layout (vertical: camera top, controls bottom)
+- Added import for ResizablePanelGroup, ResizablePanel, ResizableHandle from @/components/ui/resizable
+- Replaced desktop layout with horizontal ResizablePanelGroup
+- Left panel (65% default, 40-85% range): Camera zone + floating toolbar + capture button
+- Right panel (35% default, 15-60% range): Target info + camera selector + toggleable panels (shutter/grid/queue)
+- ResizableHandle with withHandle prop and themed bg-[#533485]/50 styling
+- Camera zone retains fullscreen exit button (top-left) and floating toolbar (top-right)
+- Capture button stays below camera view inside left panel
+- Right panel has target info row, camera selector dropdown, and scrollable panels area
+- Queue panel uses flex-1 min-h-0 to fill remaining space when visible
+- Mobile layout completely unchanged
+- ESLint passes cleanly
+
+Stage Summary:
+- Desktop layout changed from vertical stack to horizontal resizable panels
+- Camera view is now centered/left with more space, controls/queue on right side
+- Users can drag the ResizableHandle to adjust panel sizes freely
+- All existing functionality preserved (camera view, capture button, toolbar, toggle panels)
+- Files changed: src/components/saatiril/operator-panel.tsx

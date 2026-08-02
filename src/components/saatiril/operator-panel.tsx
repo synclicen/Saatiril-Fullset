@@ -63,6 +63,7 @@ import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge
 import { useAIDetection, type AIMomentEvent } from '@/hooks/use-ai-detection'
 import { usePalmDetection } from '@/hooks/use-palm-detection'
 import { useToast } from '@/hooks/use-toast'
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable'
 
 // ─── Theme tokens ───────────────────────────────────────────────────────────
 const THEME = {
@@ -2235,208 +2236,223 @@ export function OperatorPanel() {
   // ── DESKTOP LAYOUT ──────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ backgroundColor: THEME.bg }}>
+      {/* Main resizable area */}
+      <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0">
+        {/* LEFT: Camera zone + capture button */}
+        <ResizablePanel defaultSize={65} minSize={40} maxSize={85}>
+          <div className="flex flex-col h-full">
+            {/* Camera zone */}
+            <div
+              ref={cameraZoneRef}
+              className="flex-1 flex items-center justify-center min-h-0 p-2 relative"
+            >
+              {renderCameraView()}
 
-      {/* CAMERA ZONE + Toolbar */}
-      <div
-        ref={cameraZoneRef}
-        className="flex-1 flex items-center justify-center min-h-0 p-2 relative"
-      >
-        {renderCameraView()}
-
-        {/* ── Fullscreen Exit Button (top-left, visible when fullscreen) ── */}
-        {isFullscreen && (
-          <button
-            onClick={exitFullscreen}
-            className="absolute top-3 left-3 z-30 flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all duration-200 hover:bg-white/20"
-            style={{
-              backgroundColor: 'rgba(0,0,0,0.7)',
-              color: '#ffffff',
-              border: `1px solid ${THEME.border}`,
-              backdropFilter: 'blur(12px)',
-            }}
-            title="Keluar Fullscreen"
-          >
-            <X className="size-3.5" />
-            <span>Keluar Fullscreen</span>
-          </button>
-        )}
-
-        {/* ── Floating Toolbar (top-right of camera view) ──────────────── */}
-        <div
-          className="absolute top-3 right-3 z-20 flex items-center gap-1.5 rounded-xl px-2 py-1.5"
-          style={{
-            backgroundColor: `${THEME.panel}dd`,
-            border: `1px solid ${THEME.border}`,
-            backdropFilter: 'blur(12px)',
-          }}
-        >
-          {renderToolbarButton(
-            <Camera className="size-3.5" />,
-            'Shutter',
-            showShutterPanel,
-            () => setShowShutterPanel((v) => !v),
-            shutterMode !== 'manual' ? (
-              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}55` }}>
-                {shutterMode === 'ai' ? 'AI' : getTimerDuration(shutterMode) + 's'}
-              </span>
-            ) : undefined,
-          )}
-          {renderToolbarButton(
-            <Grid3x3 className="size-3.5" />,
-            'Grid',
-            showGridlinePanel,
-            () => setShowGridlinePanel((v) => !v),
-            gridlineEnabled ? (
-              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}55` }}>
-                {gridlineType === 'thirds' ? '⅓' : gridlineType === 'quarters' ? '¼' : gridlineType === 'crosshair' ? '+' : '✕'}
-              </span>
-            ) : undefined,
-          )}
-          {renderToolbarButton(
-            <List className="size-3.5" />,
-            'Antrean',
-            showQueuePanel,
-            () => setShowQueuePanel((v) => !v),
-            remainingCount > 0 ? (
-              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{
-                backgroundColor: remainingCount > 10 ? `${THEME.red}33` : `${THEME.gold}33`,
-                color: remainingCount > 10 ? THEME.red : THEME.gold,
-                border: `1px solid ${remainingCount > 10 ? `${THEME.red}55` : `${THEME.gold}55`}`,
-              }}>
-                {remainingCount}
-              </span>
-            ) : undefined,
-          )}
-          {renderToolbarButton(
-            isFullscreen ? <Minimize className="size-3.5" /> : <Maximize className="size-3.5" />,
-            isFullscreen ? 'Keluar FS' : 'Fullscreen',
-            isFullscreen,
-            toggleFullscreen,
-          )}
-        </div>
-      </div>
-
-      {/* Capture Button (centered, directly below camera view) */}
-      <div
-        className="shrink-0 w-full px-4 py-3 border-t"
-        style={{
-          backgroundColor: `${THEME.panel}ee`,
-          borderColor: THEME.border,
-          backdropFilter: 'blur(12px)',
-        }}
-      >
-        <div className="mx-auto w-full max-w-xl">
-          {renderCaptureButton('xl')}
-        </div>
-      </div>
-
-      {/* Target Info + Toggleable Panels (below capture button) */}
-      <div
-        className="shrink-0 border-t overflow-y-auto"
-        style={{
-          backgroundColor: `${THEME.panel}ee`,
-          borderColor: THEME.border,
-          backdropFilter: 'blur(12px)',
-          maxHeight: '40vh',
-        }}
-      >
-        {/* Target Info Row — compact, always visible */}
-        <div className="flex items-center gap-2 px-4 py-2">
-          <div
-            className="shrink-0 flex items-center justify-center w-8 h-8 rounded-full border-2"
-            style={{
-              backgroundColor: THEME.panel,
-              borderColor: hasActiveTarget ? THEME.gold : THEME.border,
-            }}
-          >
-            <User className="size-3.5" style={{ color: hasActiveTarget ? THEME.gold : THEME.border }} />
-          </div>
-
-          <div className="flex-1 min-w-0">
-            {hasActiveTarget ? (
-              <div className="flex items-center gap-2">
-                <div className="min-w-0">
-                  <p className="text-sm font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
-                    {opCurrentTarget.nama}
-                  </p>
-                  <p className="text-[10px] font-mono" style={{ color: THEME.muted }}>
-                    {opCurrentTarget.nim}
-                  </p>
-                </div>
-                <Badge
-                  className={`text-[9px] px-1.5 py-0.5 shrink-0 ${hasActiveTarget && !sending ? 'animate-pulse' : ''}`}
+              {/* ── Fullscreen Exit Button (top-left, visible when fullscreen) ── */}
+              {isFullscreen && (
+                <button
+                  onClick={exitFullscreen}
+                  className="absolute top-3 left-3 z-30 flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all duration-200 hover:bg-white/20"
                   style={{
-                    backgroundColor: capturePhase === 'ready-1' ? `${THEME.gold}33` : capturePhase === 'ready-2' ? '#22c55e33' : capturePhase === 'sending' ? `${THEME.border}66` : `${THEME.border}44`,
-                    color: capturePhase === 'ready-1' ? THEME.gold : capturePhase === 'ready-2' ? '#4ade80' : THEME.muted,
-                    border: `1px solid ${capturePhase === 'ready-1' ? `${THEME.gold}66` : capturePhase === 'ready-2' ? '#22c55e66' : THEME.border}`,
+                    backgroundColor: 'rgba(0,0,0,0.7)',
+                    color: '#ffffff',
+                    border: `1px solid ${THEME.border}`,
+                    backdropFilter: 'blur(12px)',
                   }}
+                  title="Keluar Fullscreen"
                 >
-                  {capturePhase === 'sending' && <Loader2 className="size-2.5 mr-0.5 animate-spin" />}
-                  {capturePhase === 'ready-1' && <Camera className="size-2.5 mr-0.5" />}
-                  {capturePhase === 'ready-2' && <CheckCircle2 className="size-2.5 mr-0.5" />}
-                  {capturePhase === 'standby' && <Clock className="size-2.5 mr-0.5" />}
-                  {progressText}
-                </Badge>
-              </div>
-            ) : (
-              <p className="text-xs italic" style={{ color: THEME.muted }}>
-                Menunggu panggilan MC...
-              </p>
-            )}
-          </div>
-
-          {/* Camera selector dropdown */}
-          <Select value={selectedDeviceId} onValueChange={setSelectedDeviceId}>
-            <SelectTrigger className="w-48 text-[11px] h-7" style={{ backgroundColor: THEME.panel, borderColor: THEME.border, color: THEME.muted }}>
-              <Video className="size-3 mr-1 shrink-0" style={{ color: THEME.gold }} />
-              <SelectValue placeholder="Pilih Kamera" />
-            </SelectTrigger>
-            <SelectContent style={{ backgroundColor: THEME.panel, borderColor: THEME.border }}>
-              {videoDevices.length === 0 ? (
-                <SelectItem value="__none" disabled>Tidak ada kamera</SelectItem>
-              ) : (
-                videoDevices.map((dev) => (
-                  <SelectItem key={dev.deviceId} value={dev.deviceId} style={{ color: '#ffffff' }}>{dev.label}</SelectItem>
-                ))
+                  <X className="size-3.5" />
+                  <span>Keluar Fullscreen</span>
+                </button>
               )}
-            </SelectContent>
-          </Select>
-        </div>
 
-        {/* Shutter Mode Panel — toggleable */}
-        {showShutterPanel && (
-          <div className="px-4 py-2 border-t" style={{ borderColor: THEME.border }}>
-            <Card className="border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: THEME.gold }}>
-              <CardContent className="p-2.5">
-                {renderShutterModeSelector(true)}
-              </CardContent>
-            </Card>
-          </div>
-        )}
+              {/* ── Floating Toolbar (top-right of camera view) ──────────────── */}
+              <div
+                className="absolute top-3 right-3 z-20 flex items-center gap-1.5 rounded-xl px-2 py-1.5"
+                style={{
+                  backgroundColor: `${THEME.panel}dd`,
+                  border: `1px solid ${THEME.border}`,
+                  backdropFilter: 'blur(12px)',
+                }}
+              >
+                {renderToolbarButton(
+                  <Camera className="size-3.5" />,
+                  'Shutter',
+                  showShutterPanel,
+                  () => setShowShutterPanel((v) => !v),
+                  shutterMode !== 'manual' ? (
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}55` }}>
+                      {shutterMode === 'ai' ? 'AI' : getTimerDuration(shutterMode) + 's'}
+                    </span>
+                  ) : undefined,
+                )}
+                {renderToolbarButton(
+                  <Grid3x3 className="size-3.5" />,
+                  'Grid',
+                  showGridlinePanel,
+                  () => setShowGridlinePanel((v) => !v),
+                  gridlineEnabled ? (
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}55` }}>
+                      {gridlineType === 'thirds' ? '⅓' : gridlineType === 'quarters' ? '¼' : gridlineType === 'crosshair' ? '+' : '✕'}
+                    </span>
+                  ) : undefined,
+                )}
+                {renderToolbarButton(
+                  <List className="size-3.5" />,
+                  'Antrean',
+                  showQueuePanel,
+                  () => setShowQueuePanel((v) => !v),
+                  remainingCount > 0 ? (
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{
+                      backgroundColor: remainingCount > 10 ? `${THEME.red}33` : `${THEME.gold}33`,
+                      color: remainingCount > 10 ? THEME.red : THEME.gold,
+                      border: `1px solid ${remainingCount > 10 ? `${THEME.red}55` : `${THEME.gold}55`}`,
+                    }}>
+                      {remainingCount}
+                    </span>
+                  ) : undefined,
+                )}
+                {renderToolbarButton(
+                  isFullscreen ? <Minimize className="size-3.5" /> : <Maximize className="size-3.5" />,
+                  isFullscreen ? 'Keluar FS' : 'Fullscreen',
+                  isFullscreen,
+                  toggleFullscreen,
+                )}
+              </div>
+            </div>
 
-        {/* Gridline Settings Panel — toggleable */}
-        {showGridlinePanel && (
-          <div className="px-4 py-2 border-t" style={{ borderColor: THEME.border }}>
-            <Card className="border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: THEME.gold }}>
-              <CardContent className="p-2.5">
-                {renderGridlineSettings(true)}
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {/* Queue Panel — toggleable */}
-        {showQueuePanel && (
-          <div className="px-4 py-2 border-t" style={{ borderColor: THEME.border }}>
-            {/* Operator search (photoshoot only) */}
-            {renderOpSearch(true)}
-            {/* Queue list in compact mode */}
-            <div style={{ maxHeight: '30vh', overflowY: 'auto' }}>
-              {renderQueueList(true)}
+            {/* Capture Button (full width of left panel) */}
+            <div
+              className="shrink-0 w-full px-4 py-3 border-t"
+              style={{
+                backgroundColor: `${THEME.panel}ee`,
+                borderColor: THEME.border,
+                backdropFilter: 'blur(12px)',
+              }}
+            >
+              <div className="mx-auto w-full max-w-xl">
+                {renderCaptureButton('xl')}
+              </div>
             </div>
           </div>
-        )}
-      </div>
+        </ResizablePanel>
+
+        {/* Resizable handle */}
+        <ResizableHandle
+          withHandle
+          className="w-1.5 hover:w-2 transition-all duration-150"
+          style={{
+            backgroundColor: THEME.border,
+          }}
+        />
+
+        {/* RIGHT: Target info + toggleable panels */}
+        <ResizablePanel defaultSize={35} minSize={15} maxSize={60}>
+          <div className="flex flex-col h-full overflow-hidden" style={{ backgroundColor: THEME.panel }}>
+            {/* Target Info Row — compact, always visible */}
+            <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b" style={{ borderColor: THEME.border }}>
+              <div
+                className="shrink-0 flex items-center justify-center w-8 h-8 rounded-full border-2"
+                style={{
+                  backgroundColor: THEME.bg,
+                  borderColor: hasActiveTarget ? THEME.gold : THEME.border,
+                }}
+              >
+                <User className="size-3.5" style={{ color: hasActiveTarget ? THEME.gold : THEME.border }} />
+              </div>
+
+              <div className="flex-1 min-w-0">
+                {hasActiveTarget ? (
+                  <div className="flex items-center gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
+                        {opCurrentTarget.nama}
+                      </p>
+                      <p className="text-[10px] font-mono" style={{ color: THEME.muted }}>
+                        {opCurrentTarget.nim}
+                      </p>
+                    </div>
+                    <Badge
+                      className={`text-[9px] px-1.5 py-0.5 shrink-0 ${hasActiveTarget && !sending ? 'animate-pulse' : ''}`}
+                      style={{
+                        backgroundColor: capturePhase === 'ready-1' ? `${THEME.gold}33` : capturePhase === 'ready-2' ? '#22c55e33' : capturePhase === 'sending' ? `${THEME.border}66` : `${THEME.border}44`,
+                        color: capturePhase === 'ready-1' ? THEME.gold : capturePhase === 'ready-2' ? '#4ade80' : THEME.muted,
+                        border: `1px solid ${capturePhase === 'ready-1' ? `${THEME.gold}66` : capturePhase === 'ready-2' ? '#22c55e66' : THEME.border}`,
+                      }}
+                    >
+                      {capturePhase === 'sending' && <Loader2 className="size-2.5 mr-0.5 animate-spin" />}
+                      {capturePhase === 'ready-1' && <Camera className="size-2.5 mr-0.5" />}
+                      {capturePhase === 'ready-2' && <CheckCircle2 className="size-2.5 mr-0.5" />}
+                      {capturePhase === 'standby' && <Clock className="size-2.5 mr-0.5" />}
+                      {progressText}
+                    </Badge>
+                  </div>
+                ) : (
+                  <p className="text-xs italic" style={{ color: THEME.muted }}>
+                    Menunggu panggilan MC...
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Camera selector dropdown */}
+            <div className="shrink-0 px-3 py-2 border-b" style={{ borderColor: THEME.border }}>
+              <Select value={selectedDeviceId} onValueChange={setSelectedDeviceId}>
+                <SelectTrigger className="w-full text-[11px] h-7" style={{ backgroundColor: THEME.bg, borderColor: THEME.border, color: THEME.muted }}>
+                  <Video className="size-3 mr-1 shrink-0" style={{ color: THEME.gold }} />
+                  <SelectValue placeholder="Pilih Kamera" />
+                </SelectTrigger>
+                <SelectContent style={{ backgroundColor: THEME.panel, borderColor: THEME.border }}>
+                  {videoDevices.length === 0 ? (
+                    <SelectItem value="__none" disabled>Tidak ada kamera</SelectItem>
+                  ) : (
+                    videoDevices.map((dev) => (
+                      <SelectItem key={dev.deviceId} value={dev.deviceId} style={{ color: '#ffffff' }}>{dev.label}</SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Scrollable panels area */}
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              {/* Shutter Mode Panel — toggleable */}
+              {showShutterPanel && (
+                <div className="px-3 py-2 border-b" style={{ borderColor: THEME.border }}>
+                  <Card className="border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: THEME.gold }}>
+                    <CardContent className="p-2.5">
+                      {renderShutterModeSelector(true)}
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {/* Gridline Settings Panel — toggleable */}
+              {showGridlinePanel && (
+                <div className="px-3 py-2 border-b" style={{ borderColor: THEME.border }}>
+                  <Card className="border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: THEME.gold }}>
+                    <CardContent className="p-2.5">
+                      {renderGridlineSettings(true)}
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {/* Queue Panel — toggleable, fills remaining space */}
+              {showQueuePanel && (
+                <div className="flex flex-col px-3 py-2" style={{ borderColor: THEME.border }}>
+                  {/* Operator search (photoshoot only) */}
+                  {renderOpSearch(true)}
+                  {/* Queue list in compact mode */}
+                  <div className="flex-1 min-h-0">
+                    {renderQueueList(true)}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   )
 }
