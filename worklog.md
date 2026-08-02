@@ -593,3 +593,45 @@ Stage Summary:
   - Server-initiated disconnect now auto-reconnects after 2s
   - Larger event queue (100 vs 50) and more retries (5 vs 3) for reliability
   - RECONNECTING state available for UI feedback
+
+---
+Task ID: 8
+Agent: main
+Task: Redesign main-app.tsx to create a unified all-in-one panel combining Admin, MC, and Operator panels
+
+Work Log:
+- Read and analyzed all 4 files: main-app.tsx, operator-panel.tsx, mc-panel.tsx, admin-dashboard.tsx
+- Removed `readOnly` prop from OperatorPanel component (operator-panel.tsx):
+  - Removed `readOnly` from component interface/props
+  - Removed "MODE MONITOR" button display (lines 1796-1801)
+  - Removed `if (readOnly) return` guard in keyboard shortcut handler
+  - Removed `readOnly` from useEffect dependency array
+  - Removed `{!readOnly && ...}` guards around shutter mode selector and palm trigger toggle
+  - Removed unused `Monitor` icon import
+- Removed `readOnly` prop from McPanel component (mc-panel.tsx):
+  - Removed `readOnly` from component interface/props
+  - Removed "MONITOR — HANYA LIHAT" button display (lines 457-472)
+  - Removed unused `Monitor` icon import
+- Redesigned main-app.tsx for unified all-in-one panel:
+  - Removed tab switching logic (TABS config, effectiveTab, handleTabChange)
+  - Removed tab navigation bar from header
+  - Removed `AppTab` and `Role` imports (no longer needed)
+  - Set `myRole` to always be 'admin' (unified view)
+  - Removed non-admin password prompt screens (not needed for admin-only view)
+  - Removed non-admin auth state sync and periodic auth checks
+  - Created 3-panel layout: Left column (Admin Dashboard + MC Panel) and Right column (Operator Panel)
+  - Left column ~40% width, right column ~60% width on desktop (lg:flex-row)
+  - Mobile: stacks vertically (flex-col)
+  - Each panel section has a small header with icon and title
+  - Channel selector moved to header for dual mode
+  - Footer always visible (removed conditional hiding for non-admin)
+  - Header simplified: always shows back button, admin badge, no role-specific logic
+  - All socket.io logic preserved (SYNC_DB, REQUEST_STATE, REQUEST_FRAME, auth handlers)
+  - All LAN IP detection and connection quality monitoring preserved
+
+Stage Summary:
+- Operator panel and MC panel are now always fully interactive (no MODE MONITOR)
+- Unified admin view shows all 3 panels simultaneously
+- Responsive layout: side-by-side on desktop, stacked on mobile
+- Lint passes with no errors
+- Pre-existing TS error in operator-panel.tsx line 596 is unrelated to this change

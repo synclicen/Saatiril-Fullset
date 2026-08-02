@@ -24,7 +24,7 @@ import {
   CheckCircle2,
   Clock,
   Loader2,
-  Monitor,
+
   Search,
   User,
   Video,
@@ -217,7 +217,7 @@ interface SyncDbData {
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
-export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
+export function OperatorPanel() {
   const isMobile = useIsMobile()
   const { toast } = useToast()
 
@@ -1165,7 +1165,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const [isFullscreen, setIsFullscreen] = useState(false)
 
   useEffect(() => {
-    if (readOnly) return // Monitor mode: no physical shutter
+    // Keyboard shortcut handler
 
     const isTypingTarget = (el: EventTarget | null): boolean => {
       if (!(el instanceof HTMLElement)) return false
@@ -1216,7 +1216,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       window.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('fullscreenchange', onFullscreenChange)
     }
-  }, [readOnly])
+  }, [])
 
   // ── Progress badge text ──────────────────────────────────────────────────
   const progressText = useMemo(() => {
@@ -1309,7 +1309,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           })}
         </div>
         {/* Row 2: Palm trigger toggle (separate row for clarity — prevents overlap) */}
-        {!readOnly && effectiveShutterMode !== 'ai' && (
+        {effectiveShutterMode !== 'ai' && (
           <button
             onClick={() => {
               setPalmTriggerEnabled((v) => !v)
@@ -1793,14 +1793,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     // Icon size scales with button size so the shutter is easy to hit
     const iconCls = size === 'xl' ? 'size-6 sm:size-7' : 'size-4'
 
-    if (readOnly) {
-      return (
-        <Button disabled className={`${btnClass} cursor-not-allowed`} style={{ backgroundColor: THEME.panel, color: THEME.muted, border: `2px solid ${THEME.border}`, opacity: 0.6 }}>
-          <Monitor className={`${iconCls} mr-2`} />MODE MONITOR
-        </Button>
-      )
-    }
-
     if (capturePhase === 'standby') {
       return (
         <Button disabled className={`${btnClass} cursor-not-allowed`} style={{ backgroundColor: THEME.panel, color: THEME.muted, border: `2px solid ${THEME.border}`, opacity: 0.6 }}>
@@ -2256,13 +2248,11 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         </Card>
 
         {/* Shutter Mode Selector */}
-        {!readOnly && (
-          <Card className="shrink-0 border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: THEME.border }}>
-            <CardContent className="p-2.5">
-              {renderShutterModeSelector(false)}
-            </CardContent>
-          </Card>
-        )}
+        <Card className="shrink-0 border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: THEME.border }}>
+          <CardContent className="p-2.5">
+            {renderShutterModeSelector(false)}
+          </CardContent>
+        </Card>
 
         {/* Gridline Settings */}
         <Card className="shrink-0 border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: THEME.border }}>

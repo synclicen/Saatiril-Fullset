@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Megaphone, Users, Clock, CheckCircle2, Loader2, Camera, Monitor, Search, Send, RotateCcw } from 'lucide-react'
+import { Megaphone, Users, Clock, CheckCircle2, Loader2, Camera, Search, Send, RotateCcw } from 'lucide-react'
 import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, type CameraMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync, preservePhotoHistoryOnSync, mergeCaptureVersions, isPhotoshootMode, isDualPhotoshootMode, channelCount } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -72,7 +72,7 @@ interface OpProgressData {
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
-export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
+export function McPanel() {
   const isMobile = useIsMobile()
 
   const currentProject = useSaatirilStore((s) => s.currentProject)
@@ -454,24 +454,6 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
 
   // ── Render helpers
   const renderCallButton = () => {
-    if (readOnly) {
-      return (
-        <Button
-          disabled
-          className={`w-full font-bold cursor-not-allowed ${isMobile ? 'h-12 text-sm' : 'h-14 text-lg'}`}
-          style={{
-            backgroundColor: THEME.panel,
-            color: THEME.muted,
-            border: `2px solid ${THEME.border}`,
-            opacity: 0.6,
-          }}
-        >
-          <Monitor className="size-5" />
-          MONITOR — HANYA LIHAT
-        </Button>
-      )
-    }
-
     if (photoshoot) {
       // Photoshoot mode: always allow sending — NO BLOCKING.
       // If the selected student is already 'done' (photographed), show a
