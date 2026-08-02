@@ -711,3 +711,31 @@ Stage Summary:
 - Admin is a separate view accessed via header toggle
 - MC sidebar can be hidden/shown for more Operator space
 - Layout is clean, professional, and field-friendly
+
+---
+Task ID: 3
+Agent: main
+Task: Make queue info more visible and add toggleable panels (Shutter Mode, Gridline, Queue) like Android APK
+
+Work Log:
+- Analyzed uploaded Android APK screenshot with VLM: split-panel design with left camera preview + right control panel with organized sections (Mode Shutter, Gridline, Queue)
+- User complaint: queue info not visible, especially with many participants; modes should be toggleable (show/hide) for a cleaner screen
+- Read current operator-panel.tsx, mc-panel.tsx, main-app.tsx to understand existing layout
+- Added panel visibility state variables: showShutterPanel, showGridlinePanel, showQueuePanel
+- Created floating toolbar on camera view (bottom-left) with 3 toggle buttons: SHUTTER, GRID, ANTREAN
+- Each button has a pill-shaped badge showing current state (e.g., "3s" for timer, "⅓" for grid type, queue count)
+- Made sidebar sections collapsible: Shutter Mode, Gridline, Queue only show when toggled on
+- Updated mobile layout to use same floating toolbar approach (mutually exclusive panels)
+- Added THEME.red constant to operator panel for high-count queue badges
+- Made queue count badges more prominent: pill-shaped (rounded-full) with gold/red color coding
+- Updated MC panel queue headers to also use pill-shaped count badges
+- Fixed badge styling per agent-browser feedback: changed from text-[8px] rounded to text-[9px] rounded-full with proper padding and border
+- Verified with agent-browser: all toggle buttons work, badges are pill-shaped, panels appear/disappear correctly
+
+Stage Summary:
+- Floating toolbar with 3 toggle buttons (SHUTTER, GRID, ANTREAN) added to camera view
+- Sidebar sections are now collapsible (hidden by default for Shutter/Grid, visible for Queue)
+- Queue count badges use pill shape with gold/red color coding (>10 = red)
+- MC panel queue badges also updated to pill shape
+- Mobile layout uses same floating toolbar with mutually exclusive panels
+- Files changed: operator-panel.tsx, mc-panel.tsx

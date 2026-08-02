@@ -926,9 +926,21 @@ export function McPanel() {
             className="shrink-0 flex items-center justify-between px-3 py-2"
             style={{ borderBottom: `1px solid ${THEME.border}` }}
           >
-            <h3 className="text-xs font-semibold" style={{ color: '#ffffff' }}>
-              {photoshoot ? 'Daftar Peserta' : 'Antrean'}: <span style={{ color: photoshoot ? THEME.emerald : THEME.gold }} className="font-bold">{remainingCount}</span>
-            </h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-semibold" style={{ color: '#ffffff' }}>
+                {photoshoot ? 'Daftar Peserta' : 'Antrean'}
+              </h3>
+              <span
+                className="text-xs font-bold px-2 py-0.5 rounded-full"
+                style={{
+                  backgroundColor: remainingCount > 10 ? 'rgba(239,68,68,0.2)' : remainingCount > 0 ? `${THEME.gold}33` : `${THEME.border}44`,
+                  color: remainingCount > 10 ? '#ef4444' : remainingCount > 0 ? (photoshoot ? THEME.emerald : THEME.gold) : THEME.muted,
+                  border: `1px solid ${remainingCount > 10 ? 'rgba(239,68,68,0.33)' : remainingCount > 0 ? `${THEME.gold}55` : THEME.border}`,
+                }}
+              >
+                {remainingCount}
+              </span>
+            </div>
             <span className="text-[10px]" style={{ color: THEME.muted }}>
               {photoshoot ? (dualPhotoshoot ? '2 Kamera' : 'Photoshoot') : `Ch.${myChannel}`}
             </span>
@@ -1066,9 +1078,21 @@ export function McPanel() {
           className="shrink-0 flex items-center justify-between px-4 py-2.5"
           style={{ borderBottom: `1px solid ${THEME.border}` }}
         >
-          <h3 className="text-sm font-semibold" style={{ color: '#ffffff' }}>
-            {photoshoot ? 'Daftar Peserta' : 'Sisa Antrean'}: <span style={{ color: photoshoot ? THEME.emerald : THEME.gold }} className="font-bold">{remainingCount}</span>
-          </h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold" style={{ color: '#ffffff' }}>
+              {photoshoot ? 'Daftar Peserta' : 'Sisa Antrean'}
+            </h3>
+            <span
+              className="text-xs font-bold px-2 py-0.5 rounded-full"
+              style={{
+                backgroundColor: remainingCount > 10 ? 'rgba(239,68,68,0.2)' : remainingCount > 0 ? `${THEME.gold}33` : `${THEME.border}44`,
+                color: remainingCount > 10 ? '#ef4444' : remainingCount > 0 ? (photoshoot ? THEME.emerald : THEME.gold) : THEME.muted,
+                border: `1px solid ${remainingCount > 10 ? 'rgba(239,68,68,0.33)' : remainingCount > 0 ? `${THEME.gold}55` : THEME.border}`,
+              }}
+            >
+              {remainingCount}
+            </span>
+          </div>
           <div className="flex items-center gap-2">
             <NetworkQualityBadge />
             <span className="text-xs" style={{ color: THEME.muted }}>

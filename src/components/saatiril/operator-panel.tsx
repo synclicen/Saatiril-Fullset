@@ -70,6 +70,7 @@ const THEME = {
   border: '#533485',
   gold: '#d4af37',
   muted: '#c4b5fd',
+  red: '#ef4444',
 } as const
 
 // ─── Shutter mode types ────────────────────────────────────────────────────
@@ -245,6 +246,11 @@ export function OperatorPanel() {
   // Buffer for MC_CALL events that arrive before the database updates via SYNC_DB
   const [mcCallBuffer, setMcCallBuffer] = useState<Student[]>([])
   const isCapturingRef = useRef(false)
+
+  // ── Panel visibility state (toggleable sections) ────────────────────────
+  const [showShutterPanel, setShowShutterPanel] = useState(false)
+  const [showGridlinePanel, setShowGridlinePanel] = useState(false)
+  const [showQueuePanel, setShowQueuePanel] = useState(true)
 
   // ── Gridline overlay state ─────────────────────────────────────────────────
   const [gridlineEnabled, setGridlineEnabled] = useState(true)
@@ -1919,9 +1925,21 @@ export function OperatorPanel() {
         className="shrink-0 flex items-center justify-between px-3 py-2"
         style={{ borderBottom: `1px solid ${THEME.border}` }}
       >
-        <h3 className="text-xs font-semibold" style={{ color: '#ffffff' }}>
-          Antrean: <span style={{ color: THEME.gold }} className="font-bold">{remainingCount}</span>
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-xs font-semibold" style={{ color: '#ffffff' }}>
+            Antrean
+          </h3>
+          <span
+            className="text-xs font-bold px-2 py-0.5 rounded-full"
+            style={{
+              backgroundColor: remainingCount > 10 ? `${THEME.red}33` : remainingCount > 0 ? `${THEME.gold}33` : `${THEME.border}44`,
+              color: remainingCount > 10 ? THEME.red : remainingCount > 0 ? THEME.gold : THEME.muted,
+              border: `1px solid ${remainingCount > 10 ? `${THEME.red}55` : remainingCount > 0 ? `${THEME.gold}55` : THEME.border}`,
+            }}
+          >
+            {remainingCount}
+          </span>
+        </div>
         <div className="flex items-center gap-1.5">
           <NetworkQualityBadge detailed={true} />
           <span className="text-[10px]" style={{ color: THEME.muted }}>Ch.{myChannel}</span>
@@ -2004,9 +2022,57 @@ export function OperatorPanel() {
         {/* ── Camera Zone ────────────────────────────────────────────────── */}
         <div
           ref={cameraZoneRef}
-          className="flex-1 flex items-center justify-center min-h-0 p-1"
+          className="flex-1 flex items-center justify-center min-h-0 p-1 relative"
         >
           {renderCameraView()}
+
+          {/* ── Floating Toolbar (bottom-left of camera view) ──────────────── */}
+          <div
+            className="absolute bottom-2 left-2 z-20 flex items-center gap-1 rounded-xl px-1.5 py-1"
+            style={{
+              backgroundColor: `${THEME.panel}dd`,
+              border: `1px solid ${THEME.border}`,
+              backdropFilter: 'blur(12px)',
+            }}
+          >
+            {renderToolbarButton(
+              <Camera className="size-3" />,
+              'Shutter',
+              showShutterPanel,
+              () => { setShowShutterPanel((v) => !v); setShowGridlinePanel(false); setShowQueueOnMobile(false) },
+              shutterMode !== 'manual' ? (
+                <span className="text-[8px] font-bold px-1 py-0.5 rounded-full" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}55` }}>
+                  {shutterMode === 'ai' ? 'AI' : getTimerDuration(shutterMode) + 's'}
+                </span>
+              ) : undefined,
+            )}
+            {renderToolbarButton(
+              <Grid3x3 className="size-3" />,
+              'Grid',
+              showGridlinePanel,
+              () => { setShowGridlinePanel((v) => !v); setShowShutterPanel(false); setShowQueueOnMobile(false) },
+              gridlineEnabled ? (
+                <span className="text-[8px] font-bold px-1 py-0.5 rounded-full" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}55` }}>
+                  {gridlineType === 'thirds' ? '⅓' : gridlineType === 'quarters' ? '¼' : '+'}
+                </span>
+              ) : undefined,
+            )}
+            {renderToolbarButton(
+              <List className="size-3" />,
+              'Antrean',
+              showQueueOnMobile,
+              () => { setShowQueueOnMobile((v) => !v); setShowShutterPanel(false); setShowGridlinePanel(false) },
+              remainingCount > 0 ? (
+                <span className="text-[8px] font-bold px-1 py-0.5 rounded-full" style={{
+                  backgroundColor: remainingCount > 10 ? `${THEME.red}33` : `${THEME.gold}33`,
+                  color: remainingCount > 10 ? THEME.red : THEME.gold,
+                  border: `1px solid ${remainingCount > 10 ? `${THEME.red}55` : `${THEME.gold}55`}`,
+                }}>
+                  {remainingCount}
+                </span>
+              ) : undefined,
+            )}
+          </div>
         </div>
 
         {/* ── Capture Button (centered, directly below camera view) ─────── */}
@@ -2083,70 +2149,82 @@ export function OperatorPanel() {
                 </p>
               )}
             </div>
-
-            <button
-              onClick={() => setShowQueueOnMobile(!showQueueOnMobile)}
-              className="shrink-0 flex items-center justify-center w-9 h-9 rounded-lg border cursor-pointer active:scale-95 transition-transform"
-              style={{
-                backgroundColor: showQueueOnMobile ? THEME.gold : THEME.card,
-                borderColor: showQueueOnMobile ? THEME.gold : THEME.border,
-              }}
-              title="Lihat antrean"
-            >
-              {showQueueOnMobile ? (
-                <X className="size-4" style={{ color: showQueueOnMobile ? THEME.bg : THEME.muted }} />
-              ) : (
-                <List className="size-4" style={{ color: THEME.muted }} />
-              )}
-            </button>
           </div>
 
-          {/* Operator search (photoshoot only) */}
-          {showQueueOnMobile && renderOpSearch(true)}
-
-          {/* Queue list (expandable) */}
-          {showQueueOnMobile && (
-            <div
-              className="border-t"
-              style={{ borderColor: THEME.border, maxHeight: '35vh' }}
-            >
-              {renderQueueList(true)}
+          {/* Shutter Mode Panel (toggleable) */}
+          {showShutterPanel && (
+            <div className="px-3 py-1.5 border-t" style={{ borderColor: THEME.border }}>
+              {renderShutterModeSelector(true)}
+              {videoDevices.length > 1 && (
+                <div className="mt-1.5">
+                  <Select value={selectedDeviceId} onValueChange={setSelectedDeviceId}>
+                    <SelectTrigger
+                      className="text-[10px] h-7 w-full"
+                      style={{ backgroundColor: THEME.bg, borderColor: THEME.border, color: THEME.muted }}
+                    >
+                      <Video className="size-3 mr-1 shrink-0" style={{ color: THEME.gold }} />
+                      <SelectValue placeholder="Pilih Kamera" />
+                    </SelectTrigger>
+                    <SelectContent style={{ backgroundColor: THEME.panel, borderColor: THEME.border }}>
+                      {videoDevices.map((dev) => (
+                        <SelectItem key={dev.deviceId} value={dev.deviceId} style={{ color: '#ffffff' }}>
+                          {dev.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
           )}
 
-          {/* Camera selector (compact) + Shutter mode selector */}
-          <div className="px-3 py-1 flex items-center gap-2">
-            {videoDevices.length > 1 && (
-              <Select value={selectedDeviceId} onValueChange={setSelectedDeviceId}>
-                <SelectTrigger
-                  className="text-[10px] h-7 w-32"
-                  style={{ backgroundColor: THEME.bg, borderColor: THEME.border, color: THEME.muted }}
-                >
-                  <Video className="size-3 mr-1 shrink-0" style={{ color: THEME.gold }} />
-                  <SelectValue placeholder="Pilih Kamera" />
-                </SelectTrigger>
-                <SelectContent style={{ backgroundColor: THEME.panel, borderColor: THEME.border }}>
-                  {videoDevices.map((dev) => (
-                    <SelectItem key={dev.deviceId} value={dev.deviceId} style={{ color: '#ffffff' }}>
-                      {dev.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            <div className="flex-1 min-w-0">
-              {renderShutterModeSelector(true)}
+          {/* Gridline Settings Panel (toggleable) */}
+          {showGridlinePanel && (
+            <div className="px-3 py-1.5 border-t" style={{ borderColor: THEME.border }}>
+              {renderGridlineSettings(true)}
             </div>
-          </div>
+          )}
 
-          {/* Gridline Settings (compact, mobile) */}
-          <div className="px-3 py-1 border-t" style={{ borderColor: `${THEME.border}44` }}>
-            {renderGridlineSettings(true)}
-          </div>
+          {/* Queue Panel (toggleable) */}
+          {showQueueOnMobile && (
+            <div className="border-t" style={{ borderColor: THEME.border }}>
+              {/* Operator search (photoshoot only) */}
+              {renderOpSearch(true)}
+              {/* Queue list */}
+              <div style={{ maxHeight: '35vh' }}>
+                {renderQueueList(true)}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     )
   }
+
+  // ── Floating toolbar toggle button ──────────────────────────────────────
+  const renderToolbarButton = (
+    icon: React.ReactNode,
+    label: string,
+    isActive: boolean,
+    onClick: () => void,
+    badge?: React.ReactNode,
+  ) => (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition-all duration-200 cursor-pointer"
+      style={{
+        backgroundColor: isActive ? `${THEME.gold}22` : THEME.panel,
+        color: isActive ? THEME.gold : THEME.muted,
+        border: `1px solid ${isActive ? THEME.gold : THEME.border}`,
+        boxShadow: isActive ? `0 0 8px ${THEME.gold}22` : 'none',
+      }}
+      title={label}
+    >
+      {icon}
+      <span className="hidden lg:inline">{label}</span>
+      {badge}
+    </button>
+  )
 
   // ── DESKTOP LAYOUT ──────────────────────────────────────────────────────
   return (
@@ -2158,9 +2236,57 @@ export function OperatorPanel() {
         {/* CAMERA ZONE */}
         <div
           ref={cameraZoneRef}
-          className="flex-1 flex items-center justify-center min-h-0 p-2"
+          className="flex-1 flex items-center justify-center min-h-0 p-2 relative"
         >
           {renderCameraView()}
+
+          {/* ── Floating Toolbar (bottom-left of camera view) ──────────────── */}
+          <div
+            className="absolute bottom-3 left-3 z-20 flex items-center gap-1.5 rounded-xl px-2 py-1.5"
+            style={{
+              backgroundColor: `${THEME.panel}dd`,
+              border: `1px solid ${THEME.border}`,
+              backdropFilter: 'blur(12px)',
+            }}
+          >
+            {renderToolbarButton(
+              <Camera className="size-3.5" />,
+              'Shutter',
+              showShutterPanel,
+              () => setShowShutterPanel((v) => !v),
+              shutterMode !== 'manual' ? (
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}55` }}>
+                  {shutterMode === 'ai' ? 'AI' : getTimerDuration(shutterMode) + 's'}
+                </span>
+              ) : undefined,
+            )}
+            {renderToolbarButton(
+              <Grid3x3 className="size-3.5" />,
+              'Grid',
+              showGridlinePanel,
+              () => setShowGridlinePanel((v) => !v),
+              gridlineEnabled ? (
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}55` }}>
+                  {gridlineType === 'thirds' ? '⅓' : gridlineType === 'quarters' ? '¼' : gridlineType === 'crosshair' ? '+' : '✕'}
+                </span>
+              ) : undefined,
+            )}
+            {renderToolbarButton(
+              <List className="size-3.5" />,
+              'Antrean',
+              showQueuePanel,
+              () => setShowQueuePanel((v) => !v),
+              remainingCount > 0 ? (
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{
+                  backgroundColor: remainingCount > 10 ? `${THEME.red}33` : `${THEME.gold}33`,
+                  color: remainingCount > 10 ? THEME.red : THEME.gold,
+                  border: `1px solid ${remainingCount > 10 ? `${THEME.red}55` : `${THEME.gold}55`}`,
+                }}>
+                  {remainingCount}
+                </span>
+              ) : undefined,
+            )}
+          </div>
         </div>
 
         {/* Capture Button (centered, directly below camera view) */}
@@ -2178,10 +2304,10 @@ export function OperatorPanel() {
         </div>
       </div>
 
-      {/* SIDEBAR */}
-      <div className="flex flex-col gap-2 p-2 w-[300px] shrink-0 min-h-0">
+      {/* SIDEBAR — collapsible sections */}
+      <div className="flex flex-col gap-2 p-2 w-[300px] shrink-0 min-h-0 overflow-y-auto">
 
-        {/* Target Info Panel */}
+        {/* Target Info Panel — always visible */}
         <Card
           className="shrink-0 border-2 rounded-lg transition-all duration-300"
           style={{
@@ -2247,25 +2373,29 @@ export function OperatorPanel() {
           </CardContent>
         </Card>
 
-        {/* Shutter Mode Selector */}
-        <Card className="shrink-0 border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: THEME.border }}>
-          <CardContent className="p-2.5">
-            {renderShutterModeSelector(false)}
-          </CardContent>
-        </Card>
+        {/* Shutter Mode Selector — collapsible */}
+        {showShutterPanel && (
+          <Card className="shrink-0 border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: THEME.gold }}>
+            <CardContent className="p-2.5">
+              {renderShutterModeSelector(false)}
+            </CardContent>
+          </Card>
+        )}
 
-        {/* Gridline Settings */}
-        <Card className="shrink-0 border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: THEME.border }}>
-          <CardContent className="p-2.5">
-            {renderGridlineSettings(false)}
-          </CardContent>
-        </Card>
+        {/* Gridline Settings — collapsible */}
+        {showGridlinePanel && (
+          <Card className="shrink-0 border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: THEME.gold }}>
+            <CardContent className="p-2.5">
+              {renderGridlineSettings(false)}
+            </CardContent>
+          </Card>
+        )}
 
-        {/* Operator search (photoshoot only) */}
-        {renderOpSearch(false)}
+        {/* Operator search (photoshoot only) — always visible when relevant */}
+        {showQueuePanel && renderOpSearch(false)}
 
-        {/* Queue List */}
-        {renderQueueList(false)}
+        {/* Queue List — collapsible */}
+        {showQueuePanel && renderQueueList(false)}
       </div>
     </div>
   )
