@@ -873,3 +873,27 @@ Stage Summary:
 - When fullscreen: header & footer hidden, floating toolbar with all controls visible at top
 - User can: exit fullscreen, switch LIVE/ADMIN, toggle MC panel — all from floating toolbar
 - Commit: 5e1ad5f "feat: app-wide fullscreen with floating toolbar (exit, LIVE/ADMIN, MC toggle)"
+
+---
+Task ID: 5
+Agent: main
+Task: Fix right panel overflow when resized + make MC panel resizable
+
+Work Log:
+- Analyzed user screenshot showing right panel content being cut off when resized
+- Replaced fixed 380px MC sidebar with ResizablePanelGroup (3 resizable panels)
+- MC panel: default 22%, min 12%, max 40% — user can drag to resize
+- Operator panel: default 78%, min 40% — takes remaining space
+- Added ResizableHandle between MC panel and operator panel
+- Fixed right panel overflow: changed from overflow-hidden to overflow-x-hidden overflow-y-auto
+- Fixed toolbar buttons: added flex-wrap so buttons wrap on narrow panels
+- Fixed toolbar button labels: removed hidden lg:inline so labels always show
+- Fixed scrollable panels area: added overflow-x-hidden
+- Verified desktop and mobile layouts work correctly
+- Build passes, lint passes, committed and pushed
+
+Stage Summary:
+- MC panel is now RESIZABLE (drag handle between MC and operator)
+- Right panel content no longer cut off when resized (proper overflow handling)
+- Toolbar buttons wrap on narrow panels
+- Commit: b9c86db "feat: resizable MC panel + fix right panel overflow when resized"
