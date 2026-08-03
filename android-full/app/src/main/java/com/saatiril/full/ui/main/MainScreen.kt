@@ -2,6 +2,8 @@ package com.saatiril.full.ui.main
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.BottomNavigation
+import androidx.compose.material.BottomNavigationItem
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -91,15 +93,15 @@ fun MainScreen(
                 }
 
                 // Bottom Navigation
-                androidx.compose.material.BottomNavigation(
+                BottomNavigation(
                     backgroundColor = PANEL,
                     contentColor = GOLD
                 ) {
                     tabs.forEach { tabItem ->
-                        androidx.compose.material.BottomNavigationItem(
+                        BottomNavigationItem(
                             icon = { Icon(tabItem.icon, contentDescription = tabItem.label) },
                             label = {
-                                Text(
+                                androidx.compose.material.Text(
                                     tabItem.label,
                                     style = TextStyle(fontSize = 11.sp)
                                 )

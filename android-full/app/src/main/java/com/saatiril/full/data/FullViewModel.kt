@@ -1307,9 +1307,17 @@ class FullViewModel(application: Application) : AndroidViewModel(application) {
     val connectionHealth: StateFlow<ConnectionHealth> = _connectionHealth.asStateFlow()
 
     // Non-nullable project for UI
-    val projectNonNull: StateFlow<Project> = kotlinx.coroutines.flow.combine(
-        _project, MutableStateFlow(Unit)
-    ) { proj, _ -> proj ?: Project() }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, Project())
+    private val _projectNonNull = MutableStateFlow(Project())
+    val projectNonNull: StateFlow<Project> = _projectNonNull.asStateFlow()
+
+    init {
+        // Keep projectNonNull in sync with _project
+        viewModelScope.launch {
+            _project.collect { proj ->
+                _projectNonNull.value = proj ?: Project()
+            }
+        }
+    }
 
     /**
      * Connect to server with role selection (full app supports all roles).

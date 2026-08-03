@@ -304,7 +304,7 @@ fun ConnectionScreen(
 }
 
 @Composable
-private fun RoleButton(
+private fun RowScope.RoleButton(
     label: String,
     role: String,
     isSelected: Boolean,
@@ -335,7 +335,7 @@ private fun RoleButton(
 }
 
 @Composable
-private fun ChannelButton(
+private fun RowScope.ChannelButton(
     label: String,
     channel: Int,
     isSelected: Boolean,

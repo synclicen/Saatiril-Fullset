@@ -2,9 +2,6 @@ package com.saatiril.full.ui.operator
 
 import android.Manifest
 import android.util.Log
-import android.widget.FrameLayout
-import android.widget.ImageView
-import androidx.activity.ComponentActivity
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -22,7 +19,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -30,8 +26,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.saatiril.full.camera.Camera2Manager
 import com.saatiril.full.data.*
-import com.saatiril.full.data.isActiveStatus
 
 // ─── Theme Colors ───────────────────────────────────────────
 private val BG = Color(0xFF1a0b2e)
@@ -53,19 +49,16 @@ fun OperatorPanel(
     val capturePhase by viewModel.capturePhase.collectAsState()
     val project by viewModel.project.collectAsState()
     val proj = project ?: Project()
-    val channel by viewModel.channel.collectAsState()
+    val myChannel by viewModel.myChannel.collectAsState()
     val shutterMode by viewModel.shutterMode.collectAsState()
-    val camera2Manager = viewModel.camera2Manager
-    val cameraUVCManager = viewModel.cameraUVCManager
-    val isUvcAvailable by cameraUVCManager.isAvailable.collectAsState()
-    val isCamera2Available by camera2Manager.isAvailable.collectAsState()
-    val camera2CameraList by camera2Manager.cameraList.collectAsState()
-    val selectedCameraId by camera2Manager.selectedCameraId.collectAsState()
-
-    val context = LocalContext.current
+    val cameraConnected by viewModel.cameraConnected.collectAsState()
+    val cameraSource by viewModel.cameraSource.collectAsState()
+    val activeCameraEngine by viewModel.activeCameraEngine.collectAsState()
+    val availableCameras by viewModel.availableCameras.collectAsState()
+    val currentCameraId by viewModel.currentCameraId.collectAsState()
 
     // Filter students for this operator's channel
-    val channelStudents = proj.database.filter { it.assignedChannel == channel }
+    val channelStudents = proj.database.filter { it.assignedChannel == myChannel }
     val pendingStudents = channelStudents.filter { it.status == "pending" || it.status == "sent" }
 
     Column(
@@ -83,11 +76,17 @@ fun OperatorPanel(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "OPERATOR · Ch.$channel",
+                text = "OPERATOR · Ch.$myChannel",
                 style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, color = CYAN)
             )
+            // Camera source indicator
+            val camLabel = when {
+                cameraSource == "uvc" -> "USB/UVC"
+                cameraSource == "builtin" -> "Kamera HP"
+                else -> "—"
+            }
             Text(
-                text = "Ch.$channel",
+                text = camLabel,
                 style = TextStyle(fontSize = 11.sp, color = GOLD, fontWeight = FontWeight.Medium)
             )
         }
@@ -100,31 +99,30 @@ fun OperatorPanel(
                 .background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
-            if (hasCameraPermission) {
+            if (hasCameraPermission && cameraConnected) {
                 // Camera preview via TextureView
+                val camera2Manager = viewModel.camera2Manager
+                val cameraUVCManager = viewModel.cameraUVCManager
+
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
                         android.view.TextureView(ctx).also { textureView ->
-                            // Try UVC first, then Camera2
-                            if (isUvcAvailable) {
+                            if (activeCameraEngine == "uvc") {
                                 cameraUVCManager.setTextureView(textureView)
-                                cameraUVCManager.showPreview()
                             } else {
                                 camera2Manager.setTextureView(textureView)
-                                if (!isCamera2Available) {
-                                    camera2Manager.openCamera(ctx, selectedCameraId ?: "0")
+                                if (!camera2Manager.isConnected.value) {
+                                    camera2Manager.openCamera(currentCameraId.ifEmpty { "0" })
                                 }
                             }
                         }
                     },
-                    update = { textureView ->
-                        // Update on state changes
+                    update = { _ ->
+                        // State changes handled by ViewModel collectors
                     }
                 )
-
-                // Gridline overlay would go here (simplified for now)
-            } else {
+            } else if (!hasCameraPermission) {
                 // No camera permission
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -139,6 +137,24 @@ fun OperatorPanel(
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = "Izin kamera diperlukan",
+                        style = TextStyle(fontSize = 13.sp, color = MUTED)
+                    )
+                }
+            } else {
+                // Camera not connected yet
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        Icons.Default.Videocam,
+                        contentDescription = null,
+                        tint = MUTED.copy(alpha = 0.3f),
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Menghubungkan kamera...",
                         style = TextStyle(fontSize = 13.sp, color = MUTED)
                     )
                 }
@@ -215,17 +231,11 @@ fun OperatorPanel(
                 style = TextStyle(fontSize = 11.sp, color = MUTED)
             )
 
-            if (isUvcAvailable) {
-                CameraSourceChip("USB/UVC", true, CYAN) {
-                    camera2Manager.closeCamera()
-                }
-            }
-
-            camera2CameraList.forEach { camInfo ->
-                val isSelected = !isUvcAvailable && selectedCameraId == camInfo.id
-                CameraSourceChip(camInfo.label, isSelected, GOLD) {
-                    camera2Manager.closeCamera()
-                    camera2Manager.openCamera(context, camInfo.id)
+            // Show available cameras from the merged list
+            availableCameras.forEach { (camId, camLabel) ->
+                val isSelected = currentCameraId == camId
+                CameraSourceChip(camLabel, isSelected, if (camId.startsWith("uvccam")) CYAN else GOLD) {
+                    viewModel.switchToCameraById(camId)
                 }
             }
         }
@@ -287,7 +297,7 @@ fun OperatorPanel(
             // Capture Button
             val canCapture = currentTarget != null && capturePhase != CapturePhase.SENDING
             Button(
-                onClick = { viewModel.capturePhoto() },
+                onClick = { viewModel.triggerCapture() },
                 modifier = Modifier.size(56.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (canCapture) RED else CARD,
