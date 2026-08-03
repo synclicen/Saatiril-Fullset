@@ -1259,7 +1259,7 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
     const isNext = !photoshoot && student.id === nextPending?.id && student.status === 'pending'
     const isDone = student.status === 'done'
     if (isActive) return { backgroundColor: `${THEME.gold}22`, borderLeft: `4px solid ${THEME.gold}`, boxShadow: `0 0 12px ${THEME.gold}44` }
-    if (isSent) return { backgroundColor: `${THEME.gold}0a`, borderLeft: `4px solid ${THEME.gold}88` }
+    if (isSent) return { backgroundColor: `${THEME.cyan}11`, borderLeft: `4px solid ${THEME.cyan}` }
     if (isNext) return { backgroundColor: THEME.panel, borderLeft: `4px solid ${THEME.gold}` }
     if (isDone) return { backgroundColor: '#22c55e0d', opacity: 0.55, borderLeft: `4px solid #22c55e66` }
     return { backgroundColor: THEME.panel, borderLeft: `4px solid ${THEME.border}` }
@@ -1268,7 +1268,7 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
   // ── Minimalist status dot (for queue list — matches MC panel style) ────
   const renderStatusDot = (status: StudentStatus) => {
     if (status === 'done') return <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: '#4ade80', boxShadow: '0 0 4px #4ade8066' }} title="Selesai" />
-    if (status === 'sent') return <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: THEME.gold, boxShadow: `0 0 4px ${THEME.gold}66` }} title="Dikirim" />
+    if (status === 'sent') return <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: THEME.cyan, boxShadow: `0 0 4px ${THEME.cyan}66` }} title="Dikirim" />
     if (isActiveStatus(status)) return <span className="size-2 rounded-full shrink-0 animate-pulse" style={{ backgroundColor: THEME.gold, boxShadow: `0 0 6px ${THEME.gold}88` }} title={statusLabel(status)} />
     return <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: THEME.border }} title="Menunggu" />
   }
@@ -1926,15 +1926,15 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
       style={{ backgroundColor: THEME.card, borderColor: THEME.border }}
     >
       <div
-        className="shrink-0 flex items-center justify-between px-2 py-1.5 min-w-0"
+        className="shrink-0 flex items-center justify-between px-1.5 py-1.5 min-w-0"
         style={{ borderBottom: `1px solid ${THEME.border}` }}
       >
-        <div className="flex items-center gap-1.5 min-w-0">
-          <h3 className="text-xs font-semibold shrink-0" style={{ color: '#ffffff' }}>
+        <div className="flex items-center gap-1 min-w-0">
+          <h3 className="text-[10px] font-semibold shrink-0" style={{ color: '#ffffff' }}>
             Antrean
           </h3>
           <span
-            className="text-[10px] font-bold px-1.5 py-0 rounded-full shrink-0"
+            className="text-[10px] font-bold px-1 py-0 rounded-full shrink-0"
             style={{
               backgroundColor: remainingCount > 10 ? `${THEME.red}33` : remainingCount > 0 ? `${THEME.gold}33` : `${THEME.border}44`,
               color: remainingCount > 10 ? THEME.red : remainingCount > 0 ? THEME.gold : THEME.muted,
@@ -1944,7 +1944,7 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
             {remainingCount}
           </span>
         </div>
-        <span className="text-[10px] shrink-0" style={{ color: THEME.muted }}>Ch.{myChannel}</span>
+        <span className="text-[9px] shrink-0" style={{ color: THEME.muted }}>Ch.{myChannel}</span>
       </div>
 
       <ScrollArea className="flex-1 min-h-0">
@@ -1963,16 +1963,16 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
                 <div
                   key={student.id}
                   ref={isActive ? activeRowRef : isNext ? nextRowRef : undefined}
-                  className="flex items-center gap-1.5 px-2 py-1.5 transition-colors duration-200 min-w-0"
+                  className="flex items-center gap-1 px-1.5 py-1 transition-colors duration-200 min-w-0"
                   style={getRowStyle(student)}
                 >
-                  <span className="text-[10px] font-mono w-4 shrink-0 text-center" style={{ color: THEME.muted }}>
+                  <span className="text-[9px] font-mono w-3 shrink-0 text-center" style={{ color: THEME.muted }}>
                     {idx + 1}
                   </span>
                   <span
-                    className={`text-[11px] font-medium truncate flex-1 min-w-0 ${student.status === 'done' ? 'line-through' : ''}`}
+                    className={`text-[10px] font-medium truncate flex-1 min-w-0 ${student.status === 'done' ? 'line-through' : ''}`}
                     style={{
-                      color: isActive ? THEME.gold : student.status === 'done' ? THEME.muted : '#ffffff',
+                      color: isActive ? THEME.gold : student.status === 'sent' ? THEME.cyan : student.status === 'done' ? THEME.muted : '#ffffff',
                     }}
                   >
                     {student.nama}
