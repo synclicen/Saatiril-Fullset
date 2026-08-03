@@ -1267,10 +1267,10 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
   }
 
   const renderStatusBadge = (status: StudentStatus) => {
-    if (status === 'done') return <Badge className="text-[10px] px-1.5 py-0" style={{ backgroundColor: '#22c55e33', color: '#4ade80', border: '1px solid #22c55e55' }}><CheckCircle2 className="size-3 mr-0.5" />Selesai</Badge>
-    if (status === 'sent') return <Badge className="text-[10px] px-1.5 py-0" style={{ backgroundColor: '#d4af3733', color: THEME.gold, border: '1px solid #d4af3766' }}><Camera className="size-3 mr-0.5" />Dikirim</Badge>
-    if (isActiveStatus(status)) return <Badge className="text-[10px] px-1.5 py-0 animate-pulse" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}66` }}><Loader2 className="size-3 mr-0.5 animate-spin" />{statusLabel(status)}</Badge>
-    return <Badge className="text-[10px] px-1.5 py-0" style={{ backgroundColor: `${THEME.border}44`, color: THEME.muted, border: `1px solid ${THEME.border}` }}><Clock className="size-3 mr-0.5" />Menunggu</Badge>
+    if (status === 'done') return <Badge className="text-[8px] px-1 py-0" style={{ backgroundColor: '#22c55e33', color: '#4ade80', border: '1px solid #22c55e55' }}><CheckCircle2 className="size-2.5 mr-0.5" />✓</Badge>
+    if (status === 'sent') return <Badge className="text-[8px] px-1 py-0" style={{ backgroundColor: '#d4af3733', color: THEME.gold, border: '1px solid #d4af3766' }}><Camera className="size-2.5 mr-0.5" />→</Badge>
+    if (isActiveStatus(status)) return <Badge className="text-[8px] px-1 py-0 animate-pulse" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}66` }}><Loader2 className="size-2.5 mr-0.5 animate-spin" />{statusLabel(status)}</Badge>
+    return <Badge className="text-[8px] px-1 py-0" style={{ backgroundColor: `${THEME.border}44`, color: THEME.muted, border: `1px solid ${THEME.border}` }}><Clock className="size-2.5 mr-0.5" /></Badge>
   }
 
   // ── Shutter mode selector ────────────────────────────────────────────────
@@ -1281,8 +1281,8 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
     })
 
     return (
-      <div className={`flex flex-col gap-1.5 ${compact ? '' : ''}`}>
-        <p className={`font-semibold uppercase tracking-widest ${compact ? 'text-[8px]' : 'text-[9px]'}`} style={{ color: THEME.muted }}>
+      <div className={`flex flex-col gap-1.5 min-w-0 ${compact ? '' : ''}`}>
+        <p className={`font-semibold uppercase tracking-widest truncate ${compact ? 'text-[8px]' : 'text-[9px]'}`} style={{ color: THEME.muted }}>
           Mode Shutter
         </p>
         {/* Row 1: Shutter mode buttons */}
@@ -1300,8 +1300,8 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
                     cancelTimer()
                   }
                 }}
-                className={`flex items-center gap-1 rounded-md font-semibold transition-all duration-200 cursor-pointer ${
-                  compact ? 'px-1.5 py-1 text-[9px]' : 'px-2 py-1.5 text-[10px]'
+                className={`flex items-center gap-0.5 rounded-md font-semibold transition-all duration-200 cursor-pointer min-w-0 ${
+                  compact ? 'px-1 py-0.5 text-[8px]' : 'px-2 py-1.5 text-[10px]'
                 } ${isActive ? 'scale-105' : 'hover:bg-white/5'}`}
                 style={{
                   backgroundColor: isActive ? `${THEME.gold}33` : THEME.panel,
@@ -1325,8 +1325,8 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
               setPalmTriggerEnabled((v) => !v)
               if (palmTriggerEnabled) palm.stopDetection()
             }}
-            className={`flex items-center gap-1.5 rounded-md font-semibold transition-all duration-200 cursor-pointer w-full ${
-              compact ? 'px-1.5 py-1 text-[9px]' : 'px-2 py-1.5 text-[10px]'
+            className={`flex items-center gap-1 rounded-md font-semibold transition-all duration-200 cursor-pointer w-full min-w-0 ${
+              compact ? 'px-1 py-0.5 text-[8px]' : 'px-2 py-1.5 text-[10px]'
             } ${palmTriggerEnabled ? 'scale-[1.02]' : 'hover:bg-white/5'}`}
             style={{
               backgroundColor: palmTriggerEnabled ? '#22c55e22' : THEME.panel,
@@ -1384,9 +1384,9 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
     ]
 
     return (
-      <div className={`flex flex-col gap-1.5 min-w-0`}>
+      <div className={`flex flex-col gap-1 min-w-0`}>
         <div className="flex items-center justify-between min-w-0">
-          <p className={`font-semibold uppercase tracking-widest ${compact ? 'text-[8px]' : 'text-[9px]'}`} style={{ color: THEME.muted }}>
+          <p className={`font-semibold uppercase tracking-widest truncate ${compact ? 'text-[8px]' : 'text-[9px]'}`} style={{ color: THEME.muted }}>
             Gridline
           </p>
           <button
@@ -1422,8 +1422,8 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
                 <button
                   key={t.id}
                   onClick={() => setGridlineType(t.id)}
-                  className={`flex items-center justify-center gap-0.5 rounded-md font-semibold transition-all duration-200 cursor-pointer ${
-                    compact ? 'px-1.5 py-1 text-[9px]' : 'px-2 py-1.5 text-[10px]'
+                  className={`flex items-center justify-center gap-0.5 rounded-md font-semibold transition-all duration-200 cursor-pointer min-w-0 ${
+                    compact ? 'px-1 py-0.5 text-[8px]' : 'px-2 py-1.5 text-[10px]'
                   } ${gridlineType === t.id ? 'scale-105' : 'hover:bg-white/5'}`}
                   style={{
                     backgroundColor: gridlineType === t.id ? `${THEME.gold}33` : THEME.panel,
@@ -1505,10 +1505,10 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
     if (!photoshoot) return null
     return (
       <Card
-        className="shrink-0 border rounded-lg overflow-hidden"
+        className="shrink-0 border rounded-lg overflow-hidden min-w-0"
         style={{ backgroundColor: THEME.card, borderColor: THEME.gold }}
       >
-        <CardContent className={compact ? 'p-1.5 space-y-1' : 'p-2.5 space-y-2'}>
+        <CardContent className={compact ? 'p-1.5 space-y-1 min-w-0' : 'p-2.5 space-y-2'}>
           <div className="flex items-center justify-between min-w-0">
             <p
               className="text-[9px] font-semibold uppercase tracking-widest truncate"
@@ -1921,19 +1921,19 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
   // ── Queue list (shared) ──────────────────────────────────────────────────
   const renderQueueList = (compact = false) => (
     <Card
-      className={`${compact ? 'flex-1 min-h-0' : 'flex-1 min-h-0'} border rounded-lg overflow-hidden flex flex-col`}
+      className={`${compact ? 'flex-1 min-h-0' : 'flex-1 min-h-0'} border rounded-lg overflow-hidden flex flex-col min-w-0`}
       style={{ backgroundColor: THEME.card, borderColor: THEME.border }}
     >
       <div
-        className="shrink-0 flex items-center justify-between px-2 py-2 min-w-0"
+        className="shrink-0 flex items-center justify-between px-1.5 py-1.5 min-w-0"
         style={{ borderBottom: `1px solid ${THEME.border}` }}
       >
-        <div className="flex items-center gap-1.5 min-w-0">
-          <h3 className="text-xs font-semibold shrink-0" style={{ color: '#ffffff' }}>
+        <div className="flex items-center gap-1 min-w-0">
+          <h3 className={`${compact ? 'text-[10px]' : 'text-xs'} font-semibold shrink-0`} style={{ color: '#ffffff' }}>
             Antrean
           </h3>
           <span
-            className="text-xs font-bold px-1.5 py-0.5 rounded-full shrink-0"
+            className={`${compact ? 'text-[9px] px-1 py-0' : 'text-xs px-1.5 py-0.5'} font-bold rounded-full shrink-0`}
             style={{
               backgroundColor: remainingCount > 10 ? `${THEME.red}33` : remainingCount > 0 ? `${THEME.gold}33` : `${THEME.border}44`,
               color: remainingCount > 10 ? THEME.red : remainingCount > 0 ? THEME.gold : THEME.muted,
@@ -1945,7 +1945,7 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <NetworkQualityBadge detailed={compact ? false : true} />
-          <span className="text-[10px] shrink-0" style={{ color: THEME.muted }}>Ch.{myChannel}</span>
+          <span className="text-[9px] shrink-0" style={{ color: THEME.muted }}>Ch.{myChannel}</span>
         </div>
       </div>
 
@@ -1974,11 +1974,11 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
                   <div
                     key={student.id}
                     ref={isActive ? activeRowRef : isNext ? nextRowRef : undefined}
-                    className="flex items-center gap-1.5 px-2 py-1.5 transition-colors duration-200 min-w-0"
+                    className="flex items-center gap-1 px-1.5 py-1 transition-colors duration-200 min-w-0"
                     style={getRowStyle(student)}
                   >
-                    <span className="text-[10px] font-mono w-4 shrink-0 text-center" style={{ color: THEME.muted }}>{idx + 1}</span>
-                    <span className={`text-xs font-medium truncate flex-1 min-w-0 ${student.status === 'done' ? 'line-through' : ''}`} style={{ color: isActive ? THEME.gold : student.status === 'done' ? THEME.muted : '#ffffff' }}>
+                    <span className="text-[9px] font-mono w-3 shrink-0 text-center" style={{ color: THEME.muted }}>{idx + 1}</span>
+                    <span className={`text-[10px] font-medium truncate flex-1 min-w-0 ${student.status === 'done' ? 'line-through' : ''}`} style={{ color: isActive ? THEME.gold : student.status === 'done' ? THEME.muted : '#ffffff' }}>
                       {student.nama}
                     </span>
                     <div className="shrink-0">{renderStatusBadge(student.status)}</div>
@@ -2027,7 +2027,7 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
   ) => (
     <button
       onClick={onClick}
-      className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition-all duration-200 cursor-pointer whitespace-nowrap"
+      className="flex items-center gap-1 rounded-lg px-1.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition-all duration-200 cursor-pointer min-w-0"
       style={{
         backgroundColor: isActive ? `${THEME.gold}22` : THEME.panel,
         color: isActive ? THEME.gold : THEME.muted,
@@ -2037,7 +2037,7 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
       title={label}
     >
       {icon}
-      <span className="truncate max-w-[60px]">{label}</span>
+      <span className="truncate max-w-[50px]">{label}</span>
       {badge}
     </button>
   )
@@ -2272,11 +2272,11 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
         />
 
         {/* RIGHT: Toolbar + Target info + toggleable panels */}
-        <ResizablePanel defaultSize={35} minSize={15} maxSize={60}>
-          <div className="flex flex-col h-full min-w-0 overflow-hidden" style={{ backgroundColor: THEME.panel }}>
+        <ResizablePanel defaultSize={35} minSize={12} maxSize={60}>
+          <div className="flex flex-col h-full min-w-0 overflow-y-auto overflow-x-hidden" style={{ backgroundColor: THEME.panel }}>
             {/* ── Toolbar Row (top of right panel, no longer covering camera) ── */}
             <div
-              className="shrink-0 flex flex-wrap items-center gap-1 px-2 py-2 border-b"
+              className="shrink-0 flex flex-wrap items-center gap-1 px-1.5 py-1.5 border-b min-w-0"
               style={{ borderColor: THEME.border }}
             >
               {renderToolbarButton(
@@ -2326,45 +2326,45 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
             </div>
 
             {/* Target Info Row — compact, always visible */}
-            <div className="shrink-0 flex items-center gap-2 px-2 py-2 border-b min-w-0" style={{ borderColor: THEME.border }}>
+            <div className="shrink-0 flex items-center gap-1.5 px-1.5 py-1.5 border-b min-w-0" style={{ borderColor: THEME.border }}>
               <div
-                className="shrink-0 flex items-center justify-center w-7 h-7 rounded-full border-2"
+                className="shrink-0 flex items-center justify-center w-6 h-6 rounded-full border-2"
                 style={{
                   backgroundColor: THEME.bg,
                   borderColor: hasActiveTarget ? THEME.gold : THEME.border,
                 }}
               >
-                <User className="size-3" style={{ color: hasActiveTarget ? THEME.gold : THEME.border }} />
+                <User className="size-2.5" style={{ color: hasActiveTarget ? THEME.gold : THEME.border }} />
               </div>
 
               <div className="flex-1 min-w-0">
                 {hasActiveTarget ? (
-                  <div className="flex items-center gap-1.5 min-w-0">
+                  <div className="flex items-center gap-1 min-w-0">
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
+                      <p className="text-xs font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
                         {opCurrentTarget.nama}
                       </p>
-                      <p className="text-[10px] font-mono truncate" style={{ color: THEME.muted }}>
+                      <p className="text-[9px] font-mono truncate" style={{ color: THEME.muted }}>
                         {opCurrentTarget.nim}
                       </p>
                     </div>
                     <Badge
-                      className={`text-[9px] px-1.5 py-0.5 shrink-0 ${hasActiveTarget && !sending ? 'animate-pulse' : ''}`}
+                      className={`text-[8px] px-1 py-0 shrink-0 ${hasActiveTarget && !sending ? 'animate-pulse' : ''}`}
                       style={{
                         backgroundColor: capturePhase === 'ready-1' ? `${THEME.gold}33` : capturePhase === 'ready-2' ? '#22c55e33' : capturePhase === 'sending' ? `${THEME.border}66` : `${THEME.border}44`,
                         color: capturePhase === 'ready-1' ? THEME.gold : capturePhase === 'ready-2' ? '#4ade80' : THEME.muted,
                         border: `1px solid ${capturePhase === 'ready-1' ? `${THEME.gold}66` : capturePhase === 'ready-2' ? '#22c55e66' : THEME.border}`,
                       }}
                     >
-                      {capturePhase === 'sending' && <Loader2 className="size-2.5 mr-0.5 animate-spin" />}
-                      {capturePhase === 'ready-1' && <Camera className="size-2.5 mr-0.5" />}
-                      {capturePhase === 'ready-2' && <CheckCircle2 className="size-2.5 mr-0.5" />}
-                      {capturePhase === 'standby' && <Clock className="size-2.5 mr-0.5" />}
+                      {capturePhase === 'sending' && <Loader2 className="size-2 mr-0.5 animate-spin" />}
+                      {capturePhase === 'ready-1' && <Camera className="size-2 mr-0.5" />}
+                      {capturePhase === 'ready-2' && <CheckCircle2 className="size-2 mr-0.5" />}
+                      {capturePhase === 'standby' && <Clock className="size-2 mr-0.5" />}
                       {progressText}
                     </Badge>
                   </div>
                 ) : (
-                  <p className="text-xs italic truncate" style={{ color: THEME.muted }}>
+                  <p className="text-[10px] italic truncate" style={{ color: THEME.muted }}>
                     Menunggu panggilan MC...
                   </p>
                 )}
@@ -2372,10 +2372,10 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
             </div>
 
             {/* Camera selector dropdown */}
-            <div className="shrink-0 px-2 py-1.5 border-b" style={{ borderColor: THEME.border }}>
+            <div className="shrink-0 px-1.5 py-1 border-b min-w-0" style={{ borderColor: THEME.border }}>
               <Select value={selectedDeviceId} onValueChange={setSelectedDeviceId}>
-                <SelectTrigger className="w-full text-[11px] h-7 min-w-0" style={{ backgroundColor: THEME.bg, borderColor: THEME.border, color: THEME.muted }}>
-                  <Video className="size-3 mr-1 shrink-0" style={{ color: THEME.gold }} />
+                <SelectTrigger className="w-full text-[10px] h-6 min-w-0" style={{ backgroundColor: THEME.bg, borderColor: THEME.border, color: THEME.muted }}>
+                  <Video className="size-2.5 mr-1 shrink-0" style={{ color: THEME.gold }} />
                   <SelectValue placeholder="Pilih Kamera" />
                 </SelectTrigger>
                 <SelectContent style={{ backgroundColor: THEME.panel, borderColor: THEME.border }}>
@@ -2394,9 +2394,9 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
             <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
               {/* Shutter Mode Panel — toggleable */}
               {showShutterPanel && (
-                <div className="px-2 py-2 border-b" style={{ borderColor: THEME.border }}>
-                  <Card className="border rounded-lg overflow-hidden" style={{ backgroundColor: THEME.card, borderColor: THEME.gold }}>
-                    <CardContent className="p-2">
+                <div className="px-1.5 py-1.5 border-b min-w-0" style={{ borderColor: THEME.border }}>
+                  <Card className="border rounded-lg overflow-hidden min-w-0" style={{ backgroundColor: THEME.card, borderColor: THEME.gold }}>
+                    <CardContent className="p-1.5 min-w-0">
                       {renderShutterModeSelector(true)}
                     </CardContent>
                   </Card>
@@ -2405,9 +2405,9 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
 
               {/* Gridline Settings Panel — toggleable */}
               {showGridlinePanel && (
-                <div className="px-2 py-2 border-b" style={{ borderColor: THEME.border }}>
-                  <Card className="border rounded-lg overflow-hidden" style={{ backgroundColor: THEME.card, borderColor: THEME.gold }}>
-                    <CardContent className="p-2">
+                <div className="px-1.5 py-1.5 border-b min-w-0" style={{ borderColor: THEME.border }}>
+                  <Card className="border rounded-lg overflow-hidden min-w-0" style={{ backgroundColor: THEME.card, borderColor: THEME.gold }}>
+                    <CardContent className="p-1.5 min-w-0">
                       {renderGridlineSettings(true)}
                     </CardContent>
                   </Card>
@@ -2416,7 +2416,7 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
 
               {/* Queue Panel — toggleable, fills remaining space */}
               {showQueuePanel && (
-                <div className="flex flex-col px-2 py-2" style={{ borderColor: THEME.border }}>
+                <div className="flex flex-col px-1.5 py-1.5 min-w-0" style={{ borderColor: THEME.border }}>
                   {/* Operator search (photoshoot only) */}
                   {renderOpSearch(true)}
                   {/* Queue list in compact mode */}
