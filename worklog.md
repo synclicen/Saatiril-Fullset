@@ -982,3 +982,34 @@ Stage Summary:
 - MC panel compact layout properly handles narrow widths
 - All panels use min-w-0 for proper flex behavior
 - Status badges and buttons are more compact to fit in narrow panels
+
+---
+Task ID: 3
+Agent: main
+Task: Match operator panel queue list with MC panel's minimalist style
+
+Work Log:
+- Analyzed uploaded images using VLM to understand the visual difference
+- MC panel: clean list with number + name + small status badge
+- Operator panel: had bulky badges with icons, column header row, NetworkQualityBadge
+- Redesigned operator panel's renderQueueList to match MC panel's minimalist style:
+  - Removed column header row (No / NIM / Nama / Status)
+  - Removed NetworkQualityBadge from queue header
+  - Simplified header to just "Antrean" + count badge + "Ch.X"
+  - Changed queue rows to: number + name + status dot (same as MC panel)
+  - Replaced bulky status badges with minimalist status dots
+  - Status dots: green=done, gold=sent/active, gray=pending, with glow effect
+  - Active row has pulsing gold dot
+- Added renderStatusDot to both MC panel and operator panel
+- MC panel compact queue now also uses status dots for consistency
+- Removed unused renderStatusBadge from operator panel
+- Removed unused NetworkQualityBadge import from operator panel
+- Lint: passes
+- Build: succeeds
+- Committed: 66b858e
+- Pushed to origin/main
+
+Stage Summary:
+- Operator panel queue list now matches MC panel's minimalist style
+- Both panels use status dots instead of bulky badges for a cleaner look
+- Code is cleaner with fewer imports and simpler rendering
