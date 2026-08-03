@@ -72,13 +72,20 @@ jobs:
     - name: Rename APKs
       run: |
         DEBUG_APK="android-full/app/build/outputs/apk/debug/app-debug.apk"
-        RELEASE_APK="android-full/app/build/outputs/apk/release/app-release.apk"
+        # Release APK may be named app-release-unsigned.apk if no signing config
+        RELEASE_APK=$(ls android-full/app/build/outputs/apk/release/app-release*.apk 2>/dev/null | head -1)
 
         cp "$DEBUG_APK" "android-full/app/build/outputs/apk/debug/saatiril-full-debug.apk"
         echo "Debug APK size: $(du -h android-full/app/build/outputs/apk/debug/saatiril-full-debug.apk | cut -f1)"
 
-        cp "$RELEASE_APK" "android-full/app/build/outputs/apk/release/saatiril-full.apk"
-        echo "Release APK size: $(du -h android-full/app/build/outputs/apk/release/saatiril-full.apk | cut -f1)"
+        if [ -n "$RELEASE_APK" ]; then
+          cp "$RELEASE_APK" "android-full/app/build/outputs/apk/release/saatiril-full.apk"
+          echo "Release APK size: $(du -h android-full/app/build/outputs/apk/release/saatiril-full.apk | cut -f1)"
+        else
+          echo "WARNING: No release APK found — using debug APK as fallback"
+          cp "$DEBUG_APK" "android-full/app/build/outputs/apk/release/saatiril-full.apk"
+          echo "APK size: $(du -h android-full/app/build/outputs/apk/release/saatiril-full.apk | cut -f1)"
+        fi
 
     - name: Upload Debug APK as artifact
       uses: actions/upload-artifact@v4
