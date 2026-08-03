@@ -286,7 +286,7 @@ class SocketManager {
             }
         }
 
-        s.on(Socket.EVENT_RECONNECT_FAILED) {
+        s.on("reconnect_failed") {
             try {
                 Log.e(TAG, "Reconnection failed after max attempts — starting manual retry")
                 // Manual retry every 3 seconds (like web client does every 5s)
@@ -312,7 +312,7 @@ class SocketManager {
             }
         }
 
-        s.on(Socket.EVENT_RECONNECT_ATTEMPT) { args ->
+        s.on("reconnect_attempt") { args ->
             try {
                 val attempt = args?.firstOrNull()
                 Log.i(TAG, "Reconnection attempt: $attempt")
@@ -324,7 +324,7 @@ class SocketManager {
             }
         }
 
-        s.on(Socket.EVENT_RECONNECT) { args ->
+        s.on("reconnect") { args ->
             try {
                 Log.i(TAG, "Reconnected after ${args?.firstOrNull()} attempts")
                 connectErrorCount = 0
