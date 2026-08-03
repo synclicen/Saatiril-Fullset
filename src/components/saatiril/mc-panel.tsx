@@ -656,6 +656,14 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
     )
   }
 
+  // ── Minimalist status dot (for compact queue list) ─────────────────────
+  const renderStatusDot = (status: StudentStatus) => {
+    if (status === 'done') return <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: '#4ade80', boxShadow: '0 0 4px #4ade8066' }} title="Selesai" />
+    if (status === 'sent') return <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: THEME.cyan, boxShadow: `0 0 4px ${THEME.cyan}66` }} title="Dikirim" />
+    if (isActiveStatus(status)) return <span className="size-2 rounded-full shrink-0 animate-pulse" style={{ backgroundColor: THEME.gold, boxShadow: `0 0 6px ${THEME.gold}88` }} title={statusLabel(status)} />
+    return <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: THEME.border }} title="Menunggu" />
+  }
+
   // ── Photoshoot: search input + results
   const renderPhotoshootSearch = () => (
     <Card
@@ -1127,9 +1135,7 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
                       >
                         {student.nama}
                       </span>
-                      <div className="shrink-0">
-                        {renderStatusBadge(student.status)}
-                      </div>
+                      {renderStatusDot(student.status)}
                     </div>
                   )
                 })

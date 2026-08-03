@@ -59,7 +59,6 @@ import {
 } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
 import { useAIDetection, type AIMomentEvent } from '@/hooks/use-ai-detection'
 import { usePalmDetection } from '@/hooks/use-palm-detection'
 import { useToast } from '@/hooks/use-toast'
@@ -1266,11 +1265,12 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
     return { backgroundColor: THEME.panel, borderLeft: `4px solid ${THEME.border}` }
   }
 
-  const renderStatusBadge = (status: StudentStatus) => {
-    if (status === 'done') return <Badge className="text-[8px] px-1 py-0" style={{ backgroundColor: '#22c55e33', color: '#4ade80', border: '1px solid #22c55e55' }}><CheckCircle2 className="size-2.5 mr-0.5" />✓</Badge>
-    if (status === 'sent') return <Badge className="text-[8px] px-1 py-0" style={{ backgroundColor: '#d4af3733', color: THEME.gold, border: '1px solid #d4af3766' }}><Camera className="size-2.5 mr-0.5" />→</Badge>
-    if (isActiveStatus(status)) return <Badge className="text-[8px] px-1 py-0 animate-pulse" style={{ backgroundColor: `${THEME.gold}33`, color: THEME.gold, border: `1px solid ${THEME.gold}66` }}><Loader2 className="size-2.5 mr-0.5 animate-spin" />{statusLabel(status)}</Badge>
-    return <Badge className="text-[8px] px-1 py-0" style={{ backgroundColor: `${THEME.border}44`, color: THEME.muted, border: `1px solid ${THEME.border}` }}><Clock className="size-2.5 mr-0.5" /></Badge>
+  // ── Minimalist status dot (for queue list — matches MC panel style) ────
+  const renderStatusDot = (status: StudentStatus) => {
+    if (status === 'done') return <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: '#4ade80', boxShadow: '0 0 4px #4ade8066' }} title="Selesai" />
+    if (status === 'sent') return <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: THEME.gold, boxShadow: `0 0 4px ${THEME.gold}66` }} title="Dikirim" />
+    if (isActiveStatus(status)) return <span className="size-2 rounded-full shrink-0 animate-pulse" style={{ backgroundColor: THEME.gold, boxShadow: `0 0 6px ${THEME.gold}88` }} title={statusLabel(status)} />
+    return <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: THEME.border }} title="Menunggu" />
   }
 
   // ── Shutter mode selector ────────────────────────────────────────────────
@@ -1919,21 +1919,22 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
   }
 
   // ── Queue list (shared) ──────────────────────────────────────────────────
+  // Matches MC panel's minimalist style: number + name + small dot indicator
   const renderQueueList = (compact = false) => (
     <Card
-      className={`${compact ? 'flex-1 min-h-0' : 'flex-1 min-h-0'} border rounded-lg overflow-hidden flex flex-col min-w-0`}
+      className="flex-1 min-h-0 border rounded-lg overflow-hidden flex flex-col min-w-0"
       style={{ backgroundColor: THEME.card, borderColor: THEME.border }}
     >
       <div
-        className="shrink-0 flex items-center justify-between px-1.5 py-1.5 min-w-0"
+        className="shrink-0 flex items-center justify-between px-2 py-1.5 min-w-0"
         style={{ borderBottom: `1px solid ${THEME.border}` }}
       >
-        <div className="flex items-center gap-1 min-w-0">
-          <h3 className={`${compact ? 'text-[10px]' : 'text-xs'} font-semibold shrink-0`} style={{ color: '#ffffff' }}>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <h3 className="text-xs font-semibold shrink-0" style={{ color: '#ffffff' }}>
             Antrean
           </h3>
           <span
-            className={`${compact ? 'text-[9px] px-1 py-0' : 'text-xs px-1.5 py-0.5'} font-bold rounded-full shrink-0`}
+            className="text-[10px] font-bold px-1.5 py-0 rounded-full shrink-0"
             style={{
               backgroundColor: remainingCount > 10 ? `${THEME.red}33` : remainingCount > 0 ? `${THEME.gold}33` : `${THEME.border}44`,
               color: remainingCount > 10 ? THEME.red : remainingCount > 0 ? THEME.gold : THEME.muted,
@@ -1943,62 +1944,40 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
             {remainingCount}
           </span>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <NetworkQualityBadge detailed={compact ? false : true} />
-          <span className="text-[9px] shrink-0" style={{ color: THEME.muted }}>Ch.{myChannel}</span>
-        </div>
+        <span className="text-[10px] shrink-0" style={{ color: THEME.muted }}>Ch.{myChannel}</span>
       </div>
-
-      {!compact && (
-        <div
-          className="shrink-0 grid grid-cols-[24px_60px_1fr_60px] gap-0.5 px-2 py-1 text-[8px] font-semibold uppercase tracking-wider"
-          style={{ backgroundColor: THEME.panel, color: THEME.muted, borderBottom: `1px solid ${THEME.border}` }}
-        >
-          <span>No</span><span>NIM</span><span>Nama</span><span className="text-right">Status</span>
-        </div>
-      )}
 
       <ScrollArea className="flex-1 min-h-0">
         <div className="flex flex-col">
           {channelStudents.length === 0 ? (
             <div className="flex items-center justify-center py-8">
-              <p className="text-xs" style={{ color: THEME.muted }}>Tidak ada mahasiswa</p>
+              <p className="text-xs" style={{ color: THEME.muted }}>Tidak ada peserta</p>
             </div>
           ) : (
             channelStudents.map((student, idx) => {
               const isActive = student.status === `active_${myChannel}`
               const isNext = student.id === nextPending?.id && student.status === 'pending'
 
-              if (compact) {
-                return (
-                  <div
-                    key={student.id}
-                    ref={isActive ? activeRowRef : isNext ? nextRowRef : undefined}
-                    className="flex items-center gap-1 px-1.5 py-1 transition-colors duration-200 min-w-0"
-                    style={getRowStyle(student)}
-                  >
-                    <span className="text-[9px] font-mono w-3 shrink-0 text-center" style={{ color: THEME.muted }}>{idx + 1}</span>
-                    <span className={`text-[10px] font-medium truncate flex-1 min-w-0 ${student.status === 'done' ? 'line-through' : ''}`} style={{ color: isActive ? THEME.gold : student.status === 'done' ? THEME.muted : '#ffffff' }}>
-                      {student.nama}
-                    </span>
-                    <div className="shrink-0">{renderStatusBadge(student.status)}</div>
-                  </div>
-                )
-              }
-
+              // Minimalist row: number + name + status dot — matches MC panel style
               return (
                 <div
                   key={student.id}
                   ref={isActive ? activeRowRef : isNext ? nextRowRef : undefined}
-                  className="grid grid-cols-[24px_60px_1fr_60px] gap-0.5 items-center px-2 py-1 transition-colors duration-200"
+                  className="flex items-center gap-1.5 px-2 py-1.5 transition-colors duration-200 min-w-0"
                   style={getRowStyle(student)}
                 >
-                  <span className="text-[9px] font-mono" style={{ color: THEME.muted }}>{idx + 1}</span>
-                  <span className="text-[9px] font-mono truncate" style={{ color: THEME.muted }}>{student.nim}</span>
-                  <span className={`text-[10px] font-medium truncate ${student.status === 'done' ? 'line-through' : ''}`} style={{ color: isActive ? THEME.gold : student.status === 'done' ? THEME.muted : '#ffffff' }}>
+                  <span className="text-[10px] font-mono w-4 shrink-0 text-center" style={{ color: THEME.muted }}>
+                    {idx + 1}
+                  </span>
+                  <span
+                    className={`text-[11px] font-medium truncate flex-1 min-w-0 ${student.status === 'done' ? 'line-through' : ''}`}
+                    style={{
+                      color: isActive ? THEME.gold : student.status === 'done' ? THEME.muted : '#ffffff',
+                    }}
+                  >
                     {student.nama}
                   </span>
-                  <div className="flex justify-end">{renderStatusBadge(student.status)}</div>
+                  {renderStatusDot(student.status)}
                 </div>
               )
             })
