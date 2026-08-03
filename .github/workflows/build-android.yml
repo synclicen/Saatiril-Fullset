@@ -3,6 +3,9 @@ name: Build Saatiril APK Android
 on:
   push:
     branches: [main]
+    paths:
+      - 'android-operator/**'
+      - '.github/workflows/build-android.yml'
   workflow_dispatch:
 
 permissions:
@@ -58,43 +61,60 @@ jobs:
       working-directory: android-operator
       run: chmod +x gradlew
 
+    # ── Build BOTH Debug and Release APKs ──
     - name: Build Debug APK
       working-directory: android-operator
       run: ./gradlew assembleDebug --no-daemon --stacktrace
 
-    - name: Rename APK to saatiril-operator.apk
-      working-directory: android-operator/app/build/outputs/apk/debug
-      run: |
-        cp app-debug.apk saatiril-operator.apk
-        echo "APK size: $(du -h saatiril-operator.apk | cut -f1)"
+    - name: Build Release APK
+      working-directory: android-operator
+      run: ./gradlew assembleRelease --no-daemon --stacktrace
 
-    - name: Upload APK as artifact
+    - name: Rename APKs
+      run: |
+        DEBUG_APK="android-operator/app/build/outputs/apk/debug/app-debug.apk"
+        RELEASE_APK="android-operator/app/build/outputs/apk/release/app-release.apk"
+
+        # Rename debug APK
+        cp "$DEBUG_APK" "android-operator/app/build/outputs/apk/debug/saatiril-operator-debug.apk"
+        echo "Debug APK size: $(du -h android-operator/app/build/outputs/apk/debug/saatiril-operator-debug.apk | cut -f1)"
+
+        # Rename release APK (this is the production APK)
+        cp "$RELEASE_APK" "android-operator/app/build/outputs/apk/release/saatiril-operator.apk"
+        echo "Release APK size: $(du -h android-operator/app/build/outputs/apk/release/saatiril-operator.apk | cut -f1)"
+
+    - name: Upload Debug APK as artifact
       uses: actions/upload-artifact@v4
       with:
-        name: saatiril-operator-android
-        path: android-operator/app/build/outputs/apk/debug/saatiril-operator.apk
+        name: saatiril-operator-android-debug
+        path: android-operator/app/build/outputs/apk/debug/saatiril-operator-debug.apk
 
-    # ── Auto-publish APK to GitHub Releases (tag: latest) ──
-    # Don't delete the entire release — just replace the APK asset so portable exe stays intact
+    - name: Upload Release APK as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: saatiril-operator-android-release
+        path: android-operator/app/build/outputs/apk/release/saatiril-operator.apk
+
+    # ── Auto-publish Release APK to GitHub Releases (tag: latest) ──
     - name: Upload APK to latest release
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
+        APK="android-operator/app/build/outputs/apk/release/saatiril-operator.apk"
         # Check if 'latest' release already exists
         if gh release view latest 2>/dev/null; then
           echo "Existing 'latest' release found — replacing APK asset only"
           # Delete old APK asset if exists
           gh release delete-asset latest saatiril-operator.apk --yes 2>/dev/null || true
-          # Upload new APK
-          gh release upload latest android-operator/app/build/outputs/apk/debug/saatiril-operator.apk --clobber
-          echo "APK uploaded to existing 'latest' release"
+          # Upload new release APK
+          gh release upload latest "$APK" --clobber
+          echo "Release APK uploaded to existing 'latest' release"
         else
-          echo "No 'latest' release found — creating new one with APK"
-          # Create the release (Electron build will add portable later)
+          echo "No 'latest' release found — creating new one with release APK"
           gh release create latest \
-            android-operator/app/build/outputs/apk/debug/saatiril-operator.apk \
+            "$APK" \
             --title "Saatiril Operator - Latest" \
-            --notes "APK terbaru dari build #${{ github.run_number }} (${{ github.sha }})" \
+            --notes "APK terbaru (release) dari build #${{ github.run_number }} (${{ github.sha }})" \
             --prerelease
-          echo "Created 'latest' release with APK"
+          echo "Created 'latest' release with release APK"
         fi

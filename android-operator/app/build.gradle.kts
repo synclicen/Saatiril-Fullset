@@ -11,8 +11,8 @@ android {
         applicationId = "com.saatiril.operator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 34
-        versionName = "1.0.34-usb-android14-fix"
+        versionCode = 35
+        versionName = "1.0.35-native-camera-usb-uvc"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
