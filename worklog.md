@@ -946,3 +946,39 @@ Stage Summary:
 - MC panel on the left is already resizable (was fixed in previous session)
 - Reduced padding and font sizes throughout compact modes for better narrow-width display
 - Commit: 0bb6357
+
+---
+Task ID: 2
+Agent: main
+Task: Fix resizable panel content overflow and make layouts responsive for resize
+
+Work Log:
+- Read current operator-panel.tsx, main-app.tsx, and mc-panel.tsx to understand current layout
+- MC sidebar already resizable (ResizablePanelGroup in main-app.tsx)
+- Fixed right panel content overflow in operator-panel.tsx:
+  - Changed container from overflow-hidden to overflow-y-auto overflow-x-hidden
+  - Reduced minSize from 15% to 12% for more flexible resizing
+  - Made toolbar buttons use min-w-0, smaller padding, and truncate labels
+  - Made target info row more compact (smaller avatar, text, badge)
+  - Made camera selector more compact (smaller height and font)
+  - Added min-w-0 to all panels (shutter, gridline, queue)
+  - Made status badges more compact (8px text, shorter labels)
+  - Made queue list items more compact (smaller gaps, padding)
+- Fixed MC panel compact layout for narrow widths:
+  - Changed root container to overflow-y-auto overflow-x-hidden
+  - Reduced padding and gaps throughout compact mode
+  - Made call buttons more compact (h-9 instead of h-10)
+  - Made status badges more compact in compact mode
+  - Made queue list rows more compact (no NIM column, smaller gaps)
+  - Made search input more compact in compact mode
+  - Made sent students panel more compact in compact mode
+- Ran lint: passes
+- Build: succeeds
+- Committed: a65aa43
+- Pushed to origin/main
+
+Stage Summary:
+- Right panel content no longer gets cut off when resized - uses overflow-y-auto and responsive sizing
+- MC panel compact layout properly handles narrow widths
+- All panels use min-w-0 for proper flex behavior
+- Status badges and buttons are more compact to fit in narrow panels
