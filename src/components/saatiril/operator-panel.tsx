@@ -2252,7 +2252,7 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
 
         {/* RIGHT: Toolbar + Target info + toggleable panels */}
         <ResizablePanel defaultSize={35} minSize={12} maxSize={60}>
-          <div className="flex flex-col h-full min-w-0 overflow-y-auto overflow-x-hidden" style={{ backgroundColor: THEME.panel }}>
+          <div className="flex flex-col h-full min-w-0" style={{ backgroundColor: THEME.panel }}>
             {/* ── Toolbar Row (top of right panel, no longer covering camera) ── */}
             <div
               className="shrink-0 flex flex-wrap items-center gap-1 px-1.5 py-1.5 border-b min-w-0"
@@ -2369,42 +2369,44 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
               </Select>
             </div>
 
-            {/* Scrollable panels area */}
-            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-              {/* Shutter Mode Panel — toggleable */}
-              {showShutterPanel && (
-                <div className="px-1.5 py-1.5 border-b min-w-0" style={{ borderColor: THEME.border }}>
-                  <Card className="border rounded-lg overflow-hidden min-w-0" style={{ backgroundColor: THEME.card, borderColor: THEME.gold }}>
-                    <CardContent className="p-1.5 min-w-0">
-                      {renderShutterModeSelector(true)}
-                    </CardContent>
-                  </Card>
-                </div>
-              )}
-
-              {/* Gridline Settings Panel — toggleable */}
-              {showGridlinePanel && (
-                <div className="px-1.5 py-1.5 border-b min-w-0" style={{ borderColor: THEME.border }}>
-                  <Card className="border rounded-lg overflow-hidden min-w-0" style={{ backgroundColor: THEME.card, borderColor: THEME.gold }}>
-                    <CardContent className="p-1.5 min-w-0">
-                      {renderGridlineSettings(true)}
-                    </CardContent>
-                  </Card>
-                </div>
-              )}
-
-              {/* Queue Panel — toggleable, fills remaining space */}
-              {showQueuePanel && (
-                <div className="flex flex-col px-1.5 py-1.5 min-w-0" style={{ borderColor: THEME.border }}>
-                  {/* Operator search (photoshoot only) */}
-                  {renderOpSearch(true)}
-                  {/* Queue list in compact mode */}
-                  <div className="flex-1 min-h-0">
-                    {renderQueueList(true)}
+            {/* Scrollable panels area — uses ScrollArea for minimalist scrollbar matching MC panel */}
+            <ScrollArea className="flex-1 min-h-0">
+              <div className="flex flex-col">
+                {/* Shutter Mode Panel — toggleable */}
+                {showShutterPanel && (
+                  <div className="px-1.5 py-1.5 border-b min-w-0" style={{ borderColor: THEME.border }}>
+                    <Card className="border rounded-lg overflow-hidden min-w-0" style={{ backgroundColor: THEME.card, borderColor: THEME.gold }}>
+                      <CardContent className="p-1.5 min-w-0">
+                        {renderShutterModeSelector(true)}
+                      </CardContent>
+                    </Card>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
+
+                {/* Gridline Settings Panel — toggleable */}
+                {showGridlinePanel && (
+                  <div className="px-1.5 py-1.5 border-b min-w-0" style={{ borderColor: THEME.border }}>
+                    <Card className="border rounded-lg overflow-hidden min-w-0" style={{ backgroundColor: THEME.card, borderColor: THEME.gold }}>
+                      <CardContent className="p-1.5 min-w-0">
+                        {renderGridlineSettings(true)}
+                      </CardContent>
+                    </Card>
+                  </div>
+                )}
+
+                {/* Queue Panel — toggleable, fills remaining space */}
+                {showQueuePanel && (
+                  <div className="flex flex-col px-1.5 py-1.5 min-w-0" style={{ borderColor: THEME.border }}>
+                    {/* Operator search (photoshoot only) */}
+                    {renderOpSearch(true)}
+                    {/* Queue list in compact mode */}
+                    <div className="flex-1 min-h-0">
+                      {renderQueueList(true)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
           </div>
         </ResizablePanel>
       </ResizablePanelGroup>

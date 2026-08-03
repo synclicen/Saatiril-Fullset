@@ -1009,7 +1009,7 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
   // ── COMPACT DESKTOP LAYOUT — single-column vertical for sidebar use
   if (compact) {
     return (
-      <div className="flex flex-col gap-1.5 h-full p-1.5 min-w-0 overflow-y-auto overflow-x-hidden" style={{ backgroundColor: THEME.bg }}>
+      <div className="flex flex-col gap-1.5 h-full p-1.5 min-w-0" style={{ backgroundColor: THEME.bg }}>
         {/* Call Panel — compact */}
         {photoshoot ? renderPhotoshootSearch() : (
           <Card
