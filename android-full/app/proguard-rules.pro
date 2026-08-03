@@ -7,6 +7,10 @@
 -keepattributes *Annotation*
 -keep class com.google.gson.** { *; }
 
+# AutoValue/Javapoet shaded (transitive from Gson/Socket.io)
+-dontwarn javax.lang.model.**
+-dontwarn autovalue.shaded.**
+
 # MediaPipe Tasks Vision
 -keep class com.google.mediapipe.** { *; }
 -keep class com.mediapipe.** { *; }
