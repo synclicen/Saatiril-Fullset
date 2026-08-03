@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Allow cleartext (HTTP) traffic for LAN connections to Saatiril server -->
+    <!-- This is required because the Saatiril socket server runs on HTTP, not HTTPS -->
+    <!-- Android 9+ blocks cleartext traffic by default -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
