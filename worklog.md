@@ -1146,3 +1146,26 @@ Stage Summary:
 - Data stored in WebView localStorage (Zustand persist)
 - Server mode available for multi-device use cases
 - Release APK: saatiril-full-system.apk (11.9 MB) available on GitHub Releases
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix license verification hang - app stuck on "Memverifikasi lisensi..."
+
+Work Log:
+- Analyzed user screenshot showing app stuck on "Memverifikasi lisensi..." (Verifying license...) spinner
+- Identified root cause: LicenseGate component showed license verification spinner for all environments, but the license IPC (window.saatirilAPI) is only available in Electron desktop app
+- In Android WebView and web browser, window.saatirilAPI is undefined, so the license check should bypass immediately, but the component showed the spinner first (server-rendered) and relied on useEffect to bypass it
+- Fixed license-gate.tsx: Added upfront detection of Electron vs web/Android environment, bypass license check immediately for non-Electron without showing spinner, added 5s safety timeout, used validatedRef to prevent double callback invocation
+- Fixed page.tsx: Added Admin role handling from URL params (for Android WebView standalone mode), avoided hydration mismatch by deferring license bypass
+- Fixed WebViewScreen.kt: Injected window.saatirilAPI = { isElectron: false, isAndroid: true } bridge in Android WebView after page loads
+- Updated saatiril.d.ts: Added isAndroid and platform to SaatirilAPI type
+- Verified build succeeds with `bun run build`
+- Verified page content no longer contains "Memverifikasi lisensi..." for non-Electron
+- Committed and pushed changes
+
+Stage Summary:
+- Root cause: License gate showed spinner for all environments, but Electron IPC not available in web/Android
+- Fix: Detect environment upfront, bypass license immediately for non-Electron, add safety timeout
+- Files modified: license-gate.tsx, page.tsx, WebViewScreen.kt, saatiril.d.ts
+- Build: Succeeds
+- Git: Pushed to main (commit a5aa073)
