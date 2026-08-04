@@ -84,7 +84,9 @@ jobs:
     # ── Debug Build ──
     - name: Build Debug APK
       working-directory: android-full-app
-      run: ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build-log.txt
+      run: |
+        set -o pipefail
+        ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build-log.txt
 
     - name: Upload build log on failure
       if: failure()
@@ -95,11 +97,15 @@ jobs:
 
     - name: Find and Rename Debug APK
       run: |
-        echo "=== Looking for debug APK ==="
-        find android-full-app/app/build/outputs/apk/debug -name '*.apk' -ls || true
-        DEBUG_APK=$(find android-full-app/app/build/outputs/apk/debug -name '*.apk' | head -1)
+        echo "=== All APK files in build directory ==="
+        find android-full-app/app/build/outputs -name '*.apk' -ls 2>/dev/null || echo "No APK files found anywhere"
+        echo "=== Debug APK directory ==="
+        ls -la android-full-app/app/build/outputs/apk/debug/ 2>/dev/null || echo "Debug APK directory not found"
+        DEBUG_APK=$(find android-full-app/app/build/outputs/apk/debug -name '*.apk' 2>/dev/null | head -1)
         if [ -z "$DEBUG_APK" ]; then
           echo "ERROR: No debug APK found!"
+          echo "=== Gradle build output ==="
+          cat android-full-app/build-log.txt 2>/dev/null || echo "No build log available"
           exit 1
         fi
         echo "Found debug APK: $DEBUG_APK"
@@ -115,7 +121,9 @@ jobs:
     # ── Release Build ──
     - name: Build Release APK
       working-directory: android-full-app
-      run: ./gradlew assembleRelease --no-daemon --stacktrace
+      run: |
+        set -o pipefail
+        ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build-log-release.txt
 
     - name: Find and Rename Release APK
       run: |
