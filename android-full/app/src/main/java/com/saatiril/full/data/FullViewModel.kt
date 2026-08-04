@@ -93,6 +93,13 @@ class FullViewModel(application: Application) : AndroidViewModel(application) {
     private val _currentTarget = MutableStateFlow<Student?>(null)
     val currentTarget: StateFlow<Student?> = _currentTarget.asStateFlow()
 
+    // ─── Standalone Mode ──────────────────────────────────────
+    private val _isStandalone = MutableStateFlow(false)
+    val isStandalone: StateFlow<Boolean> = _isStandalone.asStateFlow()
+
+    private val _projectCreated = MutableStateFlow(false)
+    val projectCreated: StateFlow<Boolean> = _projectCreated.asStateFlow()
+
     // ─── Capture State ──────────────────────────────────────────
 
     private val _capturePhase = MutableStateFlow(CapturePhase.STANDBY)
@@ -631,13 +638,18 @@ class FullViewModel(application: Application) : AndroidViewModel(application) {
     fun disconnect() {
         stopStateRequestLoop()
         stopFrameRequestLoop()
-        socketManager.disconnect()
+        if (!_isStandalone.value) {
+            socketManager.disconnect()
+        }
         _project.value = null
         _currentTarget.value = null
         _capturePhase.value = CapturePhase.STANDBY
         _capturedPhotos.value = emptyList()
         _mcCallBuffer.value = emptyList()
         _frameBitmap.value = null
+        _isStandalone.value = false
+        _projectCreated.value = false
+        _connectionState.value = ConnectionState.DISCONNECTED
         updateOpQueue()
     }
 
@@ -1328,11 +1340,175 @@ class FullViewModel(application: Application) : AndroidViewModel(application) {
         connect(serverUrl, channel, password)
     }
 
+    // ─── Standalone Mode Methods ───────────────────────────────
+
+    /**
+     * Start standalone mode - no server needed.
+     * Sets connection state to AUTHENTICATED so the app proceeds to MainScreen.
+     */
+    fun startStandalone(role: String = Roles.ADMIN, channel: Int = 1) {
+        _isStandalone.value = true
+        _role.value = role
+        _myChannel.value = channel
+        _connectionState.value = ConnectionState.AUTHENTICATED
+        _connectionHealth.value = ConnectionHealth(connected = true, latencyMs = 0)
+        Log.i(TAG, "Standalone mode started: role=$role, channel=$channel")
+    }
+
+    /**
+     * Create a new project locally (standalone mode).
+     */
+    fun createProject(name: String, mode: CameraMode, ratio: String, preset: String, sessionPassword: String? = null) {
+        val projectId = "local_${System.currentTimeMillis()}"
+        val config = ProjectConfig(
+            mode = mode,
+            ratio = ratio,
+            preset = preset,
+            sessionPassword = sessionPassword
+        )
+        _project.value = Project(
+            id = projectId,
+            name = name,
+            config = config,
+            database = emptyList(),
+            photoHistory = emptyList()
+        )
+        _projectCreated.value = true
+        Log.i(TAG, "Standalone project created: $name (mode=$mode, ratio=$ratio)")
+    }
+
+    /**
+     * Add a student to the local project.
+     */
+    fun addStudent(nim: String, nama: String, assignedChannel: Int = 1) {
+        val proj = _project.value ?: return
+        val studentId = "stu_${System.currentTimeMillis()}_${nim.hashCode()}"
+        val newStudent = Student(
+            id = studentId,
+            nim = nim,
+            nama = nama,
+            status = "pending",
+            assignedChannel = assignedChannel
+        )
+        _project.value = proj.copy(database = proj.database + newStudent)
+        updateOpQueue()
+        Log.i(TAG, "Student added: $nama ($nim) Ch.$assignedChannel")
+    }
+
+    /**
+     * Add multiple students at once (for batch import).
+     */
+    fun addStudents(students: List<Triple<String, String, Int>>) {
+        val proj = _project.value ?: return
+        val newStudents = students.map { (nim, nama, ch) ->
+            Student(
+                id = "stu_${System.currentTimeMillis()}_${nim.hashCode()}",
+                nim = nim,
+                nama = nama,
+                status = "pending",
+                assignedChannel = ch
+            )
+        }
+        _project.value = proj.copy(database = proj.database + newStudents)
+        updateOpQueue()
+        Log.i(TAG, "Batch added ${newStudents.size} students")
+    }
+
+    /**
+     * Remove a student from the local project.
+     */
+    fun removeStudent(studentId: String) {
+        val proj = _project.value ?: return
+        _project.value = proj.copy(database = proj.database.filter { it.id != studentId })
+        updateOpQueue()
+    }
+
+    /**
+     * Local MC_CALL - set current target directly (no server needed).
+     */
+    fun callNextLocal() {
+        val proj = _project.value ?: return
+        val myCh = _myChannel.value
+        val pending = proj.database.filter {
+            it.assignedChannel == myCh && it.status == "pending"
+        }
+        if (pending.isEmpty()) {
+            Log.w(TAG, "No pending students to call")
+            return
+        }
+        val nextStudent = pending.first()
+        // Mark as active
+        val newStatus = if (CameraModes.isDualMode(proj.config.mode)) "active_1_2" else "active_$myCh"
+        _project.value = proj.copy(
+            database = proj.database.map {
+                if (it.id == nextStudent.id) it.copy(status = newStatus) else it
+            }
+        )
+        _currentTarget.value = nextStudent.copy(status = newStatus)
+        updateOpQueue()
+        Log.i(TAG, "Local MC_CALL: ${nextStudent.nama} (${nextStudent.nim})")
+    }
+
+    /**
+     * Local STUDENT_DONE - mark student as done.
+     */
+    fun studentDoneLocal(studentId: String) {
+        val proj = _project.value ?: return
+        _project.value = proj.copy(
+            database = proj.database.map {
+                if (it.id == studentId) it.copy(status = "done") else it
+            }
+        )
+        if (_currentTarget.value?.id == studentId) {
+            _currentTarget.value = null
+            _capturePhase.value = CapturePhase.STANDBY
+        }
+        updateOpQueue()
+        Log.i(TAG, "Local STUDENT_DONE: $studentId")
+    }
+
+    /**
+     * Local STUDENT_RESET - reset student to pending.
+     */
+    fun studentResetLocal(studentId: String) {
+        val proj = _project.value ?: return
+        _project.value = proj.copy(
+            database = proj.database.map {
+                if (it.id == studentId) it.copy(status = "pending") else it
+            },
+            photoHistory = proj.photoHistory.filter { it.student.id != studentId }
+        )
+        if (_currentTarget.value?.id == studentId) {
+            _currentTarget.value = null
+            _capturePhase.value = CapturePhase.STANDBY
+        }
+        updateOpQueue()
+        Log.i(TAG, "Local STUDENT_RESET: $studentId")
+    }
+
     /**
      * Emit a LAN message event through the socket.
      * Used by Admin and MC panels for STUDENT_DONE, STUDENT_RESET, etc.
      */
     fun emitLanEvent(event: String, data: Map<String, Any>) {
+        if (_isStandalone.value) {
+            // Handle locally
+            when (event) {
+                SocketEvents.STUDENT_DONE -> {
+                    val studentId = data["studentId"] as? String ?: return
+                    studentDoneLocal(studentId)
+                }
+                SocketEvents.STUDENT_RESET -> {
+                    val studentId = data["studentId"] as? String ?: return
+                    studentResetLocal(studentId)
+                }
+                SocketEvents.MC_CALL -> {
+                    callNextLocal()
+                }
+            }
+            return
+        }
+        // Original server mode
         try {
             socketManager.emitLanMessage(event, data)
             Log.d(TAG, "Emitted LAN event: $event")
@@ -1346,6 +1522,10 @@ class FullViewModel(application: Application) : AndroidViewModel(application) {
      * Emits MC_CALL which the server handles to assign the next pending student.
      */
     fun callNext() {
+        if (_isStandalone.value) {
+            callNextLocal()
+            return
+        }
         val proj = _project.value ?: return
         val myCh = _myChannel.value
         val pending = proj.database.filter {

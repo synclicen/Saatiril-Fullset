@@ -16,6 +16,8 @@ import androidx.lifecycle.ViewModelProvider
 import com.saatiril.full.data.ConnectionState
 import com.saatiril.full.data.FullViewModel
 import com.saatiril.full.ui.connection.ConnectionScreen
+import com.saatiril.full.ui.connection.ModeSelectionScreen
+import com.saatiril.full.ui.admin.ProjectSetupScreen
 import com.saatiril.full.ui.main.MainScreen
 
 /**
@@ -167,6 +169,12 @@ fun SaatirilFullApp(
     activity: MainActivity
 ) {
     val connectionState by viewModel.connectionState.collectAsState()
+    val isStandalone by viewModel.isStandalone.collectAsState()
+    val projectCreated by viewModel.projectCreated.collectAsState()
+
+    var showModeSelection by remember { mutableStateOf(true) }
+    var showConnectionScreen by remember { mutableStateOf(false) }
+    var showProjectSetup by remember { mutableStateOf(false) }
     var isConnected by remember { mutableStateOf(false) }
 
     // Track camera permission
@@ -196,25 +204,57 @@ fun SaatirilFullApp(
                 viewModel.cameraUVCManager.showPreview()
             }
             ConnectionState.DISCONNECTED -> {
-                isConnected = false
-                viewModel.cameraUVCManager.hidePreview()
+                if (!isStandalone) {
+                    isConnected = false
+                    viewModel.cameraUVCManager.hidePreview()
+                }
             }
             else -> {}
         }
     }
 
-    if (isConnected && connectionState != ConnectionState.DISCONNECTED) {
-        MainScreen(
-            viewModel = viewModel,
-            hasCameraPermission = hasCameraPermission
-        )
-    } else {
-        ConnectionScreen(
-            viewModel = viewModel,
-            onConnected = {
-                isConnected = true
-                viewModel.cameraUVCManager.showPreview()
-            }
-        )
+    // Navigation logic
+    when {
+        // Main app - connected (server or standalone)
+        isConnected && connectionState != ConnectionState.DISCONNECTED -> {
+            MainScreen(
+                viewModel = viewModel,
+                hasCameraPermission = hasCameraPermission
+            )
+        }
+        // Project setup (standalone mode)
+        showProjectSetup -> {
+            ProjectSetupScreen(
+                viewModel = viewModel,
+                onProjectCreated = {
+                    isConnected = true
+                    viewModel.cameraUVCManager.showPreview()
+                }
+            )
+        }
+        // Connection screen (server mode)
+        showConnectionScreen -> {
+            ConnectionScreen(
+                viewModel = viewModel,
+                onConnected = {
+                    isConnected = true
+                    viewModel.cameraUVCManager.showPreview()
+                }
+            )
+        }
+        // Mode selection (default)
+        showModeSelection -> {
+            ModeSelectionScreen(
+                onStandalone = {
+                    showModeSelection = false
+                    showProjectSetup = true
+                    viewModel.startStandalone()
+                },
+                onConnectToServer = {
+                    showModeSelection = false
+                    showConnectionScreen = true
+                }
+            )
+        }
     }
 }
