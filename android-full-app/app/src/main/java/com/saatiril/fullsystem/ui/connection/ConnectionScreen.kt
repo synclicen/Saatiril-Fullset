@@ -26,7 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.saatiril.fullsystem.ConnectionParams
 import com.saatiril.fullsystem.MainActivity
-import com.saatiril.fullsystem.server.LocalWebServer
+import com.saatiril.fullsystem.server.LocalWebServer.Companion.DEFAULT_PORT
 import java.net.URI
 
 // ─── Saatiril Theme Colors ──────────────────────────────────
@@ -330,7 +330,7 @@ fun ConnectionScreen(
                     if (selectedMode == "standalone") {
                         // Standalone mode — start local server and connect
                         try {
-                            val baseUrl = LocalWebServer.DEFAULT_PORT.let { port ->
+                            val baseUrl = DEFAULT_PORT.let { port ->
                                 "http://localhost:$port"
                             }
                             onConnected(
@@ -475,7 +475,7 @@ private fun RoleButton(
 ) {
     OutlinedButton(
         onClick = onClick,
-        modifier = Modifier.weight(1f).height(44.dp),
+        modifier = Modifier.height(44.dp),
         shape = RoundedCornerShape(10.dp),
         border = BorderStroke(
             width = if (selected) 1.5.dp else 1.dp,
@@ -502,7 +502,7 @@ private fun ChannelButton(
 ) {
     OutlinedButton(
         onClick = onClick,
-        modifier = Modifier.weight(1f).height(44.dp),
+        modifier = Modifier.height(44.dp),
         shape = RoundedCornerShape(10.dp),
         border = BorderStroke(
             width = if (selected) 1.5.dp else 1.dp,
@@ -513,7 +513,7 @@ private fun ChannelButton(
             contentColor = if (selected) GOLD else MUTED
         )
     ) {
-        Icon(Icons.Default.Cube, null, modifier = Modifier.size(16.dp))
+        Icon(Icons.Default.ViewInAr, null, modifier = Modifier.size(16.dp))
         Spacer(modifier = Modifier.width(4.dp))
         Text("Ch. $channel", fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
     }

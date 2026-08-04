@@ -19,7 +19,7 @@ import java.net.URLConnection
  * │  Android App                             │
  * │  ┌────────────────────────────────────┐  │
  * │  │ LocalWebServer (NanoHTTPD)         │  │
- * │  │ Serves /assets/web/* on localhost  │  │
+ * │  │ Serves assets/web on localhost     │  │
  * │  └────────────────────────────────────┘  │
  * │  ┌────────────────────────────────────┐  │
  * │  │ WebView → http://localhost:PORT/   │  │
@@ -129,7 +129,7 @@ class LocalWebServer(
             val bytes = inputStream.readBytes()
             inputStream.close()
 
-            // Add caching headers for static assets (_next/*)
+            // Add caching headers for static assets (_next dir)
             val headers = mutableMapOf<String, String>()
             if (assetPath.startsWith("_next/") || assetPath.startsWith("js/") || assetPath.startsWith("ai/")) {
                 // Cache static assets for 1 year (Next.js uses content-hashed filenames)

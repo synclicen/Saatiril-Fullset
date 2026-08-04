@@ -4,7 +4,6 @@ import android.util.Log
 import androidx.compose.runtime.*
 import com.saatiril.fullsystem.ui.connection.ConnectionScreen
 import com.saatiril.fullsystem.ui.webview.WebViewScreen
-import com.saatiril.fullsystem.server.LocalWebServer
 
 /**
  * Root Compose app — manages navigation between Connection and WebView screens.
