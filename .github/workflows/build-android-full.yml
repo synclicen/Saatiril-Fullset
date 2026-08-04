@@ -93,11 +93,18 @@ jobs:
         name: build-log-full
         path: android-full-app/build-log.txt
 
-    - name: Rename Debug APK
-      working-directory: android-full-app/app/build/outputs/apk/debug
+    - name: Find and Rename Debug APK
       run: |
-        cp app-debug.apk saatiril-full-system-debug.apk
-        echo "Debug APK size: $(du -h saatiril-full-system-debug.apk | cut -f1)"
+        echo "=== Looking for debug APK ==="
+        find android-full-app/app/build/outputs/apk/debug -name '*.apk' -ls || true
+        DEBUG_APK=$(find android-full-app/app/build/outputs/apk/debug -name '*.apk' | head -1)
+        if [ -z "$DEBUG_APK" ]; then
+          echo "ERROR: No debug APK found!"
+          exit 1
+        fi
+        echo "Found debug APK: $DEBUG_APK"
+        cp "$DEBUG_APK" android-full-app/app/build/outputs/apk/debug/saatiril-full-system-debug.apk
+        echo "Debug APK size: $(du -h android-full-app/app/build/outputs/apk/debug/saatiril-full-system-debug.apk | cut -f1)"
 
     - name: Upload Debug APK as artifact
       uses: actions/upload-artifact@v4
@@ -110,11 +117,18 @@ jobs:
       working-directory: android-full-app
       run: ./gradlew assembleRelease --no-daemon --stacktrace
 
-    - name: Rename Release APK
-      working-directory: android-full-app/app/build/outputs/apk/release
+    - name: Find and Rename Release APK
       run: |
-        cp app-release-unsigned.apk saatiril-full-system.apk || cp app-release.apk saatiril-full-system.apk
-        echo "Release APK size: $(du -h saatiril-full-system.apk | cut -f1)"
+        echo "=== Looking for release APK ==="
+        find android-full-app/app/build/outputs/apk/release -name '*.apk' -ls || true
+        RELEASE_APK=$(find android-full-app/app/build/outputs/apk/release -name '*.apk' | head -1)
+        if [ -z "$RELEASE_APK" ]; then
+          echo "ERROR: No release APK found!"
+          exit 1
+        fi
+        echo "Found release APK: $RELEASE_APK"
+        cp "$RELEASE_APK" android-full-app/app/build/outputs/apk/release/saatiril-full-system.apk
+        echo "Release APK size: $(du -h android-full-app/app/build/outputs/apk/release/saatiril-full-system.apk | cut -f1)"
 
     - name: Upload Release APK as artifact
       uses: actions/upload-artifact@v4
