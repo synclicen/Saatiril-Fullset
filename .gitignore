@@ -77,3 +77,6 @@ worklog.mdtool-results/
 tool-results/
 upload/
 /electron/license.js
+android-full/.gradle/
+android-full/app/build/
+android-full/local.properties
