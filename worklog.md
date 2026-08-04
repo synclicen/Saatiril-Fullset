@@ -1036,3 +1036,34 @@ Stage Summary:
 - Version bumped to 35, committed as c689b19, pushed to origin/main
 - GitHub Actions CI will build both debug + release APKs and publish release APK to GitHub Releases
 - The release APK (R8 shrunk, ~smaller) will be available at GitHub Releases under "latest" tag
+
+---
+Task ID: 1
+Agent: main
+Task: Fix Saatiril Full System for mobile - all admin/MC/operator functions work on phone
+
+Work Log:
+- Analyzed 3 user screenshots showing the native Android "SATIRIL Full System" connection screen
+- Identified that the web app used ResizablePanelGroup which doesn't work on mobile
+- Fixed main-app.tsx: Added mobile tab-based bottom navigation (Admin/MC/Operator)
+- On mobile (<768px): Shows one panel at a time with bottom tab bar
+- On desktop: Preserved original ResizablePanelGroup layout
+- Fixed project-setup.tsx: Full-width start button on mobile, stacked footer layout
+- Fixed admin-dashboard.tsx: Better mobile scrolling (increased max-height constraints)
+- Created android-full-app/: Kotlin/Compose WebView wrapper for full web app
+  - ConnectionScreen with Admin/MC/Operator role selection, channel, password
+  - WebViewScreen with full WebView (JS, camera, file upload, DOM storage)
+  - Same dark purple (#1a0b2e) + gold (#d4af37) theme as operator APK
+  - v1.0.0-full-native
+- Created .github/workflows/build-android-full.yml (separate from operator APK)
+- Added path filters to both Android workflows to avoid cross-triggering
+- Tested mobile layout with Agent Browser (iPhone 14 viewport): all 3 tabs work
+- Tested desktop layout: original ResizablePanelGroup preserved
+- Committed and pushed to main (8b4892a)
+
+Stage Summary:
+- Mobile web layout: Tab-based bottom navigation replaces ResizablePanelGroup on mobile
+- Android full app: WebView wrapper at android-full-app/ - loads full Saatiril web UI
+- CI workflow: .github/workflows/build-android-full.yml builds debug+release APK
+- All admin functions (project creation, Excel import, LAN access) work on mobile
+- Desktop layout unchanged - backward compatible
