@@ -1119,3 +1119,30 @@ Stage Summary:
 - Run #22 completed successfully - Saatiril Full System APK builds correctly
 - Release artifacts: saatiril-full-system.apk (1.7 MB), debug (15.2 MB)
 - APK is available at GitHub Releases tag "latest"
+
+---
+Task ID: 4
+Agent: main
+Task: Add Standalone Mode to Saatiril Full System APK — admin can create projects on phone
+
+Work Log:
+- Analyzed user screenshot showing ConnectionScreen with only server URL input
+- Identified root problem: WebView wrapper required connecting to external server, no standalone capability
+- Realized the Saatiril web app works standalone with localStorage (Zustand persist)
+- Built Next.js static export (output: "export") — 19MB of HTML/JS/CSS/assets
+- Added NanoHTTPD dependency (org.nanohttpd:nanohttpd:2.3.1) for embedded HTTP server
+- Created LocalWebServer.kt — serves Next.js static export from APK assets on localhost:18080
+- Redesigned ConnectionScreen with prominent "Mode Mandiri (Standalone)" as primary option
+- Standalone mode auto-starts local server and loads web app in WebView
+- Server mode remains available for multi-device scenarios (MC/Operator)
+- Updated CI workflow to: build Next.js export → copy to Android assets → build APK
+- Fixed Kotlin compilation errors (unclosed comments, icon references, modifier issues)
+- Build #26 completed successfully — APK now 11.9 MB (includes embedded web app)
+
+Stage Summary:
+- Saatiril Full System APK now works STANDALONE — no server needed!
+- Admin can create projects directly on the phone
+- "Mode Mandiri" is the default/primary mode on ConnectionScreen
+- Data stored in WebView localStorage (Zustand persist)
+- Server mode available for multi-device use cases
+- Release APK: saatiril-full-system.apk (11.9 MB) available on GitHub Releases
