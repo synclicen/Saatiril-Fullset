@@ -1,0 +1,3 @@
+# Web assets are generated during CI build from Next.js static export
+# Do not commit them — they are rebuilt by the workflow
+web/

@@ -13,24 +13,32 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
 import androidx.core.content.ContextCompat
+import com.saatiril.fullsystem.server.LocalWebServer
 
 /**
  * Main Activity for Saatiril Full System — WebView wrapper app.
  *
+ * Two modes:
+ * 1. STANDALONE — Starts local NanoHTTPD server serving the embedded Next.js
+ *    static export from assets. No external server needed. Admin can create
+ *    projects directly on the phone (stored in WebView localStorage).
+ * 2. SERVER — Connects to an external Saatiril server via URL.
+ *    For multi-device scenarios (MC, Operator, or Admin connecting to a PC).
+ *
  * Architecture:
- * ┌──────────────────────────────────┐
- * │  Activity                        │
- * │  ┌────────────────────────────┐  │
- * │  │ ComposeView                │  │
- * │  │  ┌──────────────────────┐  │  │
- * │  │  │ ConnectionScreen     │  │  │  ← Server URL, Role, Channel
- * │  │  └──────────────────────┘  │  │
- * │  │  ┌──────────────────────┐  │  │
- * │  │  │ WebViewScreen        │  │  │  ← Full Saatiril web app
- * │  │  │ (after connecting)   │  │  │
- * │  │  └──────────────────────┘  │  │
- * │  └────────────────────────────┘  │
- * └──────────────────────────────────┘
+ * ┌──────────────────────────────────────────────┐
+ * │  Activity                                    │
+ * │  ┌────────────────────────────────────────┐  │
+ * │  │ ComposeView                            │  │
+ * │  │  ┌──────────────────────────────────┐  │  │
+ * │  │  │ ConnectionScreen                 │  │  │  ← Mode selection + Server URL
+ * │  │  └──────────────────────────────────┘  │  │
+ * │  │  ┌──────────────────────────────────┐  │  │
+ * │  │  │ WebViewScreen                    │  │  │  ← Full Saatiril web app
+ * │  │  │ (after connecting/standalone)    │  │  │
+ * │  │  └──────────────────────────────────┘  │  │
+ * │  └────────────────────────────────────────┘  │
+ * └──────────────────────────────────────────────┘
  */
 class MainActivity : ComponentActivity() {
 
@@ -54,6 +62,25 @@ class MainActivity : ComponentActivity() {
 
     // File upload callback for WebView file chooser
     var filePathCallback: ValueCallback<Array<Uri>>? = null
+
+    // Local web server for standalone mode
+    private var localWebServer: LocalWebServer? = null
+
+    fun startLocalServer(): String {
+        if (localWebServer == null) {
+            localWebServer = LocalWebServer(this)
+        }
+        if (!localWebServer!!.isServerRunning()) {
+            return localWebServer!!.startServer()
+        }
+        return localWebServer!!.getBaseUrl()
+    }
+
+    fun stopLocalServer() {
+        localWebServer?.stopServer()
+    }
+
+    fun isLocalServerRunning(): Boolean = localWebServer?.isServerRunning() == true
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -119,6 +146,12 @@ class MainActivity : ComponentActivity() {
                 onCameraPermissionGranted?.invoke()
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Stop local server when activity is destroyed
+        localWebServer?.stopServer()
     }
 
     private fun requestPermissions() {

@@ -11,8 +11,8 @@ android {
         applicationId = "com.saatiril.fullsystem"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1.0-full-webview"
+        versionCode = 3
+        versionName = "1.2.0-standalone"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -86,11 +86,15 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
+    // ── NanoHTTPD — lightweight embedded HTTP server for standalone mode ──
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
+
     // ── WebView requires appcompat ──
     // (already included above)
 
-    // NOTE: No socket.io, gson, navigation, or datastore needed.
-    // The WebView loads the full Saatiril web app which handles
+    // NOTE: The WebView loads the full Saatiril web app which handles
     // all socket.io communication, state management, etc.
-    // This is the same approach as Electron — just a shell wrapper.
+    // In standalone mode, the app serves the Next.js static export
+    // from assets via NanoHTTPD — no external server needed.
+    // In server mode, the WebView connects to an external server URL.
 }

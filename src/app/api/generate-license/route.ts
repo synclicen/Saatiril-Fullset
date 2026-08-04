@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import * as crypto from 'crypto'
 
+// Mark as force-dynamic for static export compatibility
+export const dynamic = 'force-dynamic'
+
 // ─── SAME SECRET as in electron/license.ts ────────────────────────────────
 const LICENSE_SECRET = 'SAATIRIL-2026-HUMAS-UIN-ANTASARI-BANJARMASIN'
 

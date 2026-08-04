@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+// Mark as force-dynamic for static export compatibility
+export const dynamic = 'force-dynamic'
+
+// @ts-ignore - static export compat
 const GITHUB_REPO = 'synclicen/Saatiril-Fullset'
 const RELEASE_TAG = 'latest'
 

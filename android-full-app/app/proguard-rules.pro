@@ -1,5 +1,9 @@
-# Keep Saatiril app classes
+# keep Saatiril app classes
 -keep class com.saatiril.fullsystem.** { *; }
+
+# NanoHTTPD (embedded web server)
+-keep class fi.iki.elonen.** { *; }
+-dontwarn fi.iki.elonen.**
 
 # WebView JavaScript Interface
 -keepclassmembers class * {

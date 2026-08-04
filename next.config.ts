@@ -1,10 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Static export — for Electron production builds only.
-  // In CI (GitHub Actions), this is enabled to generate `out/` directory
-  // that the Electron main process serves via its own HTTP server.
-  // In dev mode, keep this commented out for hot-reload support.
+  // Static export — for Electron production builds and Android APK.
+  // Generates `out/` directory that can be served by any HTTP server.
+  // In dev mode, set SAATIRIL_DEV=1 to disable this for hot-reload support.
   // output: "export",
   
   // Disable image optimization (not available in static export)
