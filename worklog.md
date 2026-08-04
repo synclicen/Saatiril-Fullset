@@ -1169,3 +1169,25 @@ Stage Summary:
 - Files modified: license-gate.tsx, page.tsx, WebViewScreen.kt, saatiril.d.ts
 - Build: Succeeds
 - Git: Pushed to main (commit a5aa073)
+---
+Task ID: 1
+Agent: main
+Task: Build native Android APK (android-full) with Admin/MC/Operator panels and Camera HP+USB support
+
+Work Log:
+- Analyzed existing project structure: found 3 Android directories (android-full-app=WebView wrapper, android-full=native, android-operator=operator only)
+- Identified android-full/ as the correct native implementation matching Electron version
+- Installed Android SDK (command-line tools, platform-34, build-tools-34.0.0) to /tmp/android-sdk
+- Built android-full debug APK successfully (BUILD SUCCESSFUL in 1m 34s)
+- Verified APK contents: contains AdminPanel, McPanel, OperatorPanel, Camera2Manager, UVCCameraManager, SocketManager, FullViewModel
+- Verified native libraries: libUVCCamera.so, libusb100.so, libuvc.so (USB camera), libmediapipe_tasks_vision_jni.so (AI hand detection)
+- Copied APK to public/saatiril-full.apk (49MB)
+- Updated .gitignore to exclude android build/gradle cache
+- Committed and pushed to origin/main
+
+Stage Summary:
+- Native Android APK built successfully from android-full/ directory
+- APK size: 49MB (arm64-v8a + armeabi-v7a)
+- Contains: Admin+MC+Operator panels, Camera2 (HP) + UVC (USB), Socket.io, MediaPipe hand trigger
+- This is the ANDROID VERSION OF THE ELECTRON VERSION, with phone camera + USB video capture
+- Pushed to GitHub: synclicen/Saatiril-Fullset
