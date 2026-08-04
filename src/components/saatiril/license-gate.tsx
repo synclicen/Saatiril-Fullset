@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Check,
   Copy,
@@ -54,29 +54,64 @@ export function LicenseGate({ onLicenseValid }: Props) {
   const [success, setSuccess] = useState(false)
   const [copiedId, setCopiedId] = useState(false)
 
+  // Track if onLicenseValid has been called to prevent double-invocation
+  const validatedRef = useRef(false)
+
+  // ── Check if running in Electron (with actual IPC available) ──────────
+  // In browser/Android WebView, window.saatirilAPI is undefined or { isElectron: false }
+  // We detect this immediately (synchronously) to avoid showing the spinner
+  const isElectronWithIPC = typeof window !== 'undefined' &&
+    window.saatirilAPI?.isElectron === true &&
+    typeof window.saatirilAPI.getLicenseStatus === 'function'
+
   // ── Check license status on mount ──────────────────────────────────────
   useEffect(() => {
-    checkStatus()
-  }, [])
-
-  const checkStatus = useCallback(async () => {
-    const api = window.saatirilAPI
-    if (!api?.isElectron) {
-      // Not running in Electron (web/sandbox mode) — bypass license check
-      onLicenseValid()
+    // If not in Electron with IPC, bypass license check immediately
+    if (!isElectronWithIPC) {
+      if (!validatedRef.current) {
+        validatedRef.current = true
+        onLicenseValid()
+      }
+      setLoading(false)
       return
     }
 
+    // In Electron — check license status via IPC
+    checkStatus()
+
+    // ── Safety timeout: if license check hangs, bypass after 5 seconds ──
+    const safetyTimer = setTimeout(() => {
+      console.warn('[SAATIRIL LICENSE] License check timed out after 5s — bypassing')
+      if (!validatedRef.current) {
+        validatedRef.current = true
+        onLicenseValid()
+      }
+      setLoading(false)
+    }, 5000)
+
+    return () => clearTimeout(safetyTimer)
+  }, [])
+
+  const checkStatus = useCallback(async () => {
     try {
-      const result = await api.getLicenseStatus()
+      const api = window.saatirilAPI
+      const result = await api!.getLicenseStatus()
       setStatus(result)
 
       if (result.isValid && !result.isGracePeriod) {
         // Fully licensed — auto-proceed after brief delay so user sees the status
-        setTimeout(() => onLicenseValid(), 800)
+        if (!validatedRef.current) {
+          validatedRef.current = true
+          setTimeout(() => onLicenseValid(), 800)
+        }
       }
     } catch (err) {
       console.error('[SAATIRIL LICENSE] Failed to check status:', err)
+      // On error, bypass license — don't block the app
+      if (!validatedRef.current) {
+        validatedRef.current = true
+        onLicenseValid()
+      }
     } finally {
       setLoading(false)
     }
@@ -84,7 +119,8 @@ export function LicenseGate({ onLicenseValid }: Props) {
 
   // ── Auto-proceed when valid ────────────────────────────────────────────
   useEffect(() => {
-    if (success) {
+    if (success && !validatedRef.current) {
+      validatedRef.current = true
       const timer = setTimeout(() => onLicenseValid(), 1500)
       return () => clearTimeout(timer)
     }
@@ -112,6 +148,10 @@ export function LicenseGate({ onLicenseValid }: Props) {
 
   // ── Activate license ───────────────────────────────────────────────────
   const handleActivate = useCallback(async () => {
+    if (!isElectronWithIPC) {
+      setError('Aktivasi lisensi hanya tersedia di aplikasi desktop (Electron).')
+      return
+    }
     if (!activationCode.trim()) {
       setError('Masukkan kode aktivasi terlebih dahulu.')
       return
@@ -136,7 +176,7 @@ export function LicenseGate({ onLicenseValid }: Props) {
     } finally {
       setActivating(false)
     }
-  }, [activationCode, checkStatus])
+  }, [activationCode, checkStatus, isElectronWithIPC])
 
   // ── Format activation code as user types (auto-dash) ───────────────────
   const handleCodeChange = useCallback((value: string) => {
@@ -152,16 +192,33 @@ export function LicenseGate({ onLicenseValid }: Props) {
     setError(null)
   }, [])
 
-  // ── Loading screen ─────────────────────────────────────────────────────
+  // ── Non-Electron: don't show spinner, bypass is handled in useEffect ──
+  // ── Loading screen (only shown while checking license) ──────────────────
   if (loading) {
+    // Only show the "Memverifikasi lisensi..." spinner in Electron
+    if (isElectronWithIPC) {
+      return (
+        <div
+          className="flex h-dvh flex-col items-center justify-center gap-4 px-6"
+          style={{ backgroundColor: THEME.bg }}
+        >
+          <Loader2 className="size-12 animate-spin" style={{ color: THEME.gold }} />
+          <p className="text-sm font-medium" style={{ color: THEME.muted }}>
+            Memverifikasi lisensi...
+          </p>
+        </div>
+      )
+    }
+    // Non-Electron: show minimal loading while useEffect processes the bypass
+    // This avoids flashing the license activation UI before bypass kicks in
     return (
       <div
         className="flex h-dvh flex-col items-center justify-center gap-4 px-6"
         style={{ backgroundColor: THEME.bg }}
       >
-        <Loader2 className="size-12 animate-spin" style={{ color: THEME.gold }} />
-        <p className="text-sm font-medium" style={{ color: THEME.muted }}>
-          Memverifikasi lisensi...
+        <Loader2 className="size-8 animate-spin" style={{ color: THEME.gold }} />
+        <p className="text-xs" style={{ color: THEME.muted }}>
+          Memuat...
         </p>
       </div>
     )

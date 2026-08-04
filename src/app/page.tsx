@@ -132,21 +132,20 @@ export default function Home() {
   const currentScreen = useSaatirilStore((s) => s.currentScreen)
   const loadProjectsFromStorage = useSaatirilStore((s) => s.loadProjectsFromStorage)
 
-  // ── Check if LAN client (MC/Operator) — they bypass license check ──────────
-  const [isLanClient] = useState(() => {
-    if (typeof window === 'undefined') return false
-    const params = new URLSearchParams(window.location.search)
-    const roleParam = params.get('role')
-    return roleParam === 'mc' || roleParam === 'operator'
-  })
+  // ── Check if running outside Electron (web browser / Android WebView) ───────
+  // In non-Electron environments, license check is always bypassed because
+  // the Electron IPC API (window.saatirilAPI) is not available.
+  // LAN clients (MC/Operator) also bypass license.
+  // IMPORTANT: We detect this in useEffect (after hydration) to avoid
+  // server/client hydration mismatch. The LicenseGate component handles
+  // the bypass internally for non-Electron environments.
+  const [licenseValid, setLicenseValid] = useState(false)
 
-  // License is valid if: LAN client (no license needed) OR license gate passes
-  const [licenseValid, setLicenseValid] = useState(isLanClient)
-
-  // ── URL parameter routing for LAN clients (MC/Operator) ─────────────────
-  // Detect role from URL and bypass hub/setup/license screens for non-admin clients.
-  // useLayoutEffect ensures this runs before browser paint, preventing flash
-  // of the hub screen that the user should never see.
+  // ── URL parameter routing for LAN clients and Android WebView ───────────
+  // Detect role from URL and set up the app accordingly.
+  // MC/Operator: bypass hub/setup screens, go directly to app.
+  // Admin: set role but stay on hub (normal flow).
+  // useLayoutEffect ensures this runs before browser paint.
   useLayoutEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const roleParam = params.get('role')
@@ -160,6 +159,16 @@ export default function Home() {
       }
       store.setCurrentScreen('app')
       console.log(`[SAATIRIL] LAN client detected — role: ${roleParam}, channel: ${channelParam}`)
+    } else if (roleParam === 'admin') {
+      // Admin role from URL (e.g., Android WebView standalone mode)
+      const store = useSaatirilStore.getState()
+      store.setMyRole('admin')
+      const channelParam = params.get('channel')
+      if (channelParam) {
+        const ch = parseInt(channelParam, 10)
+        if (ch >= 1 && ch <= 2) store.setMyChannel(ch)
+      }
+      console.log(`[SAATIRIL] Admin mode from URL — channel: ${channelParam}`)
     }
   }, [])
 

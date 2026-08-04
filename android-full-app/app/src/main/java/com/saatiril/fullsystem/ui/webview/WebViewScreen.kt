@@ -345,6 +345,26 @@ private fun setupWebViewClient(
         override fun onPageFinished(view: WebView, url: String) {
             super.onPageFinished(view, url)
             Log.i(TAG, "Page finished: $url")
+
+            // ── Inject saatirilAPI bridge for the React app ──────────────
+            // This tells the LicenseGate that we're NOT in Electron,
+            // so it should bypass the license check immediately.
+            // It also provides Android-specific info the app can use.
+            view.evaluateJavascript(
+                """
+                (function() {
+                  if (!window.saatirilAPI) {
+                    window.saatirilAPI = {
+                      isElectron: false,
+                      isAndroid: true,
+                      platform: 'android'
+                    };
+                  }
+                })();
+                """.trimIndent(),
+                null
+            )
+
             onLoadFinished()
             onPageTitleChanged(view.title ?: "Saatiril")
             onCanGoBackChanged(view.canGoBack())

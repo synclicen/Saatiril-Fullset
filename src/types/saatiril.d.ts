@@ -41,6 +41,8 @@ interface GenerateLicenseCodeResult {
 
 interface SaatirilAPI {
   isElectron: boolean
+  isAndroid?: boolean
+  platform?: string
   selectFolder: (defaultPath: string) => Promise<string | null>
   createFolder: (path: string) => Promise<{ success: boolean; path?: string; error?: string }>
   savePhoto: (data: { base64Data: string; filename: string; targetFolder: string }) => Promise<string | null>
@@ -49,7 +51,7 @@ interface SaatirilAPI {
     socketPort: number
     ips: { name: string; address: string }[]
   }>
-  // License API
+  // License API (only available in Electron)
   getLicenseStatus: () => Promise<LicenseStatusResult>
   activateLicense: (activationCode: string) => Promise<LicenseActivationResult>
   getMachineId: () => Promise<MachineIdResult>
