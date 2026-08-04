@@ -403,7 +403,7 @@ private fun setupWebChromeClient(
             val resources = request.resources
             val hasVideo = resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
             val hasAudio = resources.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
-            val hasGeolocation = resources.contains(PermissionRequest.RESOURCE_GEOLOCATION)
+            val hasGeolocation = resources.contains("android.webkit.resource.GEOLOCATION")
 
             if ((hasVideo || hasAudio) && hasCameraPermission) {
                 // Camera/audio permission already granted at Android level

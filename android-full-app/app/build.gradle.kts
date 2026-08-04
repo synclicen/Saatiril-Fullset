@@ -55,6 +55,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true  // Required for BuildConfig.DEBUG in AGP 8.x+
     }
 
     composeOptions {
