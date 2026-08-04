@@ -923,9 +923,9 @@ export default function ProjectSetup() {
         </main>
 
         {/* ── Bottom: Start Button ─────────────────────────────────────────── */}
-        <footer className="border-t border-[#533485]/50 px-5 py-3">
-          <div className="mx-auto flex max-w-6xl items-center justify-between">
-            <div className="text-sm text-[#c4b5fd]">
+        <footer className="border-t border-[#533485]/50 px-3 py-3 sm:px-5">
+          <div className="mx-auto flex max-w-6xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-xs sm:text-sm text-[#c4b5fd] text-center sm:text-left">
               {!isNameValid && (
                 <span>Masukkan nama proyek untuk melanjutkan</span>
               )}
@@ -947,16 +947,16 @@ export default function ProjectSetup() {
               disabled={!canStart}
               onClick={handleCreateProject}
               className={`
-                px-8 py-3 text-base font-bold uppercase tracking-wider
+                w-full sm:w-auto px-6 sm:px-8 py-3 text-sm sm:text-base font-bold uppercase tracking-wider
                 transition-all duration-300
                 ${
                   canStart
-                    ? 'bg-[#d4af37] text-[#1a0b2e] shadow-lg shadow-[#d4af37]/25 hover:bg-[#e5c44a] hover:shadow-[#d4af37]/40'
+                    ? 'bg-[#d4af37] text-[#1a0b2e] shadow-lg shadow-[#d4af37]/25 hover:bg-[#e5c44a] hover:shadow-[#d4af37]/40 active:scale-[0.98]'
                     : 'bg-[#3b2263] text-[#533485] cursor-not-allowed'
                 }
               `}
             >
-              MULAI SISTEM SAATIRIL
+              MULAI SISTEM
             </Button>
           </div>
         </footer>

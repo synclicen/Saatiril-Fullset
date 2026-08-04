@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SATIRIL Full System</string>
+    <string name="connection_title">Koneksi ke Server</string>
+    <string name="server_url_hint">URL Server</string>
+    <string name="password_hint">Password Sesi (jika ada)</string>
+    <string name="connect_button">Hubungkan</string>
+</resources>

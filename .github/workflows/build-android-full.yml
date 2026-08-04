@@ -1,10 +1,10 @@
-name: Build Saatiril FULL APK Android
+name: Build Saatiril Full System APK
 
 on:
   push:
     branches: [main]
     paths:
-      - 'android-full/**'
+      - 'android-full-app/**'
       - '.github/workflows/build-android-full.yml'
   workflow_dispatch:
 
@@ -31,6 +31,7 @@ jobs:
         accept-android-sdk-licenses: true
         packages: 'tools platform-tools'
 
+    # Force accept all Android SDK licenses
     - name: Accept Android SDK Licenses Manually
       run: |
         mkdir -p -m 0775 "$ANDROID_HOME/licenses"
@@ -48,74 +49,70 @@ jobs:
         path: |
           ~/.gradle/caches
           ~/.gradle/wrapper
-          android-full/.gradle
-        key: gradle-full-${{ hashFiles('android-full/**/*.gradle.kts', 'android-full/**/gradle-wrapper.properties') }}
+          android-full-app/.gradle
+        key: gradle-full-${{ hashFiles('android-full-app/**/*.gradle.kts', 'android-full-app/**/gradle-wrapper.properties') }}
         restore-keys: gradle-full-
 
     - name: Create local.properties
-      working-directory: android-full
+      working-directory: android-full-app
       run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
     - name: Grant execute permission for gradlew
-      working-directory: android-full
+      working-directory: android-full-app
       run: chmod +x gradlew
 
-    # ── Build Debug APK first (faster, catches compile errors) ──
+    # ── Debug Build ──
     - name: Build Debug APK
-      working-directory: android-full
+      working-directory: android-full-app
       run: ./gradlew assembleDebug --no-daemon --stacktrace
 
-    - name: Build Release APK
-      working-directory: android-full
-      run: ./gradlew assembleRelease --no-daemon --stacktrace
-
-    - name: Rename APKs
+    - name: Rename Debug APK
+      working-directory: android-full-app/app/build/outputs/apk/debug
       run: |
-        DEBUG_APK="android-full/app/build/outputs/apk/debug/app-debug.apk"
-        # Release APK may be named app-release-unsigned.apk if no signing config
-        RELEASE_APK=$(ls android-full/app/build/outputs/apk/release/app-release*.apk 2>/dev/null | head -1)
-
-        cp "$DEBUG_APK" "android-full/app/build/outputs/apk/debug/saatiril-full-debug.apk"
-        echo "Debug APK size: $(du -h android-full/app/build/outputs/apk/debug/saatiril-full-debug.apk | cut -f1)"
-
-        if [ -n "$RELEASE_APK" ]; then
-          cp "$RELEASE_APK" "android-full/app/build/outputs/apk/release/saatiril-full.apk"
-          echo "Release APK size: $(du -h android-full/app/build/outputs/apk/release/saatiril-full.apk | cut -f1)"
-        else
-          echo "WARNING: No release APK found — using debug APK as fallback"
-          cp "$DEBUG_APK" "android-full/app/build/outputs/apk/release/saatiril-full.apk"
-          echo "APK size: $(du -h android-full/app/build/outputs/apk/release/saatiril-full.apk | cut -f1)"
-        fi
+        cp app-debug.apk saatiril-full-system-debug.apk
+        echo "Debug APK size: $(du -h saatiril-full-system-debug.apk | cut -f1)"
 
     - name: Upload Debug APK as artifact
       uses: actions/upload-artifact@v4
       with:
-        name: saatiril-full-android-debug
-        path: android-full/app/build/outputs/apk/debug/saatiril-full-debug.apk
+        name: saatiril-full-system-android-debug
+        path: android-full-app/app/build/outputs/apk/debug/saatiril-full-system-debug.apk
+
+    # ── Release Build ──
+    - name: Build Release APK
+      working-directory: android-full-app
+      run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+    - name: Rename Release APK
+      working-directory: android-full-app/app/build/outputs/apk/release
+      run: |
+        cp app-release-unsigned.apk saatiril-full-system.apk || cp app-release.apk saatiril-full-system.apk
+        echo "Release APK size: $(du -h saatiril-full-system.apk | cut -f1)"
 
     - name: Upload Release APK as artifact
       uses: actions/upload-artifact@v4
       with:
-        name: saatiril-full-android-release
-        path: android-full/app/build/outputs/apk/release/saatiril-full.apk
+        name: saatiril-full-system-android
+        path: android-full-app/app/build/outputs/apk/release/saatiril-full-system.apk
 
-    # ── Auto-publish Release APK to GitHub Releases ──
-    - name: Upload FULL APK to latest release
+    # ── Auto-publish APK to GitHub Releases ──
+    - name: Upload Full System APK to latest release
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        APK="android-full/app/build/outputs/apk/release/saatiril-full.apk"
+        APK_PATH="android-full-app/app/build/outputs/apk/release/saatiril-full-system.apk"
+
         if gh release view latest 2>/dev/null; then
-          echo "Existing 'latest' release found — replacing FULL APK asset only"
-          gh release delete-asset latest saatiril-full.apk --yes 2>/dev/null || true
-          gh release upload latest "$APK" --clobber
-          echo "FULL APK uploaded to existing 'latest' release"
+          echo "Existing 'latest' release found — replacing Full System APK asset"
+          gh release delete-asset latest saatiril-full-system.apk --yes 2>/dev/null || true
+          gh release upload latest "$APK_PATH" --clobber
+          echo "Full System APK uploaded to existing 'latest' release"
         else
-          echo "No 'latest' release found — creating new one with FULL APK"
+          echo "No 'latest' release found — creating new one"
           gh release create latest \
-            "$APK" \
-            --title "Saatiril Full - Latest" \
-            --notes "FULL APK terbaru (Admin+MC+Operator) dari build #${{ github.run_number }} (${{ github.sha }})" \
+            "$APK_PATH" \
+            --title "Saatiril Full System - Latest" \
+            --notes "Saatiril Full System APK (WebView wrapper) from build #${{ github.run_number }} (${{ github.sha }})" \
             --prerelease
-          echo "Created 'latest' release with FULL APK"
+          echo "Created 'latest' release with Full System APK"
         fi

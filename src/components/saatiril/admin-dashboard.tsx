@@ -1767,14 +1767,14 @@ export default function AdminDashboard() {
     <div className={`${BG} h-full w-full p-2 sm:p-4 md:p-6 overflow-hidden`}>
       <div className="mx-auto flex h-full max-w-7xl flex-col gap-3 sm:gap-4 md:flex-row md:gap-6">
         {/* ── Left Column (1/3 on desktop, full width on mobile) ── */}
-        <div className="flex w-full flex-col gap-3 sm:gap-4 md:w-1/3 shrink-0 overflow-y-auto custom-scroll max-h-[40vh] md:max-h-none">
+        <div className="flex w-full flex-col gap-3 sm:gap-4 md:w-1/3 shrink-0 overflow-y-auto custom-scroll max-h-[50vh] md:max-h-none">
           {renderDaftarPeserta()}
           {renderLanAccess()}
           {renderNetworkTips()}
         </div>
 
         {/* ── Right Column (2/3 on desktop, full width on mobile) ── */}
-        <div className="w-full md:w-2/3 min-h-0 flex-1">
+        <div className="w-full md:w-2/3 min-h-0 flex-1 max-h-[45vh] md:max-h-none">
           {renderPhotoGallery()}
         </div>
       </div>

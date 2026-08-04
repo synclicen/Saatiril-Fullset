@@ -13,7 +13,9 @@ import {
   Copy,
   Check,
   Minimize,
+  Users,
 } from 'lucide-react'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable'
@@ -47,6 +49,8 @@ const THEME = {
 
 // ─── View type ────────────────────────────────────────────────────────────────
 type MainView = 'live' | 'admin'
+// Mobile tab type for bottom navigation
+type MobileTab = 'admin' | 'mc' | 'operator'
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export function MainApp() {
@@ -64,6 +68,8 @@ export function MainApp() {
   // ── Local state ────────────────────────────────────────────────────────────
   const [activeView, setActiveView] = useState<MainView>('live')
   const [mcSidebarOpen, setMcSidebarOpen] = useState(true)
+  const [mobileTab, setMobileTab] = useState<MobileTab>('operator')
+  const isMobile = useIsMobile()
   const [appFullscreen, setAppFullscreen] = useState(false)
   const [serverConnected, setServerConnected] = useState(false)
   const [connectionQuality, setConnectionQuality] = useState<'good' | 'degraded' | 'disconnected'>('disconnected')
@@ -438,32 +444,34 @@ export function MainApp() {
               </h1>
             </div>
 
-            {/* View toggle: Live / Admin */}
-            <div className="flex items-center gap-1 rounded-lg p-1" style={{ backgroundColor: `${THEME.bg}88` }}>
-              <button
-                onClick={() => setActiveView('live')}
-                className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer"
-                style={{
-                  backgroundColor: activeView === 'live' ? `${THEME.gold}22` : 'transparent',
-                  color: activeView === 'live' ? THEME.gold : THEME.muted,
-                }}
-              >
-                <Megaphone className="size-3.5" />
-                <span className="hidden sm:inline">MC + Operator</span>
-                <span className="sm:hidden">Live</span>
-              </button>
-              <button
-                onClick={() => setActiveView('admin')}
-                className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer"
-                style={{
-                  backgroundColor: activeView === 'admin' ? 'rgba(167,139,250,0.15)' : 'transparent',
-                  color: activeView === 'admin' ? '#a78bfa' : THEME.muted,
-                }}
-              >
-                <LayoutDashboard className="size-3.5" />
-                <span>Admin</span>
-              </button>
-            </div>
+            {/* View toggle: Live / Admin — hidden on mobile (use bottom tab bar) */}
+            {!isMobile && (
+              <div className="flex items-center gap-1 rounded-lg p-1" style={{ backgroundColor: `${THEME.bg}88` }}>
+                <button
+                  onClick={() => setActiveView('live')}
+                  className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer"
+                  style={{
+                    backgroundColor: activeView === 'live' ? `${THEME.gold}22` : 'transparent',
+                    color: activeView === 'live' ? THEME.gold : THEME.muted,
+                  }}
+                >
+                  <Megaphone className="size-3.5" />
+                  <span className="hidden sm:inline">MC + Operator</span>
+                  <span className="sm:hidden">Live</span>
+                </button>
+                <button
+                  onClick={() => setActiveView('admin')}
+                  className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer"
+                  style={{
+                    backgroundColor: activeView === 'admin' ? 'rgba(167,139,250,0.15)' : 'transparent',
+                    color: activeView === 'admin' ? '#a78bfa' : THEME.muted,
+                  }}
+                >
+                  <LayoutDashboard className="size-3.5" />
+                  <span>Admin</span>
+                </button>
+              </div>
+            )}
 
             {/* Channel selector (dual mode) */}
             {isDualModeVal && (
@@ -650,88 +658,161 @@ export function MainApp() {
 
       {/* ── Main Content Area ────────────────────────────────────────────────── */}
       <main className={`flex-1 min-h-0 overflow-hidden ${appFullscreen ? 'pt-0' : ''}`}>
-        {/* ── LIVE VIEW: MC sidebar + Operator panel side by side ──────────── */}
-        {activeView === 'live' && (
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            {/* MC Sidebar (left, resizable) */}
-            {mcSidebarOpen && (
-              <>
-                <ResizablePanel defaultSize={22} minSize={12} maxSize={40}>
-                  <div className="flex flex-col h-full min-w-0" style={{ backgroundColor: THEME.panel }}>
-                    {/* MC Sidebar header */}
-                    <div
-                      className="shrink-0 flex items-center justify-between px-2 py-2 border-b min-w-0"
-                      style={{ borderColor: THEME.border }}
-                    >
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <Megaphone className="size-3.5 shrink-0" style={{ color: THEME.gold }} />
-                        <h2 className="text-xs font-bold uppercase tracking-wider truncate" style={{ color: THEME.gold }}>
-                          Panel MC
-                        </h2>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37] cursor-pointer"
-                        onClick={() => setMcSidebarOpen(false)}
-                        title="Sembunyikan panel MC"
-                      >
-                        <PanelLeftClose className="size-4" />
-                      </Button>
-                    </div>
-                    {/* MC Sidebar content */}
-                    <div className="flex-1 min-h-0 overflow-hidden">
-                      <McPanel compact />
-                    </div>
-                  </div>
-                </ResizablePanel>
-                <ResizableHandle
-                  withHandle
-                  className="w-1.5 hover:w-2 transition-all duration-150"
-                  style={{ backgroundColor: THEME.border }}
-                />
-              </>
-            )}
 
-            {/* Operator Panel (right, flex-1) */}
-            <ResizablePanel defaultSize={mcSidebarOpen ? 78 : 100} minSize={40}>
+        {/* ════════════════════════════════════════════════════════════════════════
+            MOBILE LAYOUT: Tab-based bottom navigation
+            On mobile, show one panel at a time with bottom tab bar.
+            Admin / MC / Operator tabs, each full-screen.
+        ════════════════════════════════════════════════════════════════════════ */}
+        {isMobile && (
+          <>
+            {/* Mobile tab content */}
+            {mobileTab === 'admin' && (
+              <div className="h-full overflow-y-auto p-2">
+                <AdminDashboard />
+              </div>
+            )}
+            {mobileTab === 'mc' && (
+              <div className="h-full overflow-hidden" style={{ backgroundColor: THEME.panel }}>
+                <McPanel />
+              </div>
+            )}
+            {mobileTab === 'operator' && (
               <div className="h-full relative">
-                {/* Toggle MC sidebar button (when sidebar is closed, not fullscreen) */}
-                {!mcSidebarOpen && !appFullscreen && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="absolute top-2 left-2 z-10 size-8 text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37] cursor-pointer"
-                    style={{
-                      backgroundColor: `${THEME.panel}cc`,
-                      borderWidth: 1,
-                      borderColor: THEME.border,
-                    }}
-                    onClick={() => setMcSidebarOpen(true)}
-                    title="Tampilkan panel MC"
-                  >
-                    <PanelLeftOpen className="size-4" />
-                  </Button>
-                )}
                 <OperatorPanel
                   isAppFullscreen={appFullscreen}
                   onToggleAppFullscreen={toggleAppFullscreen}
                 />
               </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
+            )}
+
+            {/* ── Mobile Bottom Tab Bar ──────────────────────────────────────── */}
+            {!appFullscreen && (
+              <nav
+                className="shrink-0 border-t flex items-center justify-around safe-area-pb"
+                style={{
+                  backgroundColor: THEME.panel,
+                  borderColor: THEME.border,
+                }}
+              >
+                <button
+                  onClick={() => setMobileTab('admin')}
+                  className="flex flex-col items-center gap-0.5 py-2 px-4 min-w-[72px] cursor-pointer transition-all active:scale-95"
+                  style={{ color: mobileTab === 'admin' ? THEME.gold : THEME.muted }}
+                >
+                  <LayoutDashboard className="size-5" />
+                  <span className="text-[10px] font-semibold uppercase tracking-wider">Admin</span>
+                </button>
+                <button
+                  onClick={() => setMobileTab('mc')}
+                  className="flex flex-col items-center gap-0.5 py-2 px-4 min-w-[72px] cursor-pointer transition-all active:scale-95"
+                  style={{ color: mobileTab === 'mc' ? THEME.gold : THEME.muted }}
+                >
+                  <Megaphone className="size-5" />
+                  <span className="text-[10px] font-semibold uppercase tracking-wider">MC</span>
+                </button>
+                <button
+                  onClick={() => setMobileTab('operator')}
+                  className="flex flex-col items-center gap-0.5 py-2 px-4 min-w-[72px] cursor-pointer transition-all active:scale-95"
+                  style={{ color: mobileTab === 'operator' ? THEME.gold : THEME.muted }}
+                >
+                  <Camera className="size-5" />
+                  <span className="text-[10px] font-semibold uppercase tracking-wider">Operator</span>
+                </button>
+              </nav>
+            )}
+          </>
         )}
 
-        {/* ── ADMIN VIEW: Full-screen admin dashboard ──────────────────────── */}
-        {activeView === 'admin' && (
-          <div className="h-full overflow-y-auto p-3 sm:p-4 md:p-6">
-            <AdminDashboard />
-          </div>
+        {/* ════════════════════════════════════════════════════════════════════════
+            DESKTOP LAYOUT: ResizablePanelGroup (original layout)
+        ════════════════════════════════════════════════════════════════════════ */}
+        {!isMobile && (
+          <>
+            {/* ── LIVE VIEW: MC sidebar + Operator panel side by side ──────────── */}
+            {activeView === 'live' && (
+              <ResizablePanelGroup direction="horizontal" className="h-full">
+                {/* MC Sidebar (left, resizable) */}
+                {mcSidebarOpen && (
+                  <>
+                    <ResizablePanel defaultSize={22} minSize={12} maxSize={40}>
+                      <div className="flex flex-col h-full min-w-0" style={{ backgroundColor: THEME.panel }}>
+                        {/* MC Sidebar header */}
+                        <div
+                          className="shrink-0 flex items-center justify-between px-2 py-2 border-b min-w-0"
+                          style={{ borderColor: THEME.border }}
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <Megaphone className="size-3.5 shrink-0" style={{ color: THEME.gold }} />
+                            <h2 className="text-xs font-bold uppercase tracking-wider truncate" style={{ color: THEME.gold }}>
+                              Panel MC
+                            </h2>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-7 text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37] cursor-pointer"
+                            onClick={() => setMcSidebarOpen(false)}
+                            title="Sembunyikan panel MC"
+                          >
+                            <PanelLeftClose className="size-4" />
+                          </Button>
+                        </div>
+                        {/* MC Sidebar content */}
+                        <div className="flex-1 min-h-0 overflow-hidden">
+                          <McPanel compact />
+                        </div>
+                      </div>
+                    </ResizablePanel>
+                    <ResizableHandle
+                      withHandle
+                      className="w-1.5 hover:w-2 transition-all duration-150"
+                      style={{ backgroundColor: THEME.border }}
+                    />
+                  </>
+                )}
+
+                {/* Operator Panel (right, flex-1) */}
+                <ResizablePanel defaultSize={mcSidebarOpen ? 78 : 100} minSize={40}>
+                  <div className="h-full relative">
+                    {/* Toggle MC sidebar button (when sidebar is closed, not fullscreen) */}
+                    {!mcSidebarOpen && !appFullscreen && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="absolute top-2 left-2 z-10 size-8 text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37] cursor-pointer"
+                        style={{
+                          backgroundColor: `${THEME.panel}cc`,
+                          borderWidth: 1,
+                          borderColor: THEME.border,
+                        }}
+                        onClick={() => setMcSidebarOpen(true)}
+                        title="Tampilkan panel MC"
+                      >
+                        <PanelLeftOpen className="size-4" />
+                      </Button>
+                    )}
+                    <OperatorPanel
+                      isAppFullscreen={appFullscreen}
+                      onToggleAppFullscreen={toggleAppFullscreen}
+                    />
+                  </div>
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            )}
+
+            {/* ── ADMIN VIEW: Full-screen admin dashboard ──────────────────────── */}
+            {activeView === 'admin' && (
+              <div className="h-full overflow-y-auto p-3 sm:p-4 md:p-6">
+                <AdminDashboard />
+              </div>
+            )}
+          </>
         )}
       </main>
 
-      {/* ── Footer (hidden in fullscreen) ──────────────────────────────────── */}
-      {!appFullscreen && (
+      {/* ── Footer (hidden in fullscreen, hidden on mobile — replaced by tab bar) */}
+      {!appFullscreen && !isMobile && (
         <footer
           className="shrink-0 border-t"
           style={{
