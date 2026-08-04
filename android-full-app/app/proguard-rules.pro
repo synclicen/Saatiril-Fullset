@@ -1,13 +1,19 @@
-# Socket.io
--keep class io.socket.** { *; }
+# Keep Saatiril app classes
 -keep class com.saatiril.fullsystem.** { *; }
-
-# Gson
--keepattributes Signature
--keepattributes *Annotation*
--keep class com.google.gson.** { *; }
 
 # WebView JavaScript Interface
 -keepclassmembers class * {
     @android.webkit.JavascriptInterface <methods>;
 }
+
+# WebView
+-keepclassmembers class * extends android.webkit.WebViewClient {
+    <methods>;
+}
+-keepclassmembers class * extends android.webkit.WebChromeClient {
+    <methods>;
+}
+
+# Suppress warnings for OkHttp (used by WebView internally)
+-dontwarn okhttp3.**
+-dontwarn okio.**

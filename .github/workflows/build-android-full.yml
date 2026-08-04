@@ -41,7 +41,11 @@ jobs:
         fi
 
     - name: Install SDK components
-      run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+      run: |
+        sdkmanager "platforms;android-34" "build-tools;34.0.0"
+        echo "ANDROID_HOME=$ANDROID_HOME"
+        echo "SDK components installed"
+        ls -la "$ANDROID_HOME/platforms/" || true
 
     - name: Cache Gradle packages
       uses: actions/cache@v4
@@ -50,21 +54,44 @@ jobs:
           ~/.gradle/caches
           ~/.gradle/wrapper
           android-full-app/.gradle
-        key: gradle-full-${{ hashFiles('android-full-app/**/*.gradle.kts', 'android-full-app/**/gradle-wrapper.properties') }}
-        restore-keys: gradle-full-
+        key: gradle-full-v2-${{ hashFiles('android-full-app/**/*.gradle.kts', 'android-full-app/**/gradle-wrapper.properties') }}
+        restore-keys: gradle-full-v2-
 
     - name: Create local.properties
       working-directory: android-full-app
-      run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+      run: |
+        echo "sdk.dir=$ANDROID_HOME" > local.properties
+        echo "local.properties created with sdk.dir=$ANDROID_HOME"
 
     - name: Grant execute permission for gradlew
       working-directory: android-full-app
       run: chmod +x gradlew
 
+    - name: Verify project structure
+      working-directory: android-full-app
+      run: |
+        echo "=== Project structure ==="
+        find . -name "*.kt" -o -name "*.kts" -o -name "*.xml" -o -name "*.properties" | sort
+        echo "=== Gradle wrapper ==="
+        cat gradle/wrapper/gradle-wrapper.properties
+        echo "=== Root build.gradle.kts ==="
+        cat build.gradle.kts
+        echo "=== App build.gradle.kts ==="
+        cat app/build.gradle.kts
+        echo "=== settings.gradle.kts ==="
+        cat settings.gradle.kts
+
     # ── Debug Build ──
     - name: Build Debug APK
       working-directory: android-full-app
-      run: ./gradlew assembleDebug --no-daemon --stacktrace
+      run: ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build-log.txt
+
+    - name: Upload build log on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-log-full
+        path: android-full-app/build-log.txt
 
     - name: Rename Debug APK
       working-directory: android-full-app/app/build/outputs/apk/debug

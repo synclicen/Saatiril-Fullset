@@ -36,6 +36,7 @@ import {
 import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, type CameraMode, mergeDatabases, preserveFrameOnSync, preservePhotoHistoryOnSync, mergeCaptureVersions, isPhotoshootMode, isDualPhotoshootMode } from '@/store/use-saatiril-store'
 import { onLocal, offLocal, getConnectionHealth, onLatencyUpdate, type ConnectionHealth } from '@/lib/socket'
 import { useToast } from '@/hooks/use-toast'
+import { useIsMobile } from '@/hooks/use-mobile'
 
 // ── Theme constants ──────────────────────────────────────────────
 const BG = 'bg-[#1a0b2e]'
@@ -118,6 +119,7 @@ interface SyncDbData {
 // ── Component ────────────────────────────────────────────────────
 export default function AdminDashboard() {
   const { toast } = useToast()
+  const isMobile = useIsMobile()
 
   // Store
   const currentProject = useSaatirilStore((s) => s.currentProject)
@@ -821,16 +823,16 @@ export default function AdminDashboard() {
 
           {/* Column header */}
           <div
-            className="shrink-0 grid grid-cols-[28px_70px_1fr_70px] gap-1.5 px-2 py-1.5 text-[9px] font-semibold uppercase tracking-wider rounded-t-md"
+            className={`shrink-0 grid gap-1.5 px-2 py-1.5 text-[9px] font-semibold uppercase tracking-wider rounded-t-md ${isMobile ? 'grid-cols-[60px_1fr_60px]' : 'grid-cols-[28px_70px_1fr_70px]'}`}
             style={{ backgroundColor: '#1a0b2e80', color: '#c4b5fd99' }}
           >
-            <span>No</span>
+            {!isMobile && <span>No</span>}
             <span>NIM</span>
             <span>Nama</span>
             <span className="text-right">Status</span>
           </div>
 
-          <ScrollArea className="flex-1 min-h-0 max-h-72">
+          <ScrollArea className={`flex-1 min-h-0 ${isMobile ? 'max-h-64' : 'max-h-72'}`}>
             <div className="flex flex-col">
               {database.length === 0 ? (
                 <div className="flex items-center justify-center py-8">
@@ -844,7 +846,7 @@ export default function AdminDashboard() {
                   return (
                     <div
                       key={student.id}
-                      className="grid grid-cols-[28px_70px_1fr_70px] gap-1.5 items-center px-2 py-1.5 border-b border-[#533485]/20 transition-colors hover:bg-white/5"
+                      className={`grid gap-1.5 items-center px-2 py-1.5 border-b border-[#533485]/20 transition-colors hover:bg-white/5 ${isMobile ? 'grid-cols-[60px_1fr_60px]' : 'grid-cols-[28px_70px_1fr_70px]'}`}
                       style={{
                         backgroundColor: isDone
                           ? 'rgba(34,197,94,0.05)'
@@ -855,8 +857,8 @@ export default function AdminDashboard() {
                               : 'transparent',
                       }}
                     >
-                      <span className="text-[10px] font-mono text-[#c4b5fd]/50">{idx + 1}</span>
-                      <span className="text-[10px] font-mono truncate text-[#c4b5fd]/80">{student.nim}</span>
+                      {!isMobile && <span className="text-[10px] font-mono text-[#c4b5fd]/50">{idx + 1}</span>}
+                      <span className={`font-mono truncate text-[#c4b5fd]/80 ${isMobile ? 'text-[9px]' : 'text-[10px]'}`}>{student.nim}</span>
                       <span
                         className={`text-xs font-medium truncate ${isDone ? 'line-through text-[#c4b5fd]/50' : 'text-[#e0e0ff]'}`}
                       >
@@ -1767,14 +1769,14 @@ export default function AdminDashboard() {
     <div className={`${BG} h-full w-full p-2 sm:p-4 md:p-6 overflow-hidden`}>
       <div className="mx-auto flex h-full max-w-7xl flex-col gap-3 sm:gap-4 md:flex-row md:gap-6">
         {/* ── Left Column (1/3 on desktop, full width on mobile) ── */}
-        <div className="flex w-full flex-col gap-3 sm:gap-4 md:w-1/3 shrink-0 overflow-y-auto custom-scroll max-h-[50vh] md:max-h-none">
+        <div className={`flex w-full flex-col gap-3 sm:gap-4 md:w-1/3 shrink-0 overflow-y-auto custom-scroll ${isMobile ? '' : 'max-h-[50vh] md:max-h-none'}`}>
           {renderDaftarPeserta()}
           {renderLanAccess()}
           {renderNetworkTips()}
         </div>
 
         {/* ── Right Column (2/3 on desktop, full width on mobile) ── */}
-        <div className="w-full md:w-2/3 min-h-0 flex-1 max-h-[45vh] md:max-h-none">
+        <div className={`w-full md:w-2/3 min-h-0 flex-1 ${isMobile ? '' : 'max-h-[45vh] md:max-h-none'}`}>
           {renderPhotoGallery()}
         </div>
       </div>

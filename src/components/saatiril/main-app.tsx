@@ -600,34 +600,72 @@ export function MainApp() {
 
           <div className="flex-1" />
 
-          {/* View toggle in fullscreen */}
-          <div className="flex items-center gap-1 rounded-lg p-0.5" style={{ backgroundColor: `${THEME.bg}88` }}>
-            <button
-              onClick={() => setActiveView('live')}
-              className="flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-all cursor-pointer"
-              style={{
-                backgroundColor: activeView === 'live' ? `${THEME.gold}22` : 'transparent',
-                color: activeView === 'live' ? THEME.gold : THEME.muted,
-              }}
-            >
-              <Megaphone className="size-3" />
-              <span>Live</span>
-            </button>
-            <button
-              onClick={() => setActiveView('admin')}
-              className="flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-all cursor-pointer"
-              style={{
-                backgroundColor: activeView === 'admin' ? 'rgba(167,139,250,0.15)' : 'transparent',
-                color: activeView === 'admin' ? '#a78bfa' : THEME.muted,
-              }}
-            >
-              <LayoutDashboard className="size-3" />
-              <span>Admin</span>
-            </button>
-          </div>
+          {/* View toggle in fullscreen — on mobile, switch mobileTab; on desktop, switch activeView */}
+          {isMobile ? (
+            <div className="flex items-center gap-1 rounded-lg p-0.5" style={{ backgroundColor: `${THEME.bg}88` }}>
+              <button
+                onClick={() => setMobileTab('operator')}
+                className="flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-all cursor-pointer"
+                style={{
+                  backgroundColor: mobileTab === 'operator' ? `${THEME.gold}22` : 'transparent',
+                  color: mobileTab === 'operator' ? THEME.gold : THEME.muted,
+                }}
+              >
+                <Camera className="size-3" />
+                <span>Operator</span>
+              </button>
+              <button
+                onClick={() => setMobileTab('mc')}
+                className="flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-all cursor-pointer"
+                style={{
+                  backgroundColor: mobileTab === 'mc' ? `${THEME.gold}22` : 'transparent',
+                  color: mobileTab === 'mc' ? THEME.gold : THEME.muted,
+                }}
+              >
+                <Megaphone className="size-3" />
+                <span>MC</span>
+              </button>
+              <button
+                onClick={() => setMobileTab('admin')}
+                className="flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-all cursor-pointer"
+                style={{
+                  backgroundColor: mobileTab === 'admin' ? 'rgba(167,139,250,0.15)' : 'transparent',
+                  color: mobileTab === 'admin' ? '#a78bfa' : THEME.muted,
+                }}
+              >
+                <LayoutDashboard className="size-3" />
+                <span>Admin</span>
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 rounded-lg p-0.5" style={{ backgroundColor: `${THEME.bg}88` }}>
+              <button
+                onClick={() => setActiveView('live')}
+                className="flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-all cursor-pointer"
+                style={{
+                  backgroundColor: activeView === 'live' ? `${THEME.gold}22` : 'transparent',
+                  color: activeView === 'live' ? THEME.gold : THEME.muted,
+                }}
+              >
+                <Megaphone className="size-3" />
+                <span>Live</span>
+              </button>
+              <button
+                onClick={() => setActiveView('admin')}
+                className="flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-all cursor-pointer"
+                style={{
+                  backgroundColor: activeView === 'admin' ? 'rgba(167,139,250,0.15)' : 'transparent',
+                  color: activeView === 'admin' ? '#a78bfa' : THEME.muted,
+                }}
+              >
+                <LayoutDashboard className="size-3" />
+                <span>Admin</span>
+              </button>
+            </div>
+          )}
 
-          {/* MC sidebar toggle in fullscreen */}
-          {activeView === 'live' && (
+          {/* MC sidebar toggle in fullscreen (desktop only) */}
+          {!isMobile && activeView === 'live' && (
             <button
               onClick={() => setMcSidebarOpen((v) => !v)}
               className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider cursor-pointer transition-all duration-200 hover:bg-white/10"
