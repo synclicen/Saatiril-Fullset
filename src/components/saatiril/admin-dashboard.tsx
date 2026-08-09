@@ -20,7 +20,7 @@ import {
   Monitor,
   CloudUpload,
   Folder,
-  LinkOff,
+  Link2Off,
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import * as XLSX from 'xlsx'
@@ -1001,7 +1001,7 @@ export default function AdminDashboard() {
                   setBackupStats({ connected: false, totalFiles: 0 })
                 }}
               >
-                <LinkOff className="size-3 mr-1" />
+                <Link2Off className="size-3 mr-1" />
                 Putuskan Backup
               </Button>
             </div>
