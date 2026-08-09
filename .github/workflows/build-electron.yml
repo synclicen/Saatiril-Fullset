@@ -1,4 +1,4 @@
-name: Build Electron Windows App
+name: Saatiril Win
 
 on:
   push:
@@ -197,7 +197,7 @@ jobs:
             gh release upload latest dist-electron/saatiril-portable.exe --clobber
             Write-Host "Portable uploaded to existing 'latest' release"
           } else {
-            # Create release with portable only (APK build will add APK later)
-            gh release create latest dist-electron/saatiril-portable.exe --title "Saatiril Operator - Latest" --notes "Portable Windows terbaru dari build #${{ github.run_number }} (${{ github.sha }})" --prerelease
+            # Create release with portable only
+            gh release create latest dist-electron/saatiril-portable.exe --title "Saatiril Win - Latest" --notes "Saatiril Windows Portable (Electron) - Build #${{ github.run_number }}" --prerelease
             Write-Host "Created 'latest' release with Portable"
           }
