@@ -817,10 +817,96 @@ function registerIpcHandlers() {
       fs.writeFileSync(filePath, buffer)
 
       console.log(`[SAATIRIL] Photo saved: ${filePath} (${(buffer.length / 1024).toFixed(1)}KB)`)
+
+      // ── Google Drive backup (if configured) ──
+      // Copies the saved photo to the backup folder (e.g. Google Drive desktop
+      // folder at G:\My Drive\Saatiril\). Google Drive for Desktop auto-syncs
+      // the file to the cloud. If the folder is not accessible (e.g. Drive
+      // not running), the backup silently fails — the local copy is still safe.
+      try {
+        const backupFolder = getBackupFolder()
+        if (backupFolder) {
+          const backupPath = path.join(backupFolder, filename)
+          fs.writeFileSync(backupPath, buffer)
+          console.log(`[SAATIRIL] Photo backup: ${backupPath}`)
+        }
+      } catch (backupErr: any) {
+        // Backup failure is non-fatal — local photo is already saved
+        console.warn(`[SAATIRIL] Photo backup failed (non-fatal): ${backupErr.message}`)
+      }
+
       return filePath
     } catch (err: any) {
       console.error('[SAATIRIL] Failed to save photo:', err.message)
       return null
+    }
+  })
+
+  // ── Google Drive / cloud backup folder ────────────────────────────────
+  // Admin picks a folder (e.g. G:\My Drive\Saatiril\ via Google Drive for
+  // Desktop, or any cloud-synced folder). Photos are copied there after
+  // saving locally. Cloud app handles the actual upload + retry.
+
+  // Config file path for persisting backup folder setting
+  const backupConfigPath = path.join(app.getPath('userData'), 'backup-config.json')
+
+  function getBackupFolder(): string | null {
+    try {
+      if (!fs.existsSync(backupConfigPath)) return null
+      const config = JSON.parse(fs.readFileSync(backupConfigPath, 'utf-8'))
+      const folder = config.backupFolder
+      if (!folder || !fs.existsSync(folder)) return null
+      return folder
+    } catch {
+      return null
+    }
+  }
+
+  function setBackupFolderInternal(folder: string | null) {
+    try {
+      const config = { backupFolder: folder }
+      fs.writeFileSync(backupConfigPath, JSON.stringify(config, null, 2))
+    } catch (err: any) {
+      console.error('[SAATIRIL] Failed to save backup config:', err.message)
+    }
+  }
+
+  // Select backup folder (native folder picker)
+  ipcMain.handle('select-backup-folder', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Pilih Folder Google Drive / Cloud Backup',
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    if (result.canceled) return null
+    const folder = result.filePaths[0] || null
+    if (folder) {
+      setBackupFolderInternal(folder)
+      console.log(`[SAATIRIL] Backup folder set: ${folder}`)
+    }
+    return folder
+  })
+
+  // Get current backup folder (or null if not set)
+  ipcMain.handle('get-backup-folder', async () => {
+    return getBackupFolder()
+  })
+
+  // Clear backup folder (disable backup)
+  ipcMain.handle('clear-backup-folder', async () => {
+    setBackupFolderInternal(null)
+    console.log('[SAATIRIL] Backup folder cleared')
+    return true
+  })
+
+  // Get backup stats: count .jpg files in backup folder
+  ipcMain.handle('get-backup-stats', async () => {
+    const folder = getBackupFolder()
+    if (!folder) return { connected: false, totalFiles: 0 }
+    try {
+      const files = fs.readdirSync(folder).filter(f => f.endsWith('.jpg') || f.endsWith('.jpeg'))
+      return { connected: true, totalFiles: files.length }
+    } catch {
+      return { connected: false, totalFiles: 0 }
     }
   })
 

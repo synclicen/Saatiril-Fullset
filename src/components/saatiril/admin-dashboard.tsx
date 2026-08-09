@@ -18,6 +18,9 @@ import {
   X,
   Package,
   Monitor,
+  CloudUpload,
+  Folder,
+  LinkOff,
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import * as XLSX from 'xlsx'
@@ -337,6 +340,28 @@ export default function AdminDashboard() {
   const GITHUB_REPO = 'synclicen/Saatiril-Fullset'
   const [apkInfo, setApkInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string } | null>(null)
   const [portableInfo, setPortableInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string } | null>(null)
+
+  // ── Google Drive / Cloud backup state ──────────────────────────────
+  const [backupFolder, setBackupFolder] = useState<string | null>(null)
+  const [backupStats, setBackupStats] = useState<{ connected: boolean; totalFiles: number } | null>(null)
+
+  // Load backup folder on mount + poll stats every 5s
+  useEffect(() => {
+    const api = window.saatirilAPI
+    if (!api?.isElectron || !api.getBackupFolder) return
+
+    // Load initial
+    api.getBackupFolder().then(setBackupFolder)
+
+    // Poll stats
+    const interval = setInterval(async () => {
+      try {
+        const stats = await api.getBackupStats()
+        setBackupStats(stats)
+      } catch {}
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [])
 
   // Check release status from GitHub Releases on mount
   // ── In Electron portable: use IPC (main process fetches GitHub API via Node.js,
@@ -927,6 +952,91 @@ export default function AdminDashboard() {
       </CardContent>
     </Card>
   )
+
+  // ── Render: Google Drive / Cloud Backup ──────────────────────────
+  const renderGoogleDriveBackup = () => {
+    const api = window.saatirilAPI
+    if (!api?.isElectron || !api.selectBackupFolder) return null // Only show in Electron
+
+    const isConnected = backupFolder != null && backupStats?.connected === true
+    const totalFiles = backupStats?.totalFiles ?? 0
+
+    return (
+      <Card className={`${PANEL} shadow-lg`} style={{ borderColor: isConnected ? '#06b6d4' : BORDER }}>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm font-semibold tracking-wide text-[#c4b5fd]">
+            <CloudUpload className="size-4" style={{ color: isConnected ? '#06b6d4' : GOLD }} />
+            Google Drive Backup
+            {isConnected && (
+              <span className="ml-auto text-xs font-normal" style={{ color: '#06b6d4' }}>
+                ● Terhubung
+              </span>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {isConnected ? (
+            <div className="flex flex-col gap-2">
+              <div className="rounded-md bg-[#1a0b2e]/60 border border-[#533485]/50 p-2">
+                <p className="break-all text-xs font-mono" style={{ color: '#c4b5fd' }}>
+                  {backupFolder}
+                </p>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span style={{ color: '#c4b5fd' }}>Foto terbackup:</span>
+                <span className="font-bold" style={{ color: '#06b6d4' }}>{totalFiles} file</span>
+              </div>
+              <p className="text-xs" style={{ color: '#c4b5fd' }}>
+                ✅ Foto otomatis di-copy ke folder ini setelah disimpan lokal.
+                Google Drive Desktop akan sync ke cloud.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full text-xs"
+                style={{ borderColor: '#ef4444', color: '#ef4444' }}
+                onClick={async () => {
+                  await api.clearBackupFolder()
+                  setBackupFolder(null)
+                  setBackupStats({ connected: false, totalFiles: 0 })
+                }}
+              >
+                <LinkOff className="size-3 mr-1" />
+                Putuskan Backup
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <p className="text-xs" style={{ color: '#c4b5fd' }}>
+                Backup otomatis foto ke Google Drive atau folder cloud lain.
+                Foto tetap disimpan lokal dulu, lalu di-copy ke folder backup.
+              </p>
+              <Button
+                size="sm"
+                className="w-full font-semibold"
+                style={{ backgroundColor: '#06b6d4', color: '#1a0b2e' }}
+                onClick={async () => {
+                  const folder = await api.selectBackupFolder()
+                  if (folder) {
+                    setBackupFolder(folder)
+                    const stats = await api.getBackupStats()
+                    setBackupStats(stats)
+                  }
+                }}
+              >
+                <Folder className="size-4 mr-2" />
+                Pilih Folder Google Drive
+              </Button>
+              <p className="text-xs" style={{ color: '#c4b5fd', opacity: 0.6 }}>
+                💡 Install Google Drive for Desktop, lalu pilih folder
+                "G:\My Drive\Saatiril" untuk auto-sync ke cloud.
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    )
+  }
 
   // ── Render: LAN Access Distribution ──────────────────────────────
   const renderLanAccess = () => {
@@ -1773,6 +1883,7 @@ export default function AdminDashboard() {
         {/* ── Left Column (1/3 on desktop, full width on mobile) ── */}
         <div className={`flex w-full flex-col gap-3 sm:gap-4 md:w-1/3 shrink-0 overflow-y-auto custom-scroll ${isMobile ? '' : 'max-h-[50vh] md:max-h-none'}`}>
           {renderDaftarPeserta()}
+          {renderGoogleDriveBackup()}
           {renderLanAccess()}
           {renderNetworkTips()}
         </div>
