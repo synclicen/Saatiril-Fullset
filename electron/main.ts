@@ -418,6 +418,28 @@ function startStaticServer(outDir: string): Promise<void> {
 
       if (urlPath === '/') urlPath = '/index.html'
 
+      // ── MC web page — served at /mc?channel=1 ─────────────────────────
+      // MC scans QR code → browser opens this page → connects via Socket.io
+      if (urlPath === '/mc') {
+        const mcHtmlPath = getResourcePath('public/mc.html')
+        if (fs.existsSync(mcHtmlPath)) {
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+          fs.createReadStream(mcHtmlPath).pipe(res)
+          return
+        }
+      }
+
+      // ── Operator web page — served at /operator?channel=1 ────────────
+      // Operator scans QR code → browser opens this page → camera + shutter
+      if (urlPath === '/operator') {
+        const opHtmlPath = getResourcePath('public/operator.html')
+        if (fs.existsSync(opHtmlPath)) {
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+          fs.createReadStream(opHtmlPath).pipe(res)
+          return
+        }
+      }
+
       // ── API route: /api/apk-download ──────────────────────────────
       // Proxies APK/Portable downloads from GitHub Releases so LAN
       // operators can download even without direct internet access.
@@ -600,6 +622,9 @@ function startSocketServer(): Promise<void> {
       connectionStateRecovery: { maxDisconnectionDuration: 5 * 60 * 1000 },
       transports: ['websocket', 'polling'],
       allowUpgrades: true,
+      // CRITICAL: Allow Engine.IO v3 clients (Android APK + vanilla JS web pages)
+      // Without this, the APK's raw WebSocket EIO3 clients CANNOT connect.
+      allowEIO3: true,
     })
 
     // Connection limit

@@ -404,17 +404,19 @@ export default function AdminDashboard() {
     async (role: string, channel: number): Promise<string> => {
       const api = window.saatirilAPI
       const isElectron = api?.isElectron
+      // Build path: /mc for MC role, /operator for operator role
+      const path = role === 'mc' ? '/mc' : '/operator'
 
       if (isElectron) {
         try {
           const info = lanInfo || (await api.getLanInfo())
           const ips = info.ips
           const lanIP = ips.length > 0 ? ips[0].address : 'localhost'
-          return `http://${lanIP}:${info.httpPort}/?role=${role}&channel=${channel}&socketPort=${info.socketPort}`
+          return `http://${lanIP}:${info.httpPort}${path}?channel=${channel}&socketPort=${info.socketPort}`
         } catch {
           const hostname = window.location.hostname
           const socketPort = new URLSearchParams(window.location.search).get('socketPort') || '3003'
-          return `http://${hostname}:3000/?role=${role}&channel=${channel}&socketPort=${socketPort}`
+          return `http://${hostname}:3000${path}?channel=${channel}&socketPort=${socketPort}`
         }
       } else {
         const socketPort = new URLSearchParams(window.location.search).get('socketPort') || '3003'
@@ -451,7 +453,7 @@ export default function AdminDashboard() {
           }
         }
 
-        return `${origin}/?role=${role}&channel=${channel}&socketPort=${socketPort}`
+        return `${origin}${path}?channel=${channel}&socketPort=${socketPort}`
       }
     },
     [lanInfo],
