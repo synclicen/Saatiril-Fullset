@@ -953,6 +953,107 @@ export default function AdminDashboard() {
     </Card>
   )
 
+  // ── Render: Usage Guide (Panduan Penggunaan) ──────────────────────
+  const renderUsageGuide = () => {
+    return (
+      <Card className={`${PANEL} ${BORDER} shadow-lg`}>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm font-semibold tracking-wide text-[#c4b5fd]">
+            <Monitor className="size-4" style={{ color: GOLD }} />
+            Panduan Penggunaan
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3 pt-0">
+          {/* MODE 1: Admin APK + MC + Operator (1 HP) */}
+          <div>
+            <p className="text-xs font-bold mb-1" style={{ color: '#4ade80' }}>
+              📱 MODE 1: 1 HP untuk Semua (Admin+MC+Operator)
+            </p>
+            <ul className="space-y-0.5 pl-2">
+              <li className="text-xs text-[#c4b5fd]">• Buat proyek → pilih mode → import Excel → pilih folder → MULAI</li>
+              <li className="text-xs text-[#c4b5fd]">• Tab Prosesi: MC panggil + Operator foto dalam 1 layar</li>
+              <li className="text-xs text-[#c4b5fd]">• Foto tersimpan otomatis ke folder yang dipilih</li>
+              <li className="text-xs text-[#c4b5fd]">• Cocok untuk wisuda kecil (&lt;100 mahasiswa)</li>
+            </ul>
+          </div>
+
+          {/* MODE 2: Admin + Operator via WiFi */}
+          <div>
+            <p className="text-xs font-bold mb-1" style={{ color: CYAN }}>
+              📶 MODE 2: Admin HP + Operator via WiFi (LAN)
+            </p>
+            <ul className="space-y-0.5 pl-2">
+              <li className="text-xs text-[#c4b5fd]">• Admin HP: buat proyek → start server → aktifkan hotspot/router</li>
+              <li className="text-xs text-[#c4b5fd]">• Operator HP/Tablet: install APK → pilih Operator → input IP admin</li>
+              <li className="text-xs text-[#c4b5fd]">• MC: scan QR MC → browser → /mc → connect via WiFi</li>
+              <li className="text-xs text-[#c4b5fd]">• Operator: scan QR Op → browser → /operator → kamera + shutter</li>
+              <li className="text-xs text-[#c4b5fd]">• Cocok untuk wisuda sedang (100-500 mahasiswa, &lt;500 orang)</li>
+            </ul>
+          </div>
+
+          {/* MODE 3: BLE MC Remote */}
+          <div>
+            <p className="text-xs font-bold mb-1" style={{ color: '#3b82f6' }}>
+              🔵 MODE 3: MC Remote via Bluetooth (BLE) — No WiFi
+            </p>
+            <ul className="space-y-0.5 pl-2">
+              <li className="text-xs text-[#c4b5fd]">• Admin HP/Laptop: buat proyek → BLE server otomatis aktif</li>
+              <li className="text-xs text-[#c4b5fd]">• MC HP: install APK → pilih 'MC REMOTE (BLE)' → scan → connect</li>
+              <li className="text-xs text-[#c4b5fd]">• MC tekan PANGGIL → Bluetooth trigger → Admin foto</li>
+              <li className="text-xs text-[#c4b5fd]">• 100% immune interferensi WiFi — cocok untuk 3000+ orang</li>
+              <li className="text-xs text-[#c4b5fd]">• Atau via browser: buka /mc-ble di Chrome/Edge (Web Bluetooth)</li>
+            </ul>
+          </div>
+
+          {/* MODE 4: Electron + Wired LAN */}
+          <div>
+            <p className="text-xs font-bold mb-1" style={{ color: '#fbbf24' }}>
+              🖥️ MODE 4: Laptop Electron + Wired LAN (Kabel)
+            </p>
+            <ul className="space-y-0.5 pl-2">
+              <li className="text-xs text-[#c4b5fd]">• Laptop Admin: run saatiril-portable.exe → buat proyek</li>
+              <li className="text-xs text-[#c4b5fd]">• Colok semua laptop via Ethernet Switch (kabel LAN)</li>
+              <li className="text-xs text-[#c4b5fd]">• MC/Operator: buka browser → /mc atau /operator → connect</li>
+              <li className="text-xs text-[#c4b5fd]">• 100% immune WiFi — cocok untuk wisuda besar (3000+ orang)</li>
+              <li className="text-xs text-[#c4b5fd]">• Google Drive backup: pilih folder G:\My Drive\ di tab Admin</li>
+            </ul>
+          </div>
+
+          {/* Tips */}
+          <div className="rounded-md p-2.5" style={{ backgroundColor: 'rgba(212,175,55,0.08)', border: '1px solid rgba(212,175,55,0.2)' }}>
+            <p className="text-xs font-bold mb-1.5" style={{ color: GOLD }}>💡 Tips Penting</p>
+            <ul className="space-y-1">
+              <li className="text-xs text-[#c4b5fd]">• Mode Prosesi (APK): blokir WhatsApp/Instagram selama prosesi</li>
+              <li className="text-xs text-[#c4b5fd]">• Google Drive: foto tersimpan lokal dulu, upload async ke cloud</li>
+              <li className="text-xs text-[#c4b5fd]">• Folder foto: otomatis dibuat subfolder dengan nama proyek</li>
+              <li className="text-xs text-[#c4b5fd]">• Hand Trigger (✋): MediaPipe Hands untuk foto hands-free</li>
+              <li className="text-xs text-[#c4b5fd]">• Frame Overlay: tambahkan frame PNG dengan logo wisuda</li>
+              <li className="text-xs text-[#c4b5fd]">• Export Excel: download daftar peserta dengan status</li>
+            </ul>
+          </div>
+
+          {/* Shutter modes + Camera + Filename */}
+          <div className="flex flex-col gap-1.5">
+            <div>
+              <p className="text-xs font-bold" style={{ color: GOLD }}>📸 Mode Shutter:</p>
+              <p className="text-xs text-[#c4b5fd]">M=Manual | 3s/5s/10s=Timer | ✋=Hand Trigger (MediaPipe)</p>
+            </div>
+            <div>
+              <p className="text-xs font-bold" style={{ color: GOLD }}>📷 Sumber Kamera (3 pilihan):</p>
+              <p className="text-xs text-[#c4b5fd]">Kamera Belakang HP | Kamera Depan HP | USB Capture Card (DSLR+HDMI)</p>
+            </div>
+            <div>
+              <p className="text-xs font-bold" style={{ color: GOLD }}>📁 Format Nama File:</p>
+              <p className="text-xs text-[#c4b5fd]">Standar: NIM_Nama_1_Toga.jpg + NIM_Nama_2_Ijazah.jpg</p>
+              <p className="text-xs text-[#c4b5fd]">Photoshoot: NIM_Nama.jpg (atau _Ch2.jpg untuk dual)</p>
+              <p className="text-xs text-[#c4b5fd]">Retake: NIM_Nama_1_Toga_v2.jpg (otomatis versi)</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
   // ── Render: Google Drive / Cloud Backup ──────────────────────────
   const renderGoogleDriveBackup = () => {
     const api = window.saatirilAPI
@@ -1886,6 +1987,7 @@ export default function AdminDashboard() {
           {renderGoogleDriveBackup()}
           {renderLanAccess()}
           {renderNetworkTips()}
+          {renderUsageGuide()}
         </div>
 
         {/* ── Right Column (2/3 on desktop, full width on mobile) ── */}
