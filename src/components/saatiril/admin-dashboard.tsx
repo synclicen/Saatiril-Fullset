@@ -954,15 +954,26 @@ export default function AdminDashboard() {
   )
 
   // ── Render: Usage Guide (Panduan Penggunaan) ──────────────────────
+  const [showGuide, setShowGuide] = useState(false)
   const renderUsageGuide = () => {
     return (
-      <Card className={`${PANEL} ${BORDER} shadow-lg`}>
+      <Card className={`${PANEL} shadow-lg`} style={{ borderColor: GOLD }}>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-sm font-semibold tracking-wide text-[#c4b5fd]">
             <Monitor className="size-4" style={{ color: GOLD }} />
             Panduan Penggunaan
+            <Button
+              variant="outline"
+              size="sm"
+              className="ml-auto text-xs h-6 px-2"
+              style={{ borderColor: GOLD, color: GOLD }}
+              onClick={() => setShowGuide(!showGuide)}
+            >
+              {showGuide ? '▲ Tutup' : '▼ Buka'}
+            </Button>
           </CardTitle>
         </CardHeader>
+        {showGuide && (
         <CardContent className="flex flex-col gap-3 pt-0">
           {/* MODE 1: Admin APK + MC + Operator (1 HP) */}
           <div>
@@ -1050,6 +1061,7 @@ export default function AdminDashboard() {
             </div>
           </div>
         </CardContent>
+        )}
       </Card>
     )
   }
@@ -1983,11 +1995,11 @@ export default function AdminDashboard() {
       <div className="mx-auto flex h-full max-w-7xl flex-col gap-3 sm:gap-4 md:flex-row md:gap-6">
         {/* ── Left Column (1/3 on desktop, full width on mobile) ── */}
         <div className={`flex w-full flex-col gap-3 sm:gap-4 md:w-1/3 shrink-0 overflow-y-auto custom-scroll ${isMobile ? '' : 'max-h-[50vh] md:max-h-none'}`}>
+          {renderUsageGuide()}
           {renderDaftarPeserta()}
           {renderGoogleDriveBackup()}
           {renderLanAccess()}
           {renderNetworkTips()}
-          {renderUsageGuide()}
         </div>
 
         {/* ── Right Column (2/3 on desktop, full width on mobile) ── */}
