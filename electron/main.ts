@@ -441,8 +441,6 @@ function startStaticServer(outDir: string): Promise<void> {
       }
 
       // ── MC BLE Remote web page — uses Web Bluetooth API ──────────────
-      // MC opens this in Chrome/Edge → connects via Bluetooth LE to Admin
-      // Note: BLE server must be running on Admin APK (not available on Electron)
       if (urlPath === '/mc-ble') {
         const mcBleHtmlPath = getResourcePath('public/mc-ble.html')
         if (fs.existsSync(mcBleHtmlPath)) {
@@ -450,6 +448,44 @@ function startStaticServer(outDir: string): Promise<void> {
           fs.createReadStream(mcBleHtmlPath).pipe(res)
           return
         }
+      }
+
+      // ── Admin BLE Client web page — Electron connects to MC-Only APK ──
+      // Admin opens this → scans for MC HP (BLE Server) → connects
+      if (urlPath === '/admin-ble') {
+        const adminBleHtmlPath = getResourcePath('public/admin-ble.html')
+        if (fs.existsSync(adminBleHtmlPath)) {
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+          fs.createReadStream(adminBleHtmlPath).pipe(res)
+          return
+        }
+      }
+
+      // ── API: BLE trigger from MC (via /admin-ble page) ──────────────
+      // The admin-ble.html page forwards MC's PANGGIL/NEXT/RESET triggers
+      // to this endpoint, which the Electron app uses to call students.
+      if (urlPath === '/api/ble-trigger' && req.method === 'POST') {
+        let body = ''
+        req.on('data', (chunk: Buffer) => { body += chunk.toString() })
+        req.on('end', () => {
+          try {
+            const data = JSON.parse(body)
+            console.log(`[SAATIRIL BLE] Trigger from MC: ${data.action} ${data.studentId || ''}`)
+            // Broadcast via Socket.io — the admin dashboard listens for this
+            if (socketServer) {
+              socketServer.emit('lan-message', {
+                event: 'MC_CALL',
+                data: { action: data.action, studentId: data.studentId }
+              })
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ ok: true }))
+          } catch (err: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: err.message }))
+          }
+        })
+        return
       }
 
       // ── API route: /api/apk-download ──────────────────────────────

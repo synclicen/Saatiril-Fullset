@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Saatiril Admin BLE</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#1a0b2e; color:#fff; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; min-height:100vh; }
+.header { background:#2a164a; padding:10px 14px; display:flex; align-items:center; gap:8px; border-bottom:1px solid #533485; }
+.header .dot { width:10px; height:10px; border-radius:50%; background:#ef4444; }
+.header .dot.connected { background:#4ade80; }
+.header .dot.connecting { background:#fbbf24; }
+.header h1 { font-size:15px; color:#d4af37; }
+.container { padding:12px; max-width:600px; margin:0 auto; }
+.connect-screen { text-align:center; padding:40px 20px; }
+.connect-btn { width:100%; height:52px; border:none; border-radius:12px; font-size:16px; font-weight:900; cursor:pointer; background:#8b5cf6; color:#fff; margin-top:16px; }
+.info-box { background:#2a164a; border:1px solid #533485; border-radius:8px; padding:12px; margin:8px 0; font-size:12px; color:#c4b5fd; }
+.status-text { font-size:13px; color:#c4b5fd; margin-top:8px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="dot" id="status-dot"></div>
+  <h1>ADMIN BLE — MC Remote</h1>
+</div>
+<div class="container" id="app">
+  <div class="connect-screen">
+    <div style="font-size:48px; margin-bottom:16px;">📡</div>
+    <h2 style="color:#fff; font-size:18px; margin-bottom:8px;">Connect ke MC via Bluetooth</h2>
+    <p style="color:#c4b5fd; font-size:13px; margin-bottom:16px;">
+      Pastikan MC HP sudah buka aplikasi Saatiril MC<br>
+      dan memilih mode "BLE SERVER".<br>
+      Bluetooth MC HP harus aktif.
+    </p>
+    <button class="connect-btn" onclick="connectMC()">CONNECT MC VIA BLUETOOTH</button>
+    <div class="status-text" id="status-text">Menunggu koneksi...</div>
+  </div>
+</div>
+<script>
+var SERVICE_UUID = 'e7810a71-73ae-499d-8c15-fa8f6072e919';
+var CHAR_NEXT_STUDENT = 'e7810a71-73ae-499d-8c15-fa8f6072e91a';
+var CHAR_TRIGGER = 'e7810a71-73ae-499d-8c15-fa8f6072e91b';
+var CHAR_STATUS = 'e7810a71-73ae-499d-8c15-fa8f6072e91c';
+var CHAR_QUEUE_DATA = 'e7810a71-73ae-499d-8c15-fa8f6072e91d';
+
+var device = null;
+var server = null;
+var statusChar = null;
+var triggerChar = null;
+var isConnected = false;
+
+function setStatus(state, text) {
+  document.getElementById('status-dot').className = 'dot ' + state;
+  if (text) document.getElementById('status-text').textContent = text;
+}
+
+async function connectMC() {
+  try {
+    setStatus('connecting', 'Mencari MC...');
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [SERVICE_UUID] }],
+      optionalServices: [SERVICE_UUID]
+    });
+
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+    server = await device.gatt.connect();
+    var service = await server.getPrimaryService(SERVICE_UUID);
+
+    // Get characteristics
+    statusChar = await service.getCharacteristic(CHAR_STATUS);
+    triggerChar = await service.getCharacteristic(CHAR_TRIGGER);
+
+    // Subscribe to status notifications (MC sends PANGGIL/NEXT/RESET via status)
+    await statusChar.startNotifications();
+    statusChar.addEventListener('characteristicvaluechanged', onStatusChanged);
+
+    isConnected = true;
+    setStatus('connected', 'MC terhubung! Menunggu trigger...');
+
+    document.getElementById('app').innerHTML =
+      '<div class="info-box">✅ MC HP terhubung via Bluetooth</div>' +
+      '<div class="info-box">MC akan mengirim PANGGIL/NEXT/RESET via Bluetooth.<br>' +
+      'Admin akan otomatis memanggil mahasiswa saat MC trigger.</div>' +
+      '<div class="info-box" id="trigger-log"><b>Log Trigger:</b><br></div>';
+  } catch(e) {
+    setStatus('', 'Gagal: ' + e.message);
+  }
+}
+
+function onStatusChanged(event) {
+  var value = new TextDecoder().decode(event.target.value);
+  try {
+    var data = JSON.parse(value);
+    var action = data.action || '';
+    var studentId = data.studentId || '';
+    var log = document.getElementById('trigger-log');
+    if (log) {
+      var time = new Date().toLocaleTimeString();
+      log.innerHTML += '<br>[' + time + '] ' + action + (studentId ? ' (' + studentId + ')' : '');
+    }
+
+    // Forward trigger to admin via HTTP (Electron app handles it)
+    // The Electron app listens for this and calls callStudent()
+    if (action === 'PANGGIL' || action === 'NEXT' || action === 'RESET') {
+      fetch('/api/ble-trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: action, studentId: studentId })
+      }).catch(function(e) {
+        console.log('Trigger forward failed:', e);
+      });
+    }
+  } catch(e) {}
+}
+
+function onDisconnected() {
+  isConnected = false;
+  setStatus('', 'MC terputus. Mencoba reconnect...');
+  setTimeout(connectMC, 3000);
+}
+
+// Send status update to MC (e.g., "done" after photo)
+async function sendStatusToMC(phase, studentId) {
+  if (!triggerChar) return;
+  var data = JSON.stringify({ action: 'STATUS_' + phase.toUpperCase(), studentId: studentId });
+  var encoder = new TextEncoder();
+  try {
+    await triggerChar.writeValue(encoder.encode(data));
+  } catch(e) {
+    console.log('Status send failed:', e);
+  }
+}
+
+if (!navigator.bluetooth) {
+  document.getElementById('app').innerHTML = '<div class="info-box" style="border-color:#ef4444;color:#ef4444;">Browser tidak mendukung Web Bluetooth. Gunakan Chrome atau Edge.</div>';
+}
+</script>
+</body>
+</html>
