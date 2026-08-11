@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Saatiril MC BLE</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#1a0b2e; color:#fff; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; min-height:100vh; }
+.header { background:#2a164a; padding:10px 14px; display:flex; align-items:center; gap:8px; border-bottom:1px solid #533485; position:sticky; top:0; z-index:10; }
+.header .dot { width:10px; height:10px; border-radius:50%; background:#ef4444; }
+.header .dot.connected { background:#4ade80; }
+.header .dot.connecting { background:#fbbf24; }
+.header h1 { font-size:15px; color:#d4af37; }
+.header .info { font-size:11px; color:#c4b5fd; margin-left:auto; }
+.container { padding:12px; max-width:600px; margin:0 auto; }
+.connect-screen { text-align:center; padding:40px 20px; }
+.connect-screen .icon { font-size:64px; margin-bottom:16px; }
+.connect-btn { width:100%; height:52px; border:none; border-radius:12px; font-size:16px; font-weight:900; cursor:pointer; background:#3b82f6; color:#fff; margin-top:16px; }
+.name-card { background:#2a164a; border:1px solid #533485; border-radius:10px; padding:16px; margin-bottom:8px; }
+.name-card.active { border-color:#d4af37; background:#3b2263; }
+.name-card .label { font-size:10px; color:#c4b5fd; margin-bottom:4px; text-transform:uppercase; }
+.name-card .name { font-size:22px; font-weight:900; line-height:1.2; }
+.name-card .name.gold { color:#d4af37; }
+.name-card .name.white { color:#fff; }
+.name-card .name.muted { color:#c4b5fd; }
+.name-card .nim { font-size:12px; color:#c4b5fd; font-family:monospace; margin-top:4px; }
+.panggil-btn { width:100%; height:52px; border:none; border-radius:12px; font-size:18px; font-weight:900; cursor:pointer; margin-bottom:6px; }
+.panggil-btn.ready { background:#4ade80; color:#1a0b2e; }
+.panggil-btn.disabled { background:#2a164a; color:#c4b5fd; cursor:default; }
+.secondary-row { display:flex; gap:6px; margin-bottom:8px; }
+.secondary-btn { flex:1; height:44px; border:1px solid; border-radius:10px; font-size:13px; font-weight:bold; cursor:pointer; background:transparent; }
+.secondary-btn.next { border-color:#06b6d4; color:#06b6d4; }
+.secondary-btn.reset { border-color:#fbbf24; color:#fbbf24; }
+.stats { display:flex; gap:12px; font-size:11px; color:#c4b5fd; margin-bottom:8px; }
+.stats span { color:#fff; font-weight:bold; }
+.queue-title { font-size:12px; color:#c4b5fd; font-weight:bold; margin:8px 0 4px; }
+.queue-item { background:#2a164a; border:1px solid #533485; border-radius:6px; padding:6px 8px; margin-bottom:2px; display:flex; align-items:center; gap:6px; }
+.queue-item.active { border-color:#d4af37; background:#3b2263; }
+.queue-item.done { opacity:0.4; }
+.queue-item .num { color:#c4b5fd; font-size:10px; font-family:monospace; width:14px; }
+.queue-item .dot { width:5px; height:5px; border-radius:50%; background:#c4b5fd; }
+.queue-item .dot.active { background:#d4af37; }
+.queue-item .dot.done { background:#4ade80; }
+.queue-item .n { font-size:11px; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.queue-item .badge { font-size:9px; color:#d4af37; }
+.error-box { background:#ef4444; color:#fff; padding:12px; border-radius:8px; margin:8px 0; font-size:12px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="dot" id="status-dot"></div>
+  <h1>MC BLE</h1>
+  <span class="info" id="project-info"></span>
+</div>
+<div class="container" id="app">
+  <div class="connect-screen">
+    <div class="icon">🔵</div>
+    <h2 style="color:#fff; font-size:18px; margin-bottom:8px;">MC Remote via Bluetooth</h2>
+    <p style="color:#c4b5fd; font-size:13px; margin-bottom:16px;">
+      Connect ke Admin via Bluetooth LE.<br>
+      100% immune dari interferensi WiFi.
+    </p>
+    <button class="connect-btn" onclick="connectBLE()">CONNECT VIA BLUETOOTH</button>
+    <p style="color:#c4b5fd; font-size:10px; margin-top:12px; opacity:0.6;">
+      Pastikan Admin HP memiliki BLE server aktif.<br>
+      Gunakan Chrome/Edge browser.
+    </p>
+  </div>
+</div>
+<script>
+var SERVICE_UUID = 'e7810a71-73ae-499d-8c15-fa8f6072e919';
+var CHAR_NEXT_STUDENT = 'e7810a71-73ae-499d-8c15-fa8f6072e91a';
+var CHAR_TRIGGER = 'e7810a71-73ae-499d-8c15-fa8f6072e91b';
+var CHAR_STATUS = 'e7810a71-73ae-499d-8c15-fa8f6072e91c';
+var CHAR_QUEUE_DATA = 'e7810a71-73ae-499d-8c15-fa8f6072e91d';
+var CHAR_PROJECT_INFO = 'e7810a71-73ae-499d-8c15-fa8f6072e91e';
+
+var device = null;
+var server = null;
+var nextStudentChar = null;
+var triggerChar = null;
+var statusChar = null;
+var queueDataChar = null;
+var isConnected = false;
+
+var nextStudent = null;
+var statusPhase = 'standby';
+var queueData = null;
+var projectInfo = null;
+
+function setStatus(state) {
+  document.getElementById('status-dot').className = 'dot ' + state;
+}
+
+async function connectBLE() {
+  try {
+    setStatus('connecting');
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [SERVICE_UUID] }],
+      optionalServices: [SERVICE_UUID]
+    });
+
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+
+    server = await device.gatt.connect();
+    var service = await server.getPrimaryService(SERVICE_UUID);
+
+    nextStudentChar = await service.getCharacteristic(CHAR_NEXT_STUDENT);
+    triggerChar = await service.getCharacteristic(CHAR_TRIGGER);
+    statusChar = await service.getCharacteristic(CHAR_STATUS);
+    queueDataChar = await service.getCharacteristic(CHAR_QUEUE_DATA);
+    var projectInfoChar = await service.getCharacteristic(CHAR_PROJECT_INFO);
+
+    // Subscribe to notifications
+    await nextStudentChar.startNotifications();
+    nextStudentChar.addEventListener('characteristicvaluechanged', onNextStudentChanged);
+
+    await statusChar.startNotifications();
+    statusChar.addEventListener('characteristicvaluechanged', onStatusChanged);
+
+    await queueDataChar.startNotifications();
+    queueDataChar.addEventListener('characteristicvaluechanged', onQueueDataChanged);
+
+    // Read initial values
+    var projData = await projectInfoChar.readValue();
+    projectInfo = JSON.parse(new TextDecoder().decode(projData));
+    document.getElementById('project-info').textContent = projectInfo.projectName || '';
+
+    var queueVal = await queueDataChar.readValue();
+    queueData = JSON.parse(new TextDecoder().decode(queueVal));
+
+    var studentVal = await nextStudentChar.readValue();
+    nextStudent = JSON.parse(new TextDecoder().decode(studentVal));
+
+    isConnected = true;
+    setStatus('connected');
+    render();
+  } catch(e) {
+    setStatus('');
+    showError('Gagal connect: ' + e.message);
+  }
+}
+
+function onDisconnected() {
+  isConnected = false;
+  setStatus('');
+  document.getElementById('app').innerHTML = '<div class="error-box">Koneksi Bluetooth terputus. Mencoba reconnect...</div>';
+  setTimeout(connectBLE, 3000);
+}
+
+function onNextStudentChanged(event) {
+  var value = new TextDecoder().decode(event.target.value);
+  try { nextStudent = JSON.parse(value); render(); } catch(e) {}
+}
+
+function onStatusChanged(event) {
+  var value = new TextDecoder().decode(event.target.value);
+  try { var obj = JSON.parse(value); statusPhase = obj.phase || 'standby'; render(); } catch(e) {}
+}
+
+function onQueueDataChanged(event) {
+  var value = new TextDecoder().decode(event.target.value);
+  try { queueData = JSON.parse(value); render(); } catch(e) {}
+}
+
+async function sendTrigger(action) {
+  if (!triggerChar) return;
+  var data = JSON.stringify({ action: action, studentId: nextStudent ? nextStudent.id : null });
+  var encoder = new TextEncoder();
+  try {
+    await triggerChar.writeValue(encoder.encode(data));
+  } catch(e) {
+    showError('Gagal kirim trigger: ' + e.message);
+  }
+}
+
+function render() {
+  if (!isConnected) return;
+
+  var studentName = nextStudent ? (nextStudent.nama || nextStudent.nim || '') : '';
+  var studentNim = nextStudent ? (nextStudent.nim || '') : '';
+  var hasStudent = nextStudent && nextStudent.id;
+
+  var phaseColor = '#c4b5fd';
+  var phaseText = 'Standby';
+  if (statusPhase === 'ready') { phaseColor = '#d4af37'; phaseText = '\u25C6 Sedang Dipanggil'; }
+  else if (statusPhase === 'capturing') { phaseColor = '#06b6d4'; phaseText = '\uD83D\uDCF8 Sedang Foto'; }
+  else if (statusPhase === 'sending') { phaseColor = '#06b6d4'; phaseText = '\uD83D\uDCBE Menyimpan'; }
+  else if (statusPhase === 'done') { phaseColor = '#4ade80'; phaseText = '\u2713 Selesai'; }
+
+  var canPanggil = statusPhase === 'standby' || statusPhase === 'done';
+
+  var html = '';
+  html += '<div class="name-card ' + (statusPhase !== 'standby' ? 'active' : '') + '">';
+  html += '<div class="label" style="color:' + phaseColor + '">' + phaseText + '</div>';
+  if (hasStudent) {
+    html += '<div class="name ' + (statusPhase === 'standby' ? 'white' : 'gold') + '">' + escapeHtml(studentName) + '</div>';
+    if (studentNim) html += '<div class="nim">' + escapeHtml(studentNim) + '</div>';
+  } else {
+    html += '<div class="name muted">Tidak ada mahasiswa</div>';
+  }
+  html += '</div>';
+
+  html += '<button class="panggil-btn ' + (canPanggil ? 'ready' : 'disabled') + '" ' + (canPanggil ? '' : 'disabled') + ' onclick="sendTrigger(\'PANGGIL\')">PANGGIL</button>';
+
+  html += '<div class="secondary-row">';
+  html += '<button class="secondary-btn next" onclick="sendTrigger(\'NEXT\')">NEXT</button>';
+  html += '<button class="secondary-btn reset" onclick="sendTrigger(\'RESET\')">RESET</button>';
+  html += '</div>';
+
+  if (queueData) {
+    html += '<div class="stats">';
+    html += 'Menunggu: <span>' + (queueData.pending || 0) + '</span>';
+    html += ' Selesai: <span>' + (queueData.done || 0) + '</span>';
+    html += ' Total: <span>' + (queueData.total || 0) + '</span>';
+    html += '</div>';
+
+    var students = queueData.students || [];
+    if (students.length > 0) {
+      html += '<div class="queue-title">Antrean Berikutnya:</div>';
+      students.forEach(function(s, i) {
+        var isActive = s.status && s.status.indexOf('active') === 0;
+        var isDone = s.status === 'done';
+        html += '<div class="queue-item ' + (isActive ? 'active' : '') + (isDone ? ' done' : '') + '">';
+        html += '<span class="num">' + (i + 1) + '</span>';
+        html += '<span class="dot ' + (isActive ? 'active' : '') + (isDone ? 'done' : '') + '"></span>';
+        html += '<span class="n">' + escapeHtml(s.nama || s.nim || '') + '</span>';
+        if (isActive) html += '<span class="badge">\u25C6</span>';
+        if (isDone) html += '<span class="badge" style="color:#4ade80">\u2713</span>';
+        html += '</div>';
+      });
+    }
+  }
+
+  document.getElementById('app').innerHTML = html;
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function showError(msg) {
+  var app = document.getElementById('app');
+  app.innerHTML = '<div class="error-box">' + escapeHtml(msg) + '</div>';
+}
+
+if (!navigator.bluetooth) {
+  showError('Browser tidak mendukung Web Bluetooth. Gunakan Chrome atau Edge terbaru.');
+}
+</script>
+</body>
+</html>

@@ -440,6 +440,18 @@ function startStaticServer(outDir: string): Promise<void> {
         }
       }
 
+      // ── MC BLE Remote web page — uses Web Bluetooth API ──────────────
+      // MC opens this in Chrome/Edge → connects via Bluetooth LE to Admin
+      // Note: BLE server must be running on Admin APK (not available on Electron)
+      if (urlPath === '/mc-ble') {
+        const mcBleHtmlPath = getResourcePath('public/mc-ble.html')
+        if (fs.existsSync(mcBleHtmlPath)) {
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+          fs.createReadStream(mcBleHtmlPath).pipe(res)
+          return
+        }
+      }
+
       // ── API route: /api/apk-download ──────────────────────────────
       // Proxies APK/Portable downloads from GitHub Releases so LAN
       // operators can download even without direct internet access.
