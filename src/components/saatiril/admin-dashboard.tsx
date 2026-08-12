@@ -21,6 +21,7 @@ import {
   CloudUpload,
   Folder,
   Link2Off,
+  Bluetooth,
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import * as XLSX from 'xlsx'
@@ -337,8 +338,9 @@ export default function AdminDashboard() {
   const [qrLabel, setQrLabel] = useState('')
 
   // ── Release download state (from GitHub Releases) ──────────────────
-  const GITHUB_REPO = 'synclicen/Saatiril-Fullset'
+  const GITHUB_REPO = 'synclicen/Saatiril-Andro'
   const [apkInfo, setApkInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string } | null>(null)
+  const [mcApkInfo, setMcApkInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string } | null>(null)
   const [portableInfo, setPortableInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string } | null>(null)
 
   // ── Google Drive / Cloud backup state ──────────────────────────────
@@ -386,8 +388,10 @@ export default function AdminDashboard() {
         const release = await res.json()
         const assets = release.assets || []
 
-        const apkAsset = assets.find((a: { name: string }) => a.name.endsWith('.apk'))
-        const portableAsset = assets.find((a: { name: string }) => a.name.endsWith('-portable.exe') || a.name === 'saatiril-portable.exe')
+        // Find specific APKs by name
+        const apkAsset = assets.find((a: { name: string }) => a.name === 'saatiril-andro.apk')
+        const mcApkAsset = assets.find((a: { name: string }) => a.name === 'saatiril-mc.apk')
+        const portableAsset = assets.find((a: { name: string }) => a.name === 'saatiril-portable.exe')
 
         setApkInfo(apkAsset ? {
           available: true,
@@ -395,7 +399,15 @@ export default function AdminDashboard() {
           assetName: apkAsset.name,
           lastModified: apkAsset.updated_at || release.published_at,
           downloadUrl: apkAsset.browser_download_url,
-        } : { available: false, error: 'No APK asset found in latest release' })
+        } : { available: false, error: 'No APK asset found' })
+
+        setMcApkInfo(mcApkAsset ? {
+          available: true,
+          sizeMB: (mcApkAsset.size / (1024 * 1024)).toFixed(1),
+          assetName: mcApkAsset.name,
+          lastModified: mcApkAsset.updated_at || release.published_at,
+          downloadUrl: mcApkAsset.browser_download_url,
+        } : { available: false, error: 'No MC APK asset found' })
 
         setPortableInfo(portableAsset ? {
           available: true,
@@ -403,9 +415,10 @@ export default function AdminDashboard() {
           assetName: portableAsset.name,
           lastModified: portableAsset.updated_at || release.published_at,
           downloadUrl: portableAsset.browser_download_url,
-        } : { available: false, error: 'No Portable asset found in latest release' })
+        } : { available: false, error: 'No Portable asset found' })
       } catch (err: any) {
         setApkInfo({ available: false, error: err?.message || 'GitHub API error' })
+        setMcApkInfo({ available: false, error: err?.message || 'GitHub API error' })
         setPortableInfo({ available: false, error: err?.message || 'GitHub API error' })
       }
     }
@@ -1284,10 +1297,10 @@ export default function AdminDashboard() {
                 <QrCode className="size-3.5" />
               </Button>
             </div>
-            {/* ── Download Section: APK + Portable ── */}
+            {/* ── Download Section: APK + MC APK + Portable ── */}
             <Separator className="bg-[#533485]/40" />
             <div className="mb-1 text-xs font-semibold uppercase tracking-wider" style={{ color: '#4ade80' }}>
-              <Package className="size-3 inline mr-1" />APK Saatiril Android
+              <Package className="size-3 inline mr-1" />APK Saatiril Android (Full)
             </div>
             {apkInfo?.available ? (
               <>
@@ -1299,7 +1312,7 @@ export default function AdminDashboard() {
                     variant="outline"
                     className="flex-1 justify-start gap-2 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
                     onClick={() => {
-                      const url = apkInfo?.downloadUrl || generateApkLink()
+                      const url = apkInfo?.downloadUrl || `https://github.com/${GITHUB_REPO}/releases/download/latest/saatiril-andro.apk`
                       if (url) window.open(url, '_blank')
                     }}
                   >
@@ -1309,7 +1322,10 @@ export default function AdminDashboard() {
                   <Button
                     variant="outline"
                     className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
-                    onClick={copyApkLink}
+                    onClick={() => {
+                      const url = `https://github.com/${GITHUB_REPO}/releases/download/latest/saatiril-andro.apk`
+                      if (navigator.clipboard) navigator.clipboard.writeText(url)
+                    }}
                     title="Salin Link APK"
                   >
                     <Copy className="size-3.5" />
@@ -1317,7 +1333,11 @@ export default function AdminDashboard() {
                   <Button
                     variant="outline"
                     className="shrink-0 gap-1.5 border-[#4ade80]/40 bg-[#22c55e10] text-[#4ade80] hover:bg-[#3b2263] hover:text-[#86efac]"
-                    onClick={showApkQrCode}
+                    onClick={() => {
+                      setQrLink(`https://github.com/${GITHUB_REPO}/releases/download/latest/saatiril-andro.apk`)
+                      setQrLabel('APK Saatiril Android')
+                      setQrDialogOpen(true)
+                    }}
                     title="QR Code APK Android"
                   >
                     <QrCode className="size-3.5" />
@@ -1327,6 +1347,59 @@ export default function AdminDashboard() {
             ) : (
               <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
                 ⚠️ APK belum tersedia
+              </div>
+            )}
+
+            {/* MC-Only APK download */}
+            <Separator className="bg-[#533485]/40" />
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wider" style={{ color: '#8b5cf6' }}>
+              <Bluetooth className="size-3 inline mr-1" />APK Saatiril MC (BLE Remote)
+            </div>
+            {mcApkInfo?.available ? (
+              <>
+                <div className="text-xs mb-1.5 opacity-70" style={{ color: '#c4b5fd' }}>
+                  ✅ MC APK tersedia ({mcApkInfo.sizeMB} MB)
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1 justify-start gap-2 border-[#8b5cf6]/40 bg-[#8b5cf610] text-[#8b5cf6] hover:bg-[#3b2263] hover:text-[#c4b5fd]"
+                    onClick={() => {
+                      const url = mcApkInfo?.downloadUrl || `https://github.com/${GITHUB_REPO}/releases/download/latest/saatiril-mc.apk`
+                      if (url) window.open(url, '_blank')
+                    }}
+                  >
+                    <Download className="size-3.5" />
+                    Download MC APK
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="shrink-0 gap-1.5 border-[#8b5cf6]/40 bg-[#8b5cf610] text-[#8b5cf6] hover:bg-[#3b2263] hover:text-[#c4b5fd]"
+                    onClick={() => {
+                      const url = `https://github.com/${GITHUB_REPO}/releases/download/latest/saatiril-mc.apk`
+                      if (navigator.clipboard) navigator.clipboard.writeText(url)
+                    }}
+                    title="Salin Link MC APK"
+                  >
+                    <Copy className="size-3.5" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="shrink-0 gap-1.5 border-[#8b5cf6]/40 bg-[#8b5cf610] text-[#8b5cf6] hover:bg-[#3b2263] hover:text-[#c4b5fd]"
+                    onClick={() => {
+                      setQrLink(`https://github.com/${GITHUB_REPO}/releases/download/latest/saatiril-mc.apk`)
+                      setQrLabel('APK Saatiril MC (BLE)')
+                      setQrDialogOpen(true)
+                    }}
+                    title="QR Code MC APK"
+                  >
+                    <QrCode className="size-3.5" />
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <div className="text-xs mb-1.5 opacity-70" style={{ color: '#fca5a5' }}>
+                ⚠️ MC APK belum tersedia
               </div>
             )}
 
