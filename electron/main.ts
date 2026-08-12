@@ -463,7 +463,9 @@ function startStaticServer(outDir: string): Promise<void> {
 
       // ── API: BLE trigger from MC (via /admin-ble page) ──────────────
       // The admin-ble.html page forwards MC's PANGGIL/NEXT/RESET triggers
-      // to this endpoint, which the Electron app uses to call students.
+      // to this endpoint. We emit a 'BLE_TRIGGER' lan-message that the
+      // admin dashboard handles by looking up the next student and
+      // emitting a proper MC_CALL with the correct {student, channel} format.
       if (urlPath === '/api/ble-trigger' && req.method === 'POST') {
         let body = ''
         req.on('data', (chunk: Buffer) => { body += chunk.toString() })
@@ -471,10 +473,10 @@ function startStaticServer(outDir: string): Promise<void> {
           try {
             const data = JSON.parse(body)
             console.log(`[SAATIRIL BLE] Trigger from MC: ${data.action} ${data.studentId || ''}`)
-            // Broadcast via Socket.io — the admin dashboard listens for this
+            // Emit BLE_TRIGGER event — admin dashboard handles this
             if (socketServer) {
               socketServer.emit('lan-message', {
-                event: 'MC_CALL',
+                event: 'BLE_TRIGGER',
                 data: { action: data.action, studentId: data.studentId }
               })
             }
@@ -662,7 +664,9 @@ function startSocketServer(): Promise<void> {
     const httpForSocket = createServer()
 
     socketServer = new SocketIOServer(httpForSocket, {
-      path: '/',
+      // Use default Socket.io path '/socket.io/' instead of '/'
+      // This prevents conflict with HTTP routes and is more reliable
+      path: '/socket.io/',
       cors: { origin: '*', methods: ['GET', 'POST'] },
       pingInterval: 5000,
       pingTimeout: 15000,

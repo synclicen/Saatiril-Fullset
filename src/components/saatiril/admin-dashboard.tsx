@@ -38,7 +38,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, type CameraMode, mergeDatabases, preserveFrameOnSync, preservePhotoHistoryOnSync, mergeCaptureVersions, isPhotoshootMode, isDualPhotoshootMode } from '@/store/use-saatiril-store'
-import { onLocal, offLocal, getConnectionHealth, onLatencyUpdate, type ConnectionHealth } from '@/lib/socket'
+import { onLocal, offLocal, emitLocal, getConnectionHealth, onLatencyUpdate, type ConnectionHealth } from '@/lib/socket'
 import { useToast } from '@/hooks/use-toast'
 import { useIsMobile } from '@/hooks/use-mobile'
 
@@ -314,10 +314,62 @@ export default function AdminDashboard() {
     onLocal('SYNC_DB', handleSyncDb)
     onLocal('STUDENT_RESET', handleStudentReset)
 
+    // ── BLE_TRIGGER: handle MC trigger from /admin-ble page ──
+    // MC HP (BLE Server) sends PANGGIL/NEXT/RESET via Bluetooth →
+    // /admin-ble page → /api/ble-trigger → socket emit BLE_TRIGGER →
+    // here: look up next student, emit proper MC_CALL + update store
+    const handleBLETrigger = (data: { action: string; studentId?: string }) => {
+      const proj = useSaatirilStore.getState().currentProject
+      if (!proj) return
+      const channel = 1 // Admin is always channel 1 in combined mode
+
+      if (data.action === 'PANGGIL') {
+        const nextPending = proj.database.find(s => s.status === 'pending')
+        if (nextPending) {
+          const newStatus = `active_${channel}` as StudentStatus
+          const updatedDb = proj.database.map(s =>
+            s.id === nextPending.id ? { ...s, status: newStatus } :
+            (s.status.startsWith('active_') && s.status === `active_${channel}`) ? { ...s, status: 'pending' as StudentStatus } : s
+          )
+          updateCurrentProject({ ...proj, database: updatedDb })
+          // Emit MC_CALL so operator panel picks it up
+          emitLocal('MC_CALL', { student: { ...nextPending, status: newStatus }, channel })
+          console.log('[SAATIRIL BLE] PANGGIL:', nextPending.nama)
+        }
+      } else if (data.action === 'NEXT') {
+        const active = proj.database.find(s => s.status.startsWith('active_'))
+        if (active) {
+          const resetDb = proj.database.map(s =>
+            s.id === active.id ? { ...s, status: 'pending' as StudentStatus } : s
+          )
+          const nextPending = resetDb.find(s => s.status === 'pending')
+          if (nextPending) {
+            const newStatus = `active_${channel}` as StudentStatus
+            const updatedDb = resetDb.map(s =>
+              s.id === nextPending.id ? { ...s, status: newStatus } : s
+            )
+            updateCurrentProject({ ...proj, database: updatedDb })
+            emitLocal('MC_CALL', { student: { ...nextPending, status: newStatus }, channel })
+          }
+        }
+      } else if (data.action === 'RESET') {
+        const active = proj.database.find(s => s.status.startsWith('active_'))
+        if (active) {
+          const updatedDb = proj.database.map(s =>
+            s.id === active.id ? { ...s, status: 'pending' as StudentStatus } : s
+          )
+          updateCurrentProject({ ...proj, database: updatedDb })
+          emitLocal('STUDENT_RESET', { studentId: active.id, channel })
+        }
+      }
+    }
+    onLocal('BLE_TRIGGER', handleBLETrigger)
+
     return () => {
       offLocal('PHOTOS_SAVED', handlePhotosSaved)
       offLocal('SYNC_DB', handleSyncDb)
       offLocal('STUDENT_RESET', handleStudentReset)
+      offLocal('BLE_TRIGGER', handleBLETrigger)
     }
   }, [updateCurrentProject])
 

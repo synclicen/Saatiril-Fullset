@@ -73,7 +73,6 @@ body { background:#1a0b2e; color:#fff; font-family:-apple-system,BlinkMacSystemF
   function connect() {
     try {
       socket = io(socketUrl, {
-        path: '/',
         transports: ['websocket', 'polling'],
         reconnection: true,
         reconnectionDelay: 2000,
