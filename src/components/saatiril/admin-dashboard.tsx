@@ -1002,17 +1002,29 @@ export default function AdminDashboard() {
             </ul>
           </div>
 
-          {/* MODE 3: BLE MC Remote */}
+          {/* MODE 3A: BLE Remote (MC=Client, Admin APK=Server) */}
           <div>
             <p className="text-xs font-bold mb-1" style={{ color: '#3b82f6' }}>
-              🔵 MODE 3: MC Remote via Bluetooth (BLE) — No WiFi
+              🔵 MODE 3A: MC BLE Remote — Admin HP (MC=Client)
             </p>
             <ul className="space-y-0.5 pl-2">
-              <li className="text-xs text-[#c4b5fd]">• Admin HP/Laptop: buat proyek → BLE server otomatis aktif</li>
-              <li className="text-xs text-[#c4b5fd]">• MC HP: install APK → pilih 'MC REMOTE (BLE)' → scan → connect</li>
+              <li className="text-xs text-[#c4b5fd]">• Admin HP: buat proyek → BLE server otomatis aktif</li>
+              <li className="text-xs text-[#c4b5fd]">• MC HP: install saatiril-mc.apk → pilih 'BLE REMOTE' → scan → connect</li>
               <li className="text-xs text-[#c4b5fd]">• MC tekan PANGGIL → Bluetooth trigger → Admin foto</li>
-              <li className="text-xs text-[#c4b5fd]">• 100% immune interferensi WiFi — cocok untuk 3000+ orang</li>
-              <li className="text-xs text-[#c4b5fd]">• Atau via browser: buka /mc-ble di Chrome/Edge (Web Bluetooth)</li>
+              <li className="text-xs text-[#c4b5fd]">• 100% immune WiFi — cocok untuk 3000+ orang</li>
+            </ul>
+          </div>
+
+          {/* MODE 3B: BLE Server (MC=Server, Electron=Client) */}
+          <div>
+            <p className="text-xs font-bold mb-1" style={{ color: '#8b5cf6' }}>
+              🟣 MODE 3B: MC BLE Server — Admin Laptop (MC=Server)
+            </p>
+            <ul className="space-y-0.5 pl-2">
+              <li className="text-xs text-[#c4b5fd]">• MC HP: install saatiril-mc.apk → pilih 'BLE SERVER' → advertise</li>
+              <li className="text-xs text-[#c4b5fd]">• Laptop Electron: buka /admin-ble → klik Connect → scan Bluetooth</li>
+              <li className="text-xs text-[#c4b5fd]">• MC tekan PANGGIL → Bluetooth notify → Laptop foto</li>
+              <li className="text-xs text-[#c4b5fd]">• 100% immune WiFi — 1 laptop + 1 HP, no WiFi needed</li>
             </ul>
           </div>
 
@@ -1024,7 +1036,8 @@ export default function AdminDashboard() {
             <ul className="space-y-0.5 pl-2">
               <li className="text-xs text-[#c4b5fd]">• Laptop Admin: run saatiril-portable.exe → buat proyek</li>
               <li className="text-xs text-[#c4b5fd]">• Colok semua laptop via Ethernet Switch (kabel LAN)</li>
-              <li className="text-xs text-[#c4b5fd]">• MC/Operator: buka browser → /mc atau /operator → connect</li>
+              <li className="text-xs text-[#c4b5fd]">• MC: install saatiril-mc.apk → pilih 'WIFI/LAN' → input IP laptop</li>
+              <li className="text-xs text-[#c4b5fd]">• Operator: buka browser → /operator → connect</li>
               <li className="text-xs text-[#c4b5fd]">• 100% immune WiFi — cocok untuk wisuda besar (3000+ orang)</li>
               <li className="text-xs text-[#c4b5fd]">• Google Drive backup: pilih folder G:\My Drive\ di tab Admin</li>
             </ul>
@@ -1040,6 +1053,9 @@ export default function AdminDashboard() {
               <li className="text-xs text-[#c4b5fd]">• Hand Trigger (✋): MediaPipe Hands untuk foto hands-free</li>
               <li className="text-xs text-[#c4b5fd]">• Frame Overlay: tambahkan frame PNG dengan logo wisuda</li>
               <li className="text-xs text-[#c4b5fd]">• Export Excel: download daftar peserta dengan status</li>
+              <li className="text-xs text-[#c4b5fd]">• MC-Only APK (saatiril-mc.apk): APK terpisah untuk MC, terkunci penuh</li>
+              <li className="text-xs text-[#c4b5fd]">• Operator Plan B: tombol 'PANGGIL MANUAL' jika MC terputus</li>
+              <li className="text-xs text-[#c4b5fd]">• 3 APK: saatiril-andro.apk (full) + saatiril-mc.apk (MC) + saatiril-portable.exe (Electron)</li>
             </ul>
           </div>
 
