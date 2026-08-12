@@ -429,7 +429,7 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
   // ── Auto-scroll refs ─────────────────────────────────────────────────────
   useEffect(() => {
     const target = activeRowRef.current ?? nextRowRef.current
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [currentlyActive, nextPending])
 
   // ── Camera: enumerate devices ────────────────────────────────────────────

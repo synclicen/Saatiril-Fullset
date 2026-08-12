@@ -160,7 +160,7 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
   useEffect(() => {
     const target = activeRowRef.current ?? nextRowRef.current
     if (target) {
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   }, [currentlyActive, nextPending])
 
