@@ -136,10 +136,6 @@ export default function Home() {
   // In non-Electron environments, license check is always bypassed because
   // the Electron IPC API (window.saatirilAPI) is not available.
   // LAN clients (MC/Operator) also bypass license.
-  // IMPORTANT: We detect this in useEffect (after hydration) to avoid
-  // server/client hydration mismatch. The LicenseGate component handles
-  // the bypass internally for non-Electron environments.
-  const [licenseValid, setLicenseValid] = useState(false)
 
   // ── URL parameter routing for LAN clients and Android WebView ───────────
   // Detect role from URL and set up the app accordingly.
@@ -202,10 +198,43 @@ export default function Home() {
   }, [])
 
   // ── License gate: show lock screen until license is valid ──────────────
-  // In Electron: LicenseGate checks license status, shows activation UI if invalid
-  // In browser (LAN client): LicenseGate auto-bypasses (no Electron API available)
-  if (!licenseValid) {
-    return <LicenseGate onLicenseValid={() => setLicenseValid(true)} />
+  // Use 'checking' state to prevent license screen flash.
+  // 'checking' = loading spinner (no license text)
+  // 'valid' = show app
+  // 'invalid' = show LicenseGate activation UI
+  const [licenseState, setLicenseState] = useState<'checking' | 'valid' | 'invalid'>('checking')
+
+  useEffect(() => {
+    const api = (window as any).saatirilAPI
+    if (!api?.isElectron || !api.getLicenseStatus) {
+      // Non-Electron (LAN client) — bypass immediately
+      setLicenseState('valid')
+      return
+    }
+    // Electron — check license via IPC
+    api.getLicenseStatus().then((status: any) => {
+      if (status.isValid || status.isGracePeriod) {
+        setLicenseState('valid')
+      } else {
+        setLicenseState('invalid')
+      }
+    }).catch(() => {
+      // IPC error — bypass (safety)
+      setLicenseState('valid')
+    })
+  }, [])
+
+  if (licenseState === 'checking') {
+    // Plain loading screen — no "license" text, prevents flash
+    return (
+      <div className="flex h-dvh flex-col items-center justify-center gap-4 px-6" style={{ backgroundColor: '#1a0b2e' }}>
+        <div className="size-10 animate-spin rounded-full border-2 border-[#d4af37] border-t-transparent" />
+      </div>
+    )
+  }
+
+  if (licenseState === 'invalid') {
+    return <LicenseGate onLicenseValid={() => setLicenseState('valid')} />
   }
 
   return (

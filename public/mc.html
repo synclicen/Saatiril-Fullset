@@ -54,13 +54,21 @@ body { background:#1a0b2e; color:#fff; font-family:-apple-system,BlinkMacSystemF
 <div class="container" id="app">
   <div class="loading">Menghubungkan ke server…</div>
 </div>
-<script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
+<!-- Socket.io client — load locally first, fallback to socket server -->
+<script src="/js/socket.io.min.js"></script>
+<script>
+// Verify Socket.io loaded; if not, try loading from socket server
+var params = new URLSearchParams(window.location.search);
+var socketPort = params.get('socketPort') || '3003';
+if (typeof io === 'undefined') {
+  console.warn('[MC] Local Socket.io failed, trying socket server...');
+  document.write('<script src="http://' + window.location.hostname + ':' + socketPort + '/socket.io/socket.io.js"><\/script>');
+}
+</script>
 <script>
 (function(){
-  var params = new URLSearchParams(window.location.search);
   var channel = parseInt(params.get('channel') || '1');
   var password = params.get('password') || '';
-  var socketPort = params.get('socketPort') || '3003';
   var socket = null;
   var authenticated = false;
   var project = null;
