@@ -352,8 +352,9 @@ export function connectSocket(): Socket {
   const socketUrl = getSocketUrl()
   const isElectron = !!(window as any).saatirilAPI?.isElectron
 
-  // Socket.io default path is '/socket.io/' — same as server config
+  // Use path '/' — matches Electron server config and APK ktor server
   const socketOptions = {
+    path: '/',
     transports: ['websocket', 'polling'],
     forceNew: true,
     reconnection: true,

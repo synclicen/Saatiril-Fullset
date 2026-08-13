@@ -2250,6 +2250,7 @@ function connectToServer(ip) {
   if (explicitSocketPort) {
     serverUrl = `http://${ip}:${explicitSocketPort}`
     socketOptions = {
+      path: '/',
       transports: ['websocket', 'polling'],
       upgrade: true,
       reconnection: true,
@@ -2261,6 +2262,7 @@ function connectToServer(ip) {
   } else if (isCaddyGateway) {
     serverUrl = window.location.origin
     socketOptions = {
+      path: '/',
       transports: ['websocket', 'polling'],
       upgrade: true,
       reconnection: true,
@@ -2274,6 +2276,7 @@ function connectToServer(ip) {
     // Direct LAN connection — connect to Socket.io port 3003
     serverUrl = `http://${ip}:${SOCKET_PORT}`
     socketOptions = {
+      path: '/',
       transports: ['websocket', 'polling'],
       upgrade: true,
       reconnection: true,

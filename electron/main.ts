@@ -664,9 +664,9 @@ function startSocketServer(): Promise<void> {
     const httpForSocket = createServer()
 
     socketServer = new SocketIOServer(httpForSocket, {
-      // Use default Socket.io path '/socket.io/' instead of '/'
-      // This prevents conflict with HTTP routes and is more reliable
-      path: '/socket.io/',
+      // Use path '/' — matches APK ktor server and socket.io-client v2.1.0
+      // This allows APK MC/Operator to connect to Electron server
+      path: '/',
       cors: { origin: '*', methods: ['GET', 'POST'] },
       pingInterval: 5000,
       pingTimeout: 15000,
