@@ -80,3 +80,6 @@ upload/
 android-full/.gradle/
 android-full/app/build/
 android-full/local.properties
+
+# Local test harness (not part of the app)
+test-harness/
