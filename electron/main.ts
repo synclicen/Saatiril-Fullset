@@ -813,6 +813,35 @@ function startSocketServer(): Promise<void> {
   })
 }
 
+// ─── Windows Firewall: allow incoming on HTTP + Socket ports ──────────────
+// Without this, Windows Firewall blocks LAN clients from connecting to
+// the HTTP server (port 3000) and Socket.io server (port 3003).
+// We use `netsh advfirewall` to add a rule — requires admin privileges
+// (Electron portable runs with user privileges by default, but netsh
+// firewall add works without elevation for per-user rules in Windows 10+).
+function addFirewallRule(port: number): void {
+  if (process.platform !== 'win32') return
+  const ruleName = `Saatiril Port ${port}`
+  try {
+    const { execSync } = require('child_process')
+    // Check if rule already exists
+    try {
+      execSync(`netsh advfirewall firewall show rule name="${ruleName}"`, { stdio: 'pipe' })
+      // Rule exists — skip
+      return
+    } catch {
+      // Rule doesn't exist — create it
+    }
+    // Add firewall rule to allow inbound TCP on this port
+    execSync(`netsh advfirewall firewall add rule name="${ruleName}" dir=in action=allow protocol=TCP localport=${port}`, { stdio: 'pipe' })
+    console.log(`[SAATIRIL] Firewall rule added: ${ruleName} (TCP port ${port})`)
+  } catch (err: any) {
+    console.warn(`[SAATIRIL] Could not add firewall rule for port ${port}: ${err.message}`)
+    console.warn(`[SAATIRIL] Manual fix: Run as admin, or add firewall rule manually:`)
+    console.warn(`[SAATIRIL]   netsh advfirewall firewall add rule name="Saatiril Port ${port}" dir=in action=allow protocol=TCP localport=${port}`)
+  }
+}
+
 // ─── Get LAN IP addresses ─────────────────────────────────────────────────
 function getLanIPs(): { name: string; address: string }[] {
   const interfaces = os.networkInterfaces()
@@ -1218,6 +1247,12 @@ app.whenReady().then(async () => {
 
   // Register IPC handlers
   registerIpcHandlers()
+
+  // ── Add Windows Firewall rules for ports 3000 and 3003 ──
+  // This allows LAN clients (MC/Operator) to connect from other devices.
+  // Without this, Windows Firewall blocks incoming connections by default.
+  addFirewallRule(DEFAULT_HTTP_PORT)
+  addFirewallRule(DEFAULT_SOCKET_PORT)
 
   // Show splash screen immediately — gives visual feedback during startup
   createSplashWindow()
