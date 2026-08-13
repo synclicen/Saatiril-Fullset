@@ -22,6 +22,7 @@ import {
   Folder,
   Link2Off,
   Bluetooth,
+  Loader2,
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import * as XLSX from 'xlsx'
@@ -394,6 +395,95 @@ export default function AdminDashboard() {
   const [apkInfo, setApkInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string } | null>(null)
   const [mcApkInfo, setMcApkInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string } | null>(null)
   const [portableInfo, setPortableInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string } | null>(null)
+
+  // ── Bluetooth MC Remote state ─────────────────────────────────────
+  // Web Bluetooth connection to MC HP (MC = BLE Server, Admin = BLE Client)
+  const [bleState, setBleState] = useState<'disconnected' | 'scanning' | 'connected' | 'error'>('disconnected')
+  const [bleError, setBleError] = useState<string>('')
+  const [bleTriggerLog, setBleTriggerLog] = useState<string[]>([])
+  const bleDeviceRef = useRef<any>(null)
+  const bleServerRef = useRef<any>(null)
+  const bleStatusCharRef = useRef<any>(null)
+  const bleTriggerCharRef = useRef<any>(null)
+
+  // Web Bluetooth MC connection — connects to MC HP in BLE SERVER mode
+  const connectMCBluetooth = useCallback(async () => {
+    const SERVICE_UUID = 'e7810a71-73ae-499d-8c15-fa8f6072e919'
+    const CHAR_STATUS = 'e7810a71-73ae-499d-8c15-fa8f6072e91c'
+    const CHAR_TRIGGER = 'e7810a71-73ae-499d-8c15-fa8f6072e91b'
+
+    if (typeof navigator === 'undefined' || !navigator.bluetooth) {
+      setBleState('error')
+      setBleError('Browser tidak mendukung Web Bluetooth. Gunakan Chrome atau Edge.')
+      return
+    }
+
+    try {
+      setBleState('scanning')
+      setBleError('')
+
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [{ services: [SERVICE_UUID] }],
+        optionalServices: [SERVICE_UUID],
+      })
+
+      bleDeviceRef.current = device
+      device.addEventListener('gattserverdisconnected', () => {
+        setBleState('disconnected')
+        setBleError('MC terputus. Klik Connect untuk mencoba lagi.')
+      })
+
+      const server = await device.gatt.connect()
+      bleServerRef.current = server
+      const service = await server.getPrimaryService(SERVICE_UUID)
+
+      bleStatusCharRef.current = await service.getCharacteristic(CHAR_STATUS)
+      bleTriggerCharRef.current = await service.getCharacteristic(CHAR_TRIGGER)
+
+      // Subscribe to status notifications — MC sends PANGGIL/NEXT/RESET via this
+      await bleStatusCharRef.current.startNotifications()
+      bleStatusCharRef.current.addEventListener('characteristicvaluechanged', (event: any) => {
+        const value = new TextDecoder().decode(event.target.value)
+        try {
+          const data = JSON.parse(value)
+          const action = data.action || ''
+          const studentId = data.studentId || ''
+          const time = new Date().toLocaleTimeString()
+          setBleTriggerLog((prev) => [`[${time}] ${action}${studentId ? ' (' + studentId + ')' : ''}`, ...prev].slice(0, 20))
+
+          // Emit BLE_TRIGGER directly — admin dashboard handles this (no HTTP round-trip)
+          if (action === 'PANGGIL' || action === 'NEXT' || action === 'RESET') {
+            emitLocal('BLE_TRIGGER', { action, studentId })
+          }
+        } catch (_e) { /* ignore parse errors */ }
+      })
+
+      setBleState('connected')
+    } catch (e: any) {
+      const msg = e?.message || ''
+      if (msg.toLowerCase().includes('cancel') || msg.toLowerCase().includes('chooser') || msg.toLowerCase().includes('picker')) {
+        setBleState('disconnected')
+        setBleError('Pencarian dibatalkan.')
+      } else if (msg.toLowerCase().includes('no device') || msg.toLowerCase().includes('notfound')) {
+        setBleState('error')
+        setBleError('Tidak menemukan MC. Pastikan MC HP di mode BLE SERVER + Bluetooth aktif + GPS aktif.')
+      } else {
+        setBleState('error')
+        setBleError('Gagal: ' + msg)
+      }
+    }
+  }, [])
+
+  const disconnectMCBluetooth = useCallback(() => {
+    try {
+      bleServerRef.current?.disconnect?.()
+    } catch (_e) { /* ignore */ }
+    bleDeviceRef.current = null
+    bleServerRef.current = null
+    bleStatusCharRef.current = null
+    bleTriggerCharRef.current = null
+    setBleState('disconnected')
+  }, [])
 
   // ── Google Drive / Cloud backup state ──────────────────────────────
   const [backupFolder, setBackupFolder] = useState<string | null>(null)
@@ -1871,6 +1961,141 @@ export default function AdminDashboard() {
   )
   }
 
+  // ── Render: Bluetooth MC Remote Panel ──────────────────────────────
+  const renderBluetoothPanel = () => {
+    const bleSupported = typeof navigator !== 'undefined' && !!navigator.bluetooth
+    const statusColor = bleState === 'connected' ? '#4ade80' : bleState === 'scanning' ? '#fbbf24' : bleState === 'error' ? '#ef4444' : '#c4b5fd'
+    const statusText = bleState === 'connected' ? 'MC Terhubung' : bleState === 'scanning' ? 'Mencari MC...' : bleState === 'error' ? 'Gagal' : 'Belum terhubung'
+
+    return (
+      <Card className="border-[#533485]/40 bg-[#2a164a]/60">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm" style={{ color: '#d4af37' }}>
+            <Bluetooth className="size-4" style={{ color: '#8b5cf6' }} />
+            Koneksi MC via Bluetooth
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {/* Status indicator */}
+          <div className="flex items-center gap-2 rounded-md border border-[#533485]/40 bg-[#1a0b2e]/60 px-3 py-2">
+            <div className="size-2.5 rounded-full" style={{ backgroundColor: statusColor }} />
+            <span className="text-xs font-semibold" style={{ color: statusColor }}>{statusText}</span>
+            {bleState === 'connected' && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-auto h-6 border-red-400/30 text-red-300 text-[10px]"
+                onClick={disconnectMCBluetooth}
+              >
+                Disconnect
+              </Button>
+            )}
+          </div>
+
+          {/* Error message */}
+          {bleState === 'error' && bleError && (
+            <div className="rounded-md border border-red-400/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">
+              {bleError}
+            </div>
+          )}
+
+          {/* Step-by-step instructions */}
+          {bleState === 'disconnected' && (
+            <div className="space-y-1.5 text-[11px]" style={{ color: '#c4b5fd' }}>
+              <div className="font-semibold text-[10px] uppercase tracking-wider" style={{ color: '#d4af37' }}>
+                Langkah-langkah:
+              </div>
+              <div className="flex gap-1.5">
+                <span className="shrink-0 font-bold" style={{ color: '#8b5cf6' }}>1.</span>
+                <span>Di MC HP: buka app Saatiril MC → pilih mode <b>BLE SERVER</b></span>
+              </div>
+              <div className="flex gap-1.5">
+                <span className="shrink-0 font-bold" style={{ color: '#8b5cf6' }}>2.</span>
+                <span>MC HP: aktifkan <b>Bluetooth</b> + <b>GPS/Lokasi</b></span>
+              </div>
+              <div className="flex gap-1.5">
+                <span className="shrink-0 font-bold" style={{ color: '#8b5cf6' }}>3.</span>
+                <span>MC HP: layar menyala (jangan sleep)</span>
+              </div>
+              <div className="flex gap-1.5">
+                <span className="shrink-0 font-bold" style={{ color: '#8b5cf6' }}>4.</span>
+                <span>Laptop: aktifkan Bluetooth</span>
+              </div>
+              <div className="flex gap-1.5">
+                <span className="shrink-0 font-bold" style={{ color: '#8b5cf6' }}>5.</span>
+                <span>Klik <b>CONNECT MC VIA BLUETOOTH</b> di bawah</span>
+              </div>
+              <div className="flex gap-1.5">
+                <span className="shrink-0 font-bold" style={{ color: '#8b5cf6' }}>6.</span>
+                <span>Pilih MC HP dari daftar di dialog browser</span>
+              </div>
+            </div>
+          )}
+
+          {/* Connect button */}
+          {!bleSupported ? (
+            <div className="rounded-md border border-red-400/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">
+              Browser tidak mendukung Web Bluetooth. Gunakan Chrome atau Edge.
+            </div>
+          ) : bleState !== 'connected' ? (
+            <Button
+              className="w-full gap-2 bg-[#8b5cf6] text-white hover:bg-[#7c3aed]"
+              disabled={bleState === 'scanning'}
+              onClick={connectMCBluetooth}
+            >
+              {bleState === 'scanning' ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Mencari MC...
+                </>
+              ) : (
+                <>
+                  <Bluetooth className="size-4" />
+                  CONNECT MC VIA BLUETOOTH
+                </>
+              )}
+            </Button>
+          ) : null}
+
+          {/* Trigger log when connected */}
+          {bleState === 'connected' && (
+            <div className="space-y-1">
+              <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: '#c4b5fd' }}>
+                Log Trigger MC:
+              </div>
+              <ScrollArea className="max-h-32 rounded-md border border-[#533485]/40 bg-[#1a0b2e]/60 p-2">
+                {bleTriggerLog.length === 0 ? (
+                  <p className="text-[11px] italic" style={{ color: '#c4b5fd99' }}>
+                    Menunggu trigger dari MC...
+                  </p>
+                ) : (
+                  <div className="space-y-0.5">
+                    {bleTriggerLog.map((log, i) => (
+                      <div key={i} className="text-[10px] font-mono" style={{ color: '#4ade80' }}>
+                        {log}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </ScrollArea>
+            </div>
+          )}
+
+          {/* Troubleshooting tips */}
+          {bleState === 'error' && (
+            <div className="rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[10px]" style={{ color: '#c4b5fd' }}>
+              <div className="font-semibold mb-1" style={{ color: '#fbbf24' }}>Tips:</div>
+              • Pastikan MC HP install APK v2.4.5+ (fix BLE advertising)<br />
+              • Coba klik Connect 2-3 kali — kadang perlu retry<br />
+              • Dekatkan MC HP ke laptop (dalam 2 meter)<br />
+              • Alternatif: gunakan mode <b>WIFI / LAN</b> di MC (paling stabil)
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    )
+  }
+
   // ── Render: Network Tips ──────────────────────────────────────────
   const renderNetworkTips = () => {
     const quality = networkHealth.networkQuality
@@ -2141,6 +2366,7 @@ export default function AdminDashboard() {
           {renderDaftarPeserta()}
           {renderGoogleDriveBackup()}
           {renderLanAccess()}
+          {renderBluetoothPanel()}
           {renderNetworkTips()}
         </div>
 
