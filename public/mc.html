@@ -115,12 +115,13 @@ if (typeof io === 'undefined') {
     });
 
     socket.on('auth-failed', function(data) {
-      showError('Password salah atau ditolak server');
+      // Show password input instead of just error
+      showPasswordPrompt();
     });
 
     socket.on('auth-requirement', function(data) {
       if (data.passwordRequired && !password) {
-        showError('Server membutuhkan password. Tambahkan &password=xxx ke URL.');
+        showPasswordPrompt();
       }
     });
 
@@ -323,6 +324,34 @@ if (typeof io === 'undefined') {
     var app = document.getElementById('app');
     app.innerHTML = '<div class="error-box">' + escapeHtml(msg) + '</div><div class="loading">Mencoba menghubungkan ulang\u2026</div>';
   }
+
+  function showPasswordPrompt() {
+    var app = document.getElementById('app');
+    app.innerHTML =
+      '<div style="text-align:center;padding:40px 20px;">' +
+      '<div style="font-size:48px;margin-bottom:16px;">🔑</div>' +
+      '<h2 style="color:#fff;font-size:18px;margin-bottom:8px;">Password Sesi Diperlukan</h2>' +
+      '<p style="color:#c4b5fd;font-size:13px;margin-bottom:16px;">Masukkan password sesi dari admin</p>' +
+      '<input type="password" id="pwd-input" placeholder="Password" style="width:100%;max-width:300px;padding:12px;border-radius:8px;border:1px solid #533485;background:#2a164a;color:#fff;font-size:16px;text-align:center;margin-bottom:12px;" />' +
+      '<button onclick="window.__submitPwd()" style="width:100%;max-width:300px;height:44px;border:none;border-radius:8px;background:#d4af37;color:#1a0b2e;font-size:14px;font-weight:900;cursor:pointer;">CONNECT</button>' +
+      '</div>';
+    var input = document.getElementById('pwd-input');
+    if (input) {
+      input.focus();
+      input.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') window.__submitPwd();
+      });
+    }
+  }
+
+  window.__submitPwd = function() {
+    var input = document.getElementById('pwd-input');
+    if (!input || !input.value) return;
+    password = input.value;
+    // Reconnect with password
+    if (socket) { try { socket.disconnect(); } catch(e) {} }
+    connect();
+  };
 
   window.__call = function() {
     var student = window.__nextPending;
