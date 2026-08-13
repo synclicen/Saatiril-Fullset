@@ -381,10 +381,47 @@ export function MainApp() {
     onLocal('REQUEST_STATE', handleRequestState)
     onLocal('REQUEST_FRAME', handleRequestFrame)
 
+    // ── MC_CALL: Always handle here (not just in operator-panel) ──
+    // Operator panel may not be mounted (e.g., admin viewing Admin tab).
+    // This ensures MC_CALL always updates the store + opCurrentTarget.
+    const handleMcCallAlways = (data: { student: any; channel: number }) => {
+      const curProj = useSaatirilStore.getState().currentProject
+      if (!curProj) return
+      if (data.channel !== useSaatirilStore.getState().myChannel) return
+
+      // Update store
+      const updatedDb = curProj.database.map((s: any) =>
+        s.id === data.student.id ? { ...s, status: data.student.status } : s
+      )
+      updateCurrentProject({ ...curProj, database: updatedDb })
+
+      // Set opCurrentTarget so operator panel picks it up when mounted
+      useSaatirilStore.getState().setOpCurrentTarget(data.student)
+
+      console.log('[SAATIRIL MAIN] MC_CALL processed:', data.student.nama, 'Ch.', data.channel)
+    }
+    onLocal('MC_CALL', handleMcCallAlways)
+
+    // ── STUDENT_RESET: Always handle here too ──
+    const handleStudentResetAlways = (data: { studentId: string; channel: number }) => {
+      const curProj = useSaatirilStore.getState().currentProject
+      if (!curProj) return
+      const updatedDb = curProj.database.map((s: any) =>
+        s.id === data.studentId ? { ...s, status: 'pending' as any } : s
+      )
+      const cleanedHistory = curProj.photoHistory.filter((h: any) => h.student.id !== data.studentId)
+      updateCurrentProject({ ...curProj, database: updatedDb, photoHistory: cleanedHistory })
+      useSaatirilStore.getState().setOpCurrentTarget(null)
+      console.log('[SAATIRIL MAIN] STUDENT_RESET processed:', data.studentId)
+    }
+    onLocal('STUDENT_RESET', handleStudentResetAlways)
+
     return () => {
       offLocal('SYNC_DB', handleSyncDb)
       offLocal('REQUEST_STATE', handleRequestState)
       offLocal('REQUEST_FRAME', handleRequestFrame)
+      offLocal('MC_CALL', handleMcCallAlways)
+      offLocal('STUDENT_RESET', handleStudentResetAlways)
     }
   }, [updateCurrentProject])
 
