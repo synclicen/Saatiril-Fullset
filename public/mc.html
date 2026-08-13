@@ -62,7 +62,7 @@ var params = new URLSearchParams(window.location.search);
 var socketPort = params.get('socketPort') || '3003';
 if (typeof io === 'undefined') {
   console.warn('[MC] Local Socket.io failed, trying socket server...');
-  document.write('<script src="http://' + window.location.hostname + ':' + socketPort + '/socket.io/socket.io.js"><\/script>');
+  document.write('<script src="http://' + window.location.hostname + ':' + socketPort + '/socket.io.js"><\/script>');
 }
 </script>
 <script>
