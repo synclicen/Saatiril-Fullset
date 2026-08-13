@@ -154,10 +154,30 @@
     .pi-badge.unknown { background: rgba(234,179,8,0.15); color: #facc15; }
     .pi-badge.active-cam { background: rgba(212,175,55,0.2); color: var(--gold); }
 
-    /* ── Operator Screen ── */
+    /* ── Operator Screen (split-screen: camera LEFT, sidebar RIGHT) ── */
     .operator-screen { display: none; height: 100vh; flex-direction: column; }
     .operator-screen.active { display: flex; }
-    
+
+    /* Main horizontal split */
+    .operator-main {
+      flex: 1; min-height: 0; display: flex; flex-direction: row;
+      overflow: hidden;
+    }
+
+    /* LEFT panel: camera zone + capture button */
+    .camera-zone {
+      flex: 0 0 65%; min-width: 0; display: flex; flex-direction: column;
+      background: #000; position: relative;
+    }
+    .camera-zone .capture-bar { width: 100%; }
+
+    /* RIGHT panel: sidebar */
+    .sidebar {
+      flex: 0 0 35%; min-width: 0; display: flex; flex-direction: column;
+      background: var(--panel); border-left: 1px solid var(--border);
+      overflow: hidden;
+    }
+
     /* Top Bar */
     .top-bar {
       display: flex; align-items: center; padding: 6px 12px; gap: 8px;
@@ -214,7 +234,7 @@
       min-height: 0;
     }
     .camera-area video {
-      width: 100%; height: 100%; object-fit: cover;
+      width: 100%; height: 100%; object-fit: contain;
     }
     .camera-area canvas { display: none; }
     .no-camera-msg {
@@ -290,24 +310,15 @@
     .photo-dot.done { background: var(--gold); }
     .photo-dot.current { background: #facc15; animation: pulse 1s infinite; }
 
-    /* ── Draggable Divider ── */
-    .drag-divider {
-      height: 20px; background: var(--panel); border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border); cursor: ns-resize;
-      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-    }
-    .drag-divider::after {
-      content: '···'; color: var(--muted); font-size: 12px; letter-spacing: 4px;
-    }
-
-    /* ── Capture bar (full-width button) ── */
+    /* ── Capture bar (full-width button at bottom of left panel) ── */
     .capture-bar {
       display: flex; align-items: center; gap: 6px;
-      padding: 4px 8px; background: rgba(42,22,74,0.8); flex-shrink: 0;
+      padding: 6px 10px; background: rgba(42,22,74,0.9); flex-shrink: 0;
+      border-top: 1px solid var(--border); backdrop-filter: blur(8px);
     }
     .capture-bar-btn {
-      flex: 1; height: 40px; border-radius: 8px; border: none;
-      font-weight: 700; font-size: 13px; cursor: pointer;
+      flex: 1; height: 44px; border-radius: 10px; border: none;
+      font-weight: 700; font-size: 14px; cursor: pointer;
       display: flex; align-items: center; justify-content: center; gap: 4px;
       transition: all 0.15s;
     }
@@ -360,133 +371,151 @@
     }
     .switch.on::after { transform: translateX(16px); }
 
-    /* ── OP Search (legacy, kept for old references) ── */
+    /* ── OP Search ── */
+    .opsearch-wrap { position: relative; padding: 4px 6px; flex-shrink: 0; }
+    .opsearch-input {
+      width: 100%; height: 30px; border-radius: 6px;
+      background: var(--card); border: 1px solid var(--border);
+      color: #fff; font-size: 11px; padding: 0 8px 0 28px; outline: none;
+    }
+    .opsearch-input:focus { border-color: var(--gold); }
+    .opsearch-input::placeholder { color: rgba(196,181,253,0.4); }
+    .opsearch-icon {
+      position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+      font-size: 12px; color: var(--muted); pointer-events: none;
+    }
+    .opsearch-results { overflow-y: auto; }
+    .opsearch-item {
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 8px; cursor: pointer; font-size: 10px;
+      border-bottom: 1px solid rgba(83,52,133,0.2);
+    }
+    .opsearch-item:active { background: rgba(212,175,55,0.15); }
+    .os-nim { width: 50px; color: var(--muted); font-family: monospace; font-size: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .os-nama { flex: 1; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+    .os-nama.active { color: var(--gold); font-weight: 700; }
+    .os-status { font-size: 7px; font-weight: 700; width: 28px; text-align: right; }
+    .opsearch-empty { font-size: 9px; color: var(--muted); text-align: center; padding: 8px 0; }
 
-    /* ── Queue list panel (tabular like APK) ── */
+    /* ── Queue list (sidebar, always visible, scrollable) ── */
     .queue-header {
-      padding: 2px 6px; flex-shrink: 0;
+      padding: 4px 8px; flex-shrink: 0; display: flex; align-items: center;
+      justify-content: space-between; background: var(--card);
+      border-bottom: 1px solid var(--border);
     }
-    .queue-title {
-      font-size: 9px; font-weight: 700; color: var(--gold);
-    }
+    .queue-title { font-size: 10px; font-weight: 700; color: var(--gold); }
     .queue-panel .queue-table,
-    .tab-page .queue-table {
+    .sidebar .queue-table {
       max-height: none; overflow-y: auto; flex: 1; min-height: 0;
     }
     .queue-panel .queue-row,
-    .tab-page .queue-row {
+    .sidebar .queue-row {
       display: flex; align-items: center; gap: 2px;
-      padding: 3px 4px; font-size: 9px; min-height: 26px;
+      padding: 4px 6px; font-size: 10px; min-height: 28px;
       border-bottom: 1px solid rgba(83,52,133,0.3);
     }
     .queue-panel .queue-row.active-row,
-    .tab-page .queue-row.active-row { background: rgba(212,175,55,0.15); }
+    .sidebar .queue-row.active-row { background: rgba(212,175,55,0.15); }
     .queue-panel .queue-row.sent-row,
-    .tab-page .queue-row.sent-row { background: rgba(212,175,55,0.05); }
+    .sidebar .queue-row.sent-row { background: rgba(212,175,55,0.05); }
     .queue-panel .queue-row.done-row,
-    .tab-page .queue-row.done-row { background: rgba(196,181,253,0.03); }
+    .sidebar .queue-row.done-row { background: rgba(196,181,253,0.03); }
     .queue-panel .q-idx,
-    .tab-page .q-idx { width: 20px; color: var(--muted); font-family: monospace; font-size: 8px; }
+    .sidebar .q-idx { width: 18px; color: var(--muted); font-family: monospace; font-size: 9px; }
     .queue-panel .q-nim-col,
-    .tab-page .q-nim-col { width: 55px; color: var(--muted); font-family: monospace; font-size: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sidebar .q-nim-col { width: 52px; color: var(--muted); font-family: monospace; font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .queue-panel .q-nama-col,
-    .tab-page .q-nama-col { flex: 1; color: #fff; font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sidebar .q-nama-col { flex: 1; color: #fff; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .queue-panel .q-nama-col.active-name,
-    .tab-page .q-nama-col.active-name { color: var(--gold); font-weight: 700; }
+    .sidebar .q-nama-col.active-name { color: var(--gold); font-weight: 700; }
     .queue-panel .q-nama-col.done-name,
-    .tab-page .q-nama-col.done-name { color: var(--muted); text-decoration: line-through; }
+    .sidebar .q-nama-col.done-name { color: var(--muted); text-decoration: line-through; }
     .queue-panel .q-status-col,
-    .tab-page .q-status-col { width: 40px; font-size: 7px; font-weight: 700; text-align: right; }
+    .sidebar .q-status-col { width: 38px; font-size: 8px; font-weight: 700; text-align: right; }
     .queue-panel .queue-empty,
-    .tab-page .queue-empty { font-size: 9px; color: var(--muted); text-align: center; padding: 8px 0; }
+    .sidebar .queue-empty { font-size: 10px; color: var(--muted); text-align: center; padding: 10px 0; }
 
-    /* ── Target Bar (always visible, like APK) ── */
-    .target-bar {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 4px 8px; background: var(--card); border-bottom: 1px solid var(--border);
-      flex-shrink: 0; min-height: 36px;
+    /* ── Sidebar Toolbar ── */
+    .sidebar-toolbar {
+      display: flex; align-items: center; gap: 4px;
+      padding: 6px 8px; background: var(--panel);
+      border-bottom: 1px solid var(--border); flex-shrink: 0;
     }
-    .tb-left { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
-    .tb-avatar {
-      width: 26px; height: 26px; border-radius: 50%; background: var(--panel);
-      border: 1px solid var(--gold); display: flex; align-items: center; justify-content: center;
-      font-size: 12px; flex-shrink: 0;
+    .tool-btn {
+      display: flex; align-items: center; justify-content: center; gap: 3px;
+      padding: 6px 10px; border-radius: 8px; font-size: 11px; font-weight: 700;
+      background: var(--card); border: 1px solid var(--border); color: var(--muted);
+      cursor: pointer; transition: all 0.15s; white-space: nowrap;
     }
-    .tb-info { flex: 1; min-width: 0; }
-    .tb-name { font-size: 12px; font-weight: 700; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .tb-nim { font-size: 9px; color: var(--muted); font-family: monospace; }
-    .tb-badge { font-size: 8px; font-weight: 700; padding: 2px 6px; border-radius: 3px; flex-shrink: 0; }
-    .tb-badge.toga { background: rgba(212,175,55,0.2); color: var(--gold); }
-    .tb-badge.ijazah { background: rgba(34,197,94,0.2); color: var(--success); }
-    .tb-badge.sending { background: rgba(196,181,253,0.15); color: var(--muted); }
-    .tb-badge.standby { background: rgba(196,181,253,0.1); color: rgba(196,181,253,0.5); }
+    .tool-btn:active { background: var(--border); }
+    .tool-btn.active { border-color: var(--gold); color: var(--gold); background: rgba(212,175,55,0.15); }
+    .tool-btn .tool-badge {
+      font-size: 8px; font-weight: 700; padding: 1px 4px; border-radius: 4px;
+      background: rgba(212,175,55,0.25); color: var(--gold); margin-left: 2px;
+    }
+    .tool-spacer { flex: 1; }
 
-    /* ── Tab Bar ── */
-    .tab-bar {
-      display: flex; border-bottom: 1px solid var(--border);
-      flex-shrink: 0; background: var(--panel);
+    /* ── Sidebar Target Info (always visible) ── */
+    .sidebar-target {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px; background: var(--card);
+      border-bottom: 1px solid var(--border); flex-shrink: 0; min-height: 48px;
     }
-    .tab-btn {
-      flex: 1; padding: 5px 4px; font-size: 10px; font-weight: 700;
-      background: none; border: none; border-bottom: 2px solid transparent;
-      color: var(--muted); cursor: pointer; text-align: center;
+    .sidebar-target .tb-left { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+    .sidebar-target .tb-avatar {
+      width: 28px; height: 28px; border-radius: 50%; background: var(--panel);
+      border: 2px solid var(--gold); display: flex; align-items: center; justify-content: center;
+      font-size: 14px; flex-shrink: 0;
     }
-    .tab-btn.active { color: var(--gold); border-bottom-color: var(--gold); }
-    .tab-btn:active { background: rgba(212,175,55,0.1); }
+    .sidebar-target .tb-info { flex: 1; min-width: 0; }
+    .sidebar-target .tb-name { font-size: 13px; font-weight: 700; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sidebar-target .tb-nim { font-size: 10px; color: var(--muted); font-family: monospace; }
+    .sidebar-target .tb-badge { font-size: 9px; font-weight: 700; padding: 3px 8px; border-radius: 4px; flex-shrink: 0; }
+    .sidebar-target .tb-badge.toga { background: rgba(212,175,55,0.2); color: var(--gold); }
+    .sidebar-target .tb-badge.ijazah { background: rgba(34,197,94,0.2); color: var(--success); }
+    .sidebar-target .tb-badge.sending { background: rgba(196,181,253,0.15); color: var(--muted); }
+    .sidebar-target .tb-badge.standby { background: rgba(196,181,253,0.1); color: rgba(196,181,253,0.5); }
 
-    /* ── Tab Content ── */
-    .tab-content {
-      flex: 1; min-height: 0; overflow: hidden; position: relative;
+    /* ── Sidebar Camera Selector ── */
+    .sidebar-camera-selector {
+      display: flex; align-items: center; gap: 4px;
+      padding: 6px 8px; background: var(--panel);
+      border-bottom: 1px solid var(--border); flex-shrink: 0;
     }
-    .tab-page {
-      display: none; position: absolute; inset: 0;
-      flex-direction: column; overflow: hidden;
+    .sidebar-camera-selector .camera-select {
+      flex: 1; padding: 6px 8px; border-radius: 6px; font-size: 11px;
+      background: var(--card); border: 1px solid var(--border); color: #fff;
+      outline: none; min-width: 0;
     }
-    .tab-page.active { display: flex; }
+    .sidebar-camera-selector .next-cam-btn {
+      padding: 6px 10px; border-radius: 6px; font-size: 10px; font-weight: 700;
+      background: linear-gradient(135deg, var(--gold), #c49b2e); color: var(--bg);
+      border: none; cursor: pointer; white-space: nowrap;
+    }
+    .sidebar-camera-selector .next-cam-btn:active { opacity: 0.7; }
+    .sidebar-camera-selector .rescan-btn {
+      padding: 6px 8px; border-radius: 6px; font-size: 10px; font-weight: 700;
+      background: var(--card); border: 1px solid var(--border); color: var(--muted);
+      cursor: pointer; white-space: nowrap;
+    }
+    .sidebar-camera-selector .rescan-btn:active { background: var(--border); }
 
-    /* ── Search tab (inside .tab-page) ── */
-    .tab-page .opsearch-wrap { position: relative; padding: 4px 6px; flex-shrink: 0; }
-    .tab-page .opsearch-input {
-      width: 100%; height: 34px; border-radius: 6px;
-      background: var(--card); border: 1px solid var(--border);
-      color: #fff; font-size: 12px; padding: 0 8px 0 30px; outline: none;
+    /* ── Sidebar Collapsible Panels (shutter, gridline settings) ── */
+    .sidebar-panel {
+      padding: 8px 10px; background: var(--card);
+      border-bottom: 1px solid var(--border); flex-shrink: 0;
     }
-    .tab-page .opsearch-input:focus { border-color: var(--gold); }
-    .tab-page .opsearch-input::placeholder { color: rgba(196,181,253,0.4); }
-    .tab-page .opsearch-icon {
-      position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
-      font-size: 13px; color: var(--muted); pointer-events: none;
-    }
-    .tab-page .opsearch-results {
-      flex: 1; overflow-y: auto; min-height: 0;
-    }
-    .tab-page .opsearch-item {
-      display: flex; align-items: center; gap: 6px;
-      padding: 5px 8px; cursor: pointer; font-size: 11px;
-      border-bottom: 1px solid rgba(83,52,133,0.2);
-    }
-    .tab-page .opsearch-item:active { background: rgba(212,175,55,0.15); }
-    .tab-page .os-nim { width: 55px; color: var(--muted); font-family: monospace; font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .tab-page .os-nama { flex: 1; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-    .tab-page .os-nama.active { color: var(--gold); font-weight: 700; }
-    .tab-page .os-status { font-size: 7px; font-weight: 700; width: 30px; text-align: right; }
-    .tab-page .opsearch-empty { font-size: 10px; color: var(--muted); text-align: center; padding: 12px 0; }
-
-    /* ── Settings tab ── */
-    .settings-section {
-      padding: 6px 8px; border-bottom: 1px solid rgba(83,52,133,0.3);
-    }
-    .settings-label { font-size: 10px; font-weight: 700; color: var(--gold); margin-bottom: 4px; }
-    .settings-row {
+    .sidebar-panel.hidden { display: none; }
+    .sidebar-panel .settings-label { font-size: 10px; font-weight: 700; color: var(--gold); margin-bottom: 6px; }
+    .sidebar-panel .settings-row {
       display: flex; align-items: center; justify-content: space-between;
       padding: 4px 0;
     }
-    .settings-row .settings-label { margin-bottom: 0; }
+    .sidebar-panel .settings-row .settings-label { margin-bottom: 0; }
 
-    /* ── Bottom panel area (resizable, APK-style) ── */
-    .bottom-area {
-      background: var(--panel); border-top: 1px solid var(--border);
-      display: flex; flex-direction: column; flex-shrink: 0;
+    /* ── Sidebar Queue (fills remaining space) ── */
+    .sidebar-queue {
+      flex: 1; min-height: 0; display: flex; flex-direction: column;
       overflow: hidden;
     }
 
@@ -521,6 +550,34 @@
     .collapse-toggle.open .arrow { transform: rotate(90deg); }
     .collapse-body { display: none; margin-top: 8px; }
     .collapse-body.open { display: block; }
+
+    /* ── Mobile floating toggle (hidden on desktop) ── */
+    .queue-toggle-mobile {
+      display: none; position: fixed; bottom: 80px; right: 16px; z-index: 50;
+      width: 52px; height: 52px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--gold), #c49b2e); color: var(--bg);
+      border: 2px solid var(--bg); font-size: 22px; cursor: pointer;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5); align-items: center; justify-content: center;
+    }
+
+    /* ── Responsive: mobile / narrow screens ── */
+    @media (max-width: 768px) {
+      .operator-main { flex-direction: column; }
+      .camera-zone { flex: 1; width: 100%; }
+      .sidebar {
+        flex: 0 0 auto; width: 100%; max-height: 55vh;
+        border-left: none; border-top: 1px solid var(--border);
+        position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
+        transform: translateY(100%); transition: transform 0.25s ease;
+        box-shadow: 0 -4px 20px rgba(0,0,0,0.5);
+      }
+      .sidebar.open { transform: translateY(0); }
+      .queue-toggle-mobile { display: flex; }
+      .sidebar-queue { max-height: 30vh; }
+      .top-bar { padding: 4px 8px; gap: 4px; }
+      .top-bar-title { font-size: 11px; }
+      .top-bar-mode, .top-bar-target { display: none; }
+    }
   </style>
 </head>
 <body>
@@ -668,147 +725,148 @@
 <!-- OPERATOR SCREEN                                                            -->
 <!-- ═══════════════════════════════════════════════════════════════════════════ -->
 <div id="operatorScreen" class="operator-screen">
-  <!-- Top Bar -->
+  <!-- Top Bar (compact: title + mode + target + latency + disconnect) -->
   <div class="top-bar">
     <span class="top-bar-title">SAATIRIL</span>
     <div class="top-bar-sep"></div>
     <span id="topBarMode" class="top-bar-mode"></span>
     <span id="topBarTarget" class="top-bar-target"></span>
-    <div class="camera-selector">
-      <select id="cameraSelect" class="camera-select" onchange="handleCameraChange()">
-        <option value="">Memuat kamera...</option>
-      </select>
-      <button class="next-cam-btn" onclick="switchToNextCamera()">▶ Ganti</button>
-      <button class="rescan-btn" onclick="autoDetectBestCamera()">🔄 Cari</button>
-    </div>
+    <div class="tool-spacer"></div>
     <span id="latencyBadge" class="latency-badge">--ms</span>
     <button class="disconnect-btn" onclick="handleDisconnect()">✕</button>
   </div>
-  
-  <!-- Camera Area -->
-  <div id="cameraArea" class="camera-area">
-    <video id="videoPreview" autoplay playsinline muted></video>
-    <canvas id="captureCanvas"></canvas>
-    
-    <!-- Auto-detect status badge -->
-    <div id="autoDetectStatus" class="auto-detect-status" style="display:none;"></div>
-    
-    <div id="noCameraMsg" class="no-camera-msg">
-      <div class="no-camera-icon">📷</div>
-      <div class="no-camera-text">Kamera belum terhubung<br>Pilih kamera di atas</div>
-    </div>
-    
-    <!-- Gridline overlay -->
-    <svg id="gridlineOverlay" class="gridline-overlay hidden" viewBox="0 0 100 100" preserveAspectRatio="none">
-    </svg>
-    
-    <!-- Frame overlay -->
-    <img id="frameOverlay" class="frame-overlay hidden" alt="">
-    
-    <!-- Timer -->
-    <div id="timerOverlay" class="timer-overlay hidden">
-      <div class="timer-circle">
-        <span id="timerNumber" class="timer-number">3</span>
-      </div>
-    </div>
-    
-    <!-- Flash -->
-    <div id="flashOverlay" class="flash-overlay"></div>
-    
-    <!-- Target info -->
-    <div id="targetInfo" class="target-info hidden">
-      <div id="targetNama" class="target-nama">-</div>
-      <div id="targetNim" class="target-nim">-</div>
-      <div id="targetPhase" class="target-phase standby">STANDBY</div>
-    </div>
-    
-    <!-- Photo progress dots -->
-    <div id="photoDots" class="photo-dots hidden">
-      <div id="dot1" class="photo-dot"></div>
-      <div id="dot2" class="photo-dot"></div>
-    </div>
-  </div>
-  
-  <!-- Draggable Divider -->
-  <div id="dragDivider" class="drag-divider"></div>
-  
-  <!-- Bottom Area (resizable) — APK-style layout -->
-  <div id="bottomArea" class="bottom-area">
-    <!-- ══ FIXED: Target Info Bar (always visible, like APK) ══ -->
-    <div class="target-bar">
-      <div class="tb-left">
-        <span class="tb-avatar">🧑</span>
-        <div class="tb-info">
-          <div id="tbName" class="tb-name">Menunggu target...</div>
-          <div id="tbNim" class="tb-nim"></div>
+
+  <!-- ══ Main split-screen: camera LEFT, sidebar RIGHT ══ -->
+  <div class="operator-main">
+    <!-- LEFT: Camera zone + capture button -->
+    <div class="camera-zone">
+      <!-- Camera viewport (aspect ratio preserved via object-fit: contain) -->
+      <div id="cameraArea" class="camera-area">
+        <video id="videoPreview" autoplay playsinline muted></video>
+        <canvas id="captureCanvas"></canvas>
+
+        <!-- Auto-detect status badge -->
+        <div id="autoDetectStatus" class="auto-detect-status" style="display:none;"></div>
+
+        <div id="noCameraMsg" class="no-camera-msg">
+          <div class="no-camera-icon">📷</div>
+          <div class="no-camera-text">Kamera belum terhubung<br>Pilih kamera di sidebar</div>
+        </div>
+
+        <!-- Gridline overlay -->
+        <svg id="gridlineOverlay" class="gridline-overlay hidden" viewBox="0 0 100 100" preserveAspectRatio="none">
+        </svg>
+
+        <!-- Frame overlay -->
+        <img id="frameOverlay" class="frame-overlay hidden" alt="">
+
+        <!-- Timer -->
+        <div id="timerOverlay" class="timer-overlay hidden">
+          <div class="timer-circle">
+            <span id="timerNumber" class="timer-number">3</span>
+          </div>
+        </div>
+
+        <!-- Flash -->
+        <div id="flashOverlay" class="flash-overlay"></div>
+
+        <!-- Target info overlay (small, on camera — useful in fullscreen) -->
+        <div id="targetInfo" class="target-info hidden">
+          <div id="targetNama" class="target-nama">-</div>
+          <div id="targetNim" class="target-nim">-</div>
+          <div id="targetPhase" class="target-phase standby">STANDBY</div>
+        </div>
+
+        <!-- Photo progress dots (on camera, non-photoshoot mode) -->
+        <div id="photoDots" class="photo-dots hidden">
+          <div id="dot1" class="photo-dot"></div>
+          <div id="dot2" class="photo-dot"></div>
         </div>
       </div>
-      <span id="tbBadge" class="tb-badge standby">STANDBY</span>
+
+      <!-- Capture button (full width of left panel) -->
+      <div class="capture-bar">
+        <div id="progressDots" class="progress-dots" style="display:none;">
+          <div id="pdot1" class="progress-dot"></div>
+          <div id="pdot2" class="progress-dot"></div>
+        </div>
+        <button id="captureBarBtn" class="capture-bar-btn standby" onclick="handleCaptureClick()">
+          STANDBY
+        </button>
+      </div>
     </div>
 
-    <!-- ══ Tabs: Antrean | Cari | Lainnya ══ -->
-    <div class="tab-bar">
-      <button class="tab-btn active" data-tab="queue" onclick="switchTab('queue')">📋 Antrean</button>
-      <button class="tab-btn" data-tab="search" onclick="switchTab('search')">🔍 Cari</button>
-      <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">⚙️ Lainnya</button>
-    </div>
+    <!-- RIGHT: Sidebar (toolbar + target + camera selector + queue) -->
+    <div id="sidebar" class="sidebar">
+      <!-- Toolbar: SHUTTER | GRID | ANTREAN | FULLSCREEN -->
+      <div class="sidebar-toolbar">
+        <button id="toolShutter" class="tool-btn" onclick="toggleShutterPanel()" title="Mode Shutter">📷</button>
+        <button id="toolGrid" class="tool-btn" onclick="toggleGridlinePanel()" title="Gridline">▦</button>
+        <button id="toolQueue" class="tool-btn" onclick="toggleSidebarMobile()" title="Antrean">📋</button>
+        <div class="tool-spacer"></div>
+        <button id="toolFullscreen" class="tool-btn" onclick="toggleFullscreen()" title="Fullscreen">⛶</button>
+      </div>
 
-    <!-- ══ Tab Content ══ -->
-    <div class="tab-content">
-      <!-- Tab: Antrean (default, always most important) -->
-      <div id="tabQueue" class="tab-page active">
+      <!-- Target info card (always visible) -->
+      <div class="sidebar-target">
+        <div class="tb-left">
+          <span class="tb-avatar">🧑</span>
+          <div class="tb-info">
+            <div id="tbName" class="tb-name">Menunggu target...</div>
+            <div id="tbNim" class="tb-nim"></div>
+          </div>
+        </div>
+        <span id="tbBadge" class="tb-badge standby">STANDBY</span>
+      </div>
+
+      <!-- Camera selector dropdown -->
+      <div class="sidebar-camera-selector">
+        <select id="cameraSelect" class="camera-select" onchange="handleCameraChange()">
+          <option value="">Memuat kamera...</option>
+        </select>
+        <button class="next-cam-btn" onclick="switchToNextCamera()">▶</button>
+        <button class="rescan-btn" onclick="autoDetectBestCamera()">🔄</button>
+      </div>
+
+      <!-- Collapsible: Shutter Mode -->
+      <div id="shutterPanel" class="sidebar-panel hidden">
+        <div class="settings-label">📷 Mode Shutter</div>
+        <div class="shutter-row">
+          <div class="shutter-chip active" data-mode="manual" onclick="setShutterMode('manual')">Manual</div>
+          <div class="shutter-chip" data-mode="timer-3" onclick="setShutterMode('timer-3')">3s</div>
+          <div class="shutter-chip" data-mode="timer-5" onclick="setShutterMode('timer-5')">5s</div>
+          <div class="shutter-chip" data-mode="timer-10" onclick="setShutterMode('timer-10')">10s</div>
+        </div>
+      </div>
+
+      <!-- Collapsible: Gridline / Mirror settings -->
+      <div id="gridlinePanel" class="sidebar-panel hidden">
+        <div class="settings-row">
+          <span class="settings-label">📐 Gridline</span>
+          <div id="gridlineSwitch" class="switch" onclick="toggleGridline()"></div>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">↔️ Mirror</span>
+          <div id="mirrorSwitch" class="switch on" onclick="toggleMirror()"></div>
+        </div>
+      </div>
+
+      <!-- Queue list (always visible, fills remaining space, scrollable) -->
+      <div class="sidebar-queue queue-panel">
         <div class="queue-header">
           <span id="queuePanelTitle" class="queue-title">Antrean: 0 • Ch.1</span>
         </div>
-        <div id="queueTable" class="queue-table"></div>
-      </div>
-
-      <!-- Tab: Cari -->
-      <div id="tabSearch" class="tab-page">
         <div class="opsearch-wrap">
           <span class="opsearch-icon">🔍</span>
           <input id="opSearchInput" class="opsearch-input" type="text" placeholder="Cari NIM / Nama..." oninput="handleOpSearch(this.value)">
         </div>
-        <div id="opSearchResults" class="opsearch-results"></div>
+        <div id="queueTable" class="queue-table"></div>
       </div>
-
-      <!-- Tab: Lainnya (settings) -->
-      <div id="tabSettings" class="tab-page">
-        <!-- Shutter Mode -->
-        <div class="settings-section">
-          <div class="settings-label">📷 Mode Shutter</div>
-          <div class="shutter-row">
-            <div class="shutter-chip active" data-mode="manual" onclick="setShutterMode('manual')">Manual</div>
-            <div class="shutter-chip" data-mode="timer-3" onclick="setShutterMode('timer-3')">3s</div>
-            <div class="shutter-chip" data-mode="timer-5" onclick="setShutterMode('timer-5')">5s</div>
-            <div class="shutter-chip" data-mode="timer-10" onclick="setShutterMode('timer-10')">10s</div>
-          </div>
-        </div>
-        <!-- Gridline -->
-        <div class="settings-section">
-          <div class="settings-row">
-            <span class="settings-label">📐 Gridline</span>
-            <div id="gridlineSwitch" class="switch" onclick="toggleGridline()"></div>
-          </div>
-          <div class="settings-row">
-            <span class="settings-label">↔️ Mirror</span>
-            <div id="mirrorSwitch" class="switch on" onclick="toggleMirror()"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ══ Capture Bar (at the very bottom, like APK) ══ -->
-    <div class="capture-bar">
-      <div id="progressDots" class="progress-dots" style="display:none;">
-        <div id="pdot1" class="progress-dot"></div>
-        <div id="pdot2" class="progress-dot"></div>
-      </div>
-      <button id="captureBarBtn" class="capture-bar-btn standby" onclick="handleCaptureClick()">
-        STANDBY
-      </button>
     </div>
   </div>
+
+  <!-- Mobile floating toggle button (shows/hides sidebar on narrow screens) -->
+  <button class="queue-toggle-mobile" onclick="toggleSidebarMobile()" title="Antrean">📋</button>
 </div>
 
 <!-- Socket.io client — load locally first, fallback to CDN -->
@@ -3027,6 +3085,14 @@ function updateQueueList() {
   const statusPriority = { active_1: 0, active_2: 0, sent: 1, pending: 2, done: 3 }
   relevant.sort((a, b) => (statusPriority[a.status] ?? 9) - (statusPriority[b.status] ?? 9))
   
+  // Filter by search query (inline search in the sidebar queue)
+  if (opSearchQuery) {
+    relevant = relevant.filter(s => 
+      (s.nama && s.nama.toLowerCase().includes(opSearchQuery)) || 
+      (s.nim && s.nim.toLowerCase().includes(opSearchQuery))
+    )
+  }
+  
   // Update queue panel title
   const titleEl = document.getElementById('queuePanelTitle')
   if (titleEl) {
@@ -3078,170 +3144,76 @@ function updateQueueList() {
   renderOpSearchResults()
 }
 
-// ── Tab Switching System ────────────────────────────────────────────────
-function switchTab(tabName) {
-  // Update tab buttons
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.tab === tabName)
-  })
-  // Update tab pages
-  document.querySelectorAll('.tab-page').forEach(page => {
-    page.classList.toggle('active', page.id === 'tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1))
-  })
-  // Tab name mapping: queue → tabQueue, search → tabSearch, settings → tabSettings
-  const tabMap = { queue: 'tabQueue', search: 'tabSearch', settings: 'tabSettings' }
-  document.querySelectorAll('.tab-page').forEach(page => {
-    page.classList.toggle('active', page.id === tabMap[tabName])
-  })
+// ── Sidebar Panel Toggles (replaces old tab switching) ──────────────────
+function toggleShutterPanel() {
+  const panel = document.getElementById('shutterPanel')
+  const btn = document.getElementById('toolShutter')
+  if (!panel) return
+  panel.classList.toggle('hidden')
+  if (btn) btn.classList.toggle('active', !panel.classList.contains('hidden'))
+  // Close the other panel to save space
+  const other = document.getElementById('gridlinePanel')
+  if (other && !panel.classList.contains('hidden')) other.classList.add('hidden')
+  const otherBtn = document.getElementById('toolGrid')
+  if (otherBtn) otherBtn.classList.remove('active')
 }
 
-// Legacy togglePanel — now redirects to tab switching
-function togglePanel(panelId) {
-  const tabMap = { 'queue-list': 'queue', 'op-search': 'search', 'target-info': 'queue', 'shutter-mode': 'settings', 'gridline': 'settings' }
-  const tab = tabMap[panelId]
-  if (tab) switchTab(tab)
+function toggleGridlinePanel() {
+  const panel = document.getElementById('gridlinePanel')
+  const btn = document.getElementById('toolGrid')
+  if (!panel) return
+  panel.classList.toggle('hidden')
+  if (btn) btn.classList.toggle('active', !panel.classList.contains('hidden'))
+  // Close the other panel to save space
+  const other = document.getElementById('shutterPanel')
+  if (other && !panel.classList.contains('hidden')) other.classList.add('hidden')
+  const otherBtn = document.getElementById('toolShutter')
+  if (otherBtn) otherBtn.classList.remove('active')
 }
 
-// ── Draggable Divider ─────────────────────────────────────────────────
-function initDragDivider() {
-  const divider = document.getElementById('dragDivider')
-  const cameraArea = document.getElementById('cameraArea')
-  const bottomArea = document.getElementById('bottomArea')
-  const operatorScreen = document.getElementById('operatorScreen')
-  
-  if (!divider || !cameraArea || !bottomArea || !operatorScreen) return
-  
-  let isDragging = false
-  let startY = 0
-  let startBottomHeight = 0
-  
-  // Default: bottom area = 40% of screen
-  const defaultPercent = 40
-  const minPercent = 15
-  const maxPercent = 65
-  let currentPercent = defaultPercent
-  
-  function setLayout(percent) {
-    currentPercent = Math.max(minPercent, Math.min(maxPercent, percent))
-    const screenH = operatorScreen.offsetHeight
-    const topBarH = operatorScreen.querySelector('.top-bar').offsetHeight
-    const dividerH = divider.offsetHeight
-    const availH = screenH - topBarH - dividerH
-    const bottomH = Math.round(availH * currentPercent / 100)
-    bottomArea.style.height = bottomH + 'px'
-    cameraArea.style.flex = '1'
+// Toggle sidebar visibility on mobile (slide-up bottom sheet)
+function toggleSidebarMobile() {
+  const sidebar = document.getElementById('sidebar')
+  if (!sidebar) return
+  sidebar.classList.toggle('open')
+}
+
+// Toggle browser fullscreen mode
+function toggleFullscreen() {
+  const btn = document.getElementById('toolFullscreen')
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen?.().then(() => {
+      if (btn) btn.classList.add('active')
+    }).catch(() => {})
+  } else {
+    document.exitFullscreen?.().then(() => {
+      if (btn) btn.classList.remove('active')
+    }).catch(() => {})
   }
-  
-  // Set initial layout
-  setLayout(defaultPercent)
-  
-  divider.addEventListener('touchstart', (e) => {
-    isDragging = true
-    startY = e.touches[0].clientY
-    startBottomHeight = bottomArea.offsetHeight
-    e.preventDefault()
-  }, { passive: false })
-  
-  divider.addEventListener('mousedown', (e) => {
-    isDragging = true
-    startY = e.clientY
-    startBottomHeight = bottomArea.offsetHeight
-    e.preventDefault()
-  })
-  
-  document.addEventListener('touchmove', (e) => {
-    if (!isDragging) return
-    const dy = startY - e.touches[0].clientY
-    const screenH = operatorScreen.offsetHeight
-    const topBarH = operatorScreen.querySelector('.top-bar').offsetHeight
-    const dividerH = divider.offsetHeight
-    const availH = screenH - topBarH - dividerH
-    const newBottomH = startBottomHeight + dy
-    const newPercent = (newBottomH / availH) * 100
-    setLayout(newPercent)
-  }, { passive: true })
-  
-  document.addEventListener('mousemove', (e) => {
-    if (!isDragging) return
-    const dy = startY - e.clientY
-    const screenH = operatorScreen.offsetHeight
-    const topBarH = operatorScreen.querySelector('.top-bar').offsetHeight
-    const dividerH = divider.offsetHeight
-    const availH = screenH - topBarH - dividerH
-    const newBottomH = startBottomHeight + dy
-    const newPercent = (newBottomH / availH) * 100
-    setLayout(newPercent)
-  })
-  
-  document.addEventListener('touchend', () => { isDragging = false })
-  document.addEventListener('mouseup', () => { isDragging = false })
-  
-  // Handle resize
-  window.addEventListener('resize', () => setLayout(currentPercent))
 }
 
-// ── OP Search ─────────────────────────────────────────────────────────
+// Listen for fullscreen changes to keep button state in sync
+document.addEventListener('fullscreenchange', () => {
+  const btn = document.getElementById('toolFullscreen')
+  if (btn) btn.classList.toggle('active', !!document.fullscreenElement)
+})
+
+// Legacy switchTab/togglePanel — kept as no-ops for backward compatibility
+function switchTab(tabName) { /* no-op: split-screen layout has no tabs */ }
+function togglePanel(panelId) { /* no-op: split-screen layout has no panels */ }
+function initDragDivider() { /* no-op: split-screen layout has no draggable divider */ }
+
+// ── OP Search (filters the queue list inline) ─────────────────────────
 let opSearchQuery = ''
 
 function handleOpSearch(query) {
   opSearchQuery = query.toLowerCase().trim()
-  renderOpSearchResults()
+  updateQueueList()
 }
 
 function renderOpSearchResults() {
-  const container = document.getElementById('opSearchResults')
-  if (!container) return
-  if (!currentProject?.database) {
-    container.innerHTML = '<div class="opsearch-empty">Belum ada peserta dikirim MC</div>'
-    return
-  }
-  
-  const mode = currentProject.config?.mode
-  const isPsSearch = isPhotoshootMode(mode)
-  let students = currentProject.database.filter(s => {
-    if (isPsSearch) {
-      // In photoshoot mode, show all students except done
-      if (s.status === 'done') return false
-      if (photoHistory.some(ph => ph.studentId === s.id)) return false
-      return true
-    }
-    return s.assignedChannel === myChannel || s.status === `active_${myChannel}`
-  })
-  
-  // Filter by search query
-  if (opSearchQuery) {
-    students = students.filter(s => 
-      (s.nama && s.nama.toLowerCase().includes(opSearchQuery)) || 
-      (s.nim && s.nim.toLowerCase().includes(opSearchQuery))
-    )
-  }
-  
-  if (students.length === 0) {
-    container.innerHTML = '<div class="opsearch-empty">' + (opSearchQuery ? 'Tidak ditemukan' : 'Belum ada peserta dikirim MC') + '</div>'
-    return
-  }
-  
-  container.innerHTML = students.slice(0, 20).map(s => {
-    const isCurrent = currentTarget && currentTarget.id === s.id
-    const isActive = s.status?.startsWith('active')
-    const isDone = s.status === 'done'
-    const isSent = s.status === 'sent'
-    
-    let statusLabel = ''
-    let statusColor = 'var(--muted)'
-    if (!isPsSearch) {
-      if (isActive) { statusLabel = 'Foto'; statusColor = 'var(--gold)' }
-      else if (isSent) { statusLabel = 'Kirim'; statusColor = 'rgba(212,175,55,0.7)' }
-      else if (isDone) { statusLabel = 'OK'; statusColor = 'var(--success)' }
-    }
-    
-    return `<div class="opsearch-item" onclick="selectOpSearchItem('${s.id}')">
-      <span class="os-nim">${s.nim || '-'}</span>
-      <span class="os-nama ${isCurrent ? 'active' : ''}">${s.nama || '-'}</span>
-      ${statusLabel ? `<span class="os-status" style="color:${statusColor}">${statusLabel}</span>` : ''}
-      ${isCurrent ? '📷' : ''}
-    </div>`
-  }).join('')
+  // No-op: search now filters the main queue list inline via updateQueueList().
+  // Kept for backward compatibility with callers (e.g. updateQueueList itself).
 }
 
 function selectOpSearchItem(studentId) {
