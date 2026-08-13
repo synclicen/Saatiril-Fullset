@@ -573,17 +573,21 @@ export function OperatorPanel({ isAppFullscreen = false, onToggleAppFullscreen }
       // In photoshoot mode: accept MC_CALL from ANY channel (both operators see it)
       // In non-photoshoot mode: only accept MC_CALL for our channel
       if (!photoshoot && data.channel !== myChannelRef.current) return
-      console.log('[SAATIRIL OP] MC_CALL received:', data.student.nama, 'status:', data.student.status, 'Ch.', data.channel)
+      // CRITICAL: Use active_<channel> status, NOT data.student.status.
+      // Browser MC sends the student with OLD status ('pending') because it
+      // updates its own local copy AFTER emitting MC_CALL.
+      const correctedStudent = { ...data.student, status: `active_${data.channel}` as StudentStatus }
+      console.log('[SAATIRIL OP] MC_CALL received:', data.student.nama, 'status:', correctedStudent.status, 'Ch.', data.channel)
       if (photoshoot) {
         // REPLACE any existing buffer entry for this student instead of
         // dedup-skipping. This ensures a RE-SEND (after reset/retake) updates
         // the buffer with fresh data instead of being silently dropped.
         setMcCallBuffer((prev) => {
           const without = prev.filter((s) => s.id !== data.student.id)
-          return [...without, data.student]
+          return [...without, correctedStudent]
         })
       } else {
-        setOpCurrentTarget(data.student)
+        setOpCurrentTarget(correctedStudent)
       }
     }
     onLocal('MC_CALL', handleMcCall)

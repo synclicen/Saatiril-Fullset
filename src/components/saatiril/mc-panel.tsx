@@ -299,7 +299,13 @@ export function McPanel({ compact = false }: { compact?: boolean }) {
   useEffect(() => {
     const handleMcCall = (data: { student: Student; channel: number }) => {
       if (!photoshoot && data.channel !== myChannelRef.current) return
-      updateStudentStatus(data.student.id, data.student.status)
+      // CRITICAL: Use active_<channel>, NOT data.student.status.
+      // Browser MC sends the student with OLD status ('pending') because it
+      // updates its own local copy AFTER emitting MC_CALL. Using
+      // data.student.status would keep the student as 'pending' in our store,
+      // causing the MC panel to still show "PANGGIL SEKARANG" instead of
+      // "SEDANG DIPANGGIL" — breaking the ceremony flow.
+      updateStudentStatus(data.student.id, `active_${data.channel}` as StudentStatus)
     }
 
     onLocal('MC_CALL', handleMcCall)

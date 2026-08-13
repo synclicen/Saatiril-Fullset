@@ -389,16 +389,29 @@ export function MainApp() {
       if (!curProj) return
       if (data.channel !== useSaatirilStore.getState().myChannel) return
 
-      // Update store
+      // CRITICAL: Set status to active_<channel>, NOT data.student.status.
+      // The browser MC sends the student object with its OLD status ('pending')
+      // because the MC updates its own local copy AFTER emitting MC_CALL.
+      // If we used data.student.status, the admin's store would stay 'pending'
+      // and the internal MC panel would still show "PANGGIL SEKARANG" instead
+      // of "SEDANG DIPANGGIL" — breaking the ceremony flow.
+      // This matches the Android AdminViewModel.handleMcCall (line 1204) which
+      // correctly uses "active_$channel".
+      const newStatus = `active_${data.channel}` as any
+      const updatedStudent = { ...data.student, status: newStatus }
       const updatedDb = curProj.database.map((s: any) =>
-        s.id === data.student.id ? { ...s, status: data.student.status } : s
+        s.id === data.student.id ? { ...s, status: newStatus } : s
       )
       updateCurrentProject({ ...curProj, database: updatedDb })
 
       // Set opCurrentTarget so operator panel picks it up when mounted
-      useSaatirilStore.getState().setOpCurrentTarget(data.student)
+      useSaatirilStore.getState().setOpCurrentTarget(updatedStudent)
 
-      console.log('[SAATIRIL MAIN] MC_CALL processed:', data.student.nama, 'Ch.', data.channel)
+      // Broadcast SYNC_DB to all clients so browser MC + other operators
+      // get the corrected status (matches Android pushSyncDb after handleMcCall)
+      emitLocal('SYNC_DB', { project: { ...curProj, database: updatedDb } })
+
+      console.log('[SAATIRIL MAIN] MC_CALL processed:', data.student.nama, 'Ch.', data.channel, '→ status:', newStatus)
     }
     onLocal('MC_CALL', handleMcCallAlways)
 
