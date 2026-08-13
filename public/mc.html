@@ -43,326 +43,372 @@ body { background:#1a0b2e; color:#fff; font-family:-apple-system,BlinkMacSystemF
 .queue-item .badge { font-size:10px; color:#d4af37; }
 .loading { text-align:center; padding:40px; color:#c4b5fd; }
 .error-box { background:#ef4444; color:#fff; padding:12px; border-radius:8px; margin:8px 0; font-size:13px; }
+.pwd-box { text-align:center; padding:40px 20px; }
+.pwd-box .icon { font-size:48px; margin-bottom:16px; }
+.pwd-box h2 { color:#fff; font-size:18px; margin-bottom:8px; }
+.pwd-box p { color:#c4b5fd; font-size:13px; margin-bottom:16px; }
+.pwd-input { width:100%; max-width:300px; padding:12px; border-radius:8px; border:1px solid #533485; background:#2a164a; color:#fff; font-size:16px; text-align:center; margin-bottom:12px; }
+.pwd-btn { width:100%; max-width:300px; height:44px; border:none; border-radius:8px; background:#d4af37; color:#1a0b2e; font-size:14px; font-weight:900; cursor:pointer; }
 </style>
 </head>
 <body>
 <div class="header">
   <div class="dot connecting" id="status-dot"></div>
   <h1>SAATIRIL MC</h1>
-  <div class="ch" id="ch-label">Ch.1</div>
+  <span class="ch" id="ch-label">Ch.1</span>
 </div>
 <div class="container" id="app">
   <div class="loading">Menghubungkan ke server…</div>
 </div>
-<!-- Socket.io client — load locally first, fallback to socket server -->
 <script src="/js/socket.io.min.js"></script>
 <script>
-// Verify Socket.io loaded; if not, try loading from socket server
+// ═══════════════════════════════════════════════════════════════
+// SHA-256 pure JavaScript implementation
+// Works on HTTP (non-secure context) — does NOT use crypto.subtle
+// crypto.subtle is ONLY available on HTTPS or localhost
+// ═══════════════════════════════════════════════════════════════
+function sha256(ascii) {
+  function rightRotate(value, amount) { return (value>>>amount) | (value<<(32-amount)); }
+  var mathPow = Math.pow, maxWord = mathPow(2, 32), lengthProperty = 'length', result = '';
+  var words = [], asciiBitLength = ascii[lengthProperty]*8;
+  var hash = sha256.h = sha256.h || [], k = sha256.k = sha256.k || [], primeCounter = k[lengthProperty];
+  var isComposite = {}, simpleCounter = 0, hashValue = 2;
+  for (; simpleCounter < 64; simpleCounter++) {
+    var candidate = hashValue;
+    do {
+      for (var i = 0; i < simpleCounter; i++) { if (candidate % k[i] === 0) { candidate = candidate / k[i]; isComposite = true; } }
+      if (isComposite) { isComposite = false; hashValue += 2; } else { break; }
+    } while (true);
+    if (primeCounter < 64) { k[primeCounter++] = (mathPow(candidate, .5)*maxWord)|0; }
+    hashValue += 2;
+  }
+  ascii += '\x80';
+  while (ascii[lengthProperty]%64 - 56) ascii += '\x00';
+  for (i = 0; i < ascii[lengthProperty]; i++) {
+    j = ascii.charCodeAt(i);
+    if (j>>8) return;
+    words[i>>2] |= j << ((3 - i)%4)*8;
+  }
+  words[words[lengthProperty]] = ((asciiBitLength/maxWord)|0);
+  words[words[lengthProperty]] = (asciiBitLength);
+  for (j = 0; j < words[lengthProperty];) {
+    var w = words.slice(j, j += 16), w2 = [];
+    for (i = 0; i < 16; i++) w2[i] = w[i];
+    for (i = 16; i < 64; i++) {
+      var w15 = w2[i-15], w2_ = w2[i-2];
+      var a = rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15>>>3);
+      var b = rightRotate(w2_, 17) ^ rightRotate(w2_, 19) ^ (w2_>>>10);
+      w2[i] = w2[i-16] + a + w2[i-7] + b;
+    }
+    var wHash = hash.slice(0);
+    var a2 = wHash[0], b2 = wHash[1], c2 = wHash[2], d2 = wHash[3], e2 = wHash[4], f2 = wHash[5], g2 = wHash[6], h2 = wHash[7];
+    for (i = 0; i < 64; i++) {
+      var a3 = rightRotate(e2, 6) ^ rightRotate(e2, 11) ^ rightRotate(e2, 25);
+      var b3 = rightRotate(a2, 2) ^ rightRotate(a2, 13) ^ rightRotate(a2, 22);
+      var c3 = (e2 & f2) ^ (~e2 & g2);
+      var d3 = (a2 & b2) ^ (a2 & c2) ^ (b2 & c2);
+      var temp1 = h2 + a3 + c3 + k[i] + w2[i];
+      var temp2 = b3 + d3;
+      h2 = g2; g2 = f2; f2 = e2; e2 = (d2 + temp1)|0;
+      d2 = c2; c2 = b2; b2 = a2; a2 = (temp1 + temp2)|0;
+    }
+    hash[0] = (hash[0] + a2)|0; hash[1] = (hash[1] + b2)|0; hash[2] = (hash[2] + c2)|0; hash[3] = (hash[3] + d2)|0;
+    hash[4] = (hash[4] + e2)|0; hash[5] = (hash[5] + f2)|0; hash[6] = (hash[6] + g2)|0; hash[7] = (hash[7] + h2)|0;
+  }
+  for (i = 0; i < 8; i++) { for (j = 28; j >= 0; j -= 4) result += ((hash[i]>>>(j))&0xF).toString(16); }
+  return result;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MC Web Page — main logic
+// ═══════════════════════════════════════════════════════════════
 var params = new URLSearchParams(window.location.search);
+var channel = parseInt(params.get('channel') || '1');
+var password = params.get('password') || '';
 var socketPort = params.get('socketPort') || '3003';
+var socket = null;
+var authenticated = false;
+var project = null;
+
+document.getElementById('ch-label').textContent = 'Ch.' + channel;
+
+var socketUrl = 'http://' + window.location.hostname + ':' + socketPort;
+
+// Verify socket.io loaded
 if (typeof io === 'undefined') {
-  console.warn('[MC] Local Socket.io failed, trying socket server...');
+  // Try loading from socket server
   document.write('<script src="http://' + window.location.hostname + ':' + socketPort + '/socket.io.js"><\/script>');
 }
-</script>
-<script>
-(function(){
-  var channel = parseInt(params.get('channel') || '1');
-  var password = params.get('password') || '';
-  var socket = null;
-  var authenticated = false;
-  var project = null;
 
-  document.getElementById('ch-label').textContent = 'Ch.' + channel;
+function connect() {
+  if (typeof io === 'undefined') {
+    document.getElementById('app').innerHTML = '<div class="error-box">Library Socket.io tidak dapat dimuat. Pastikan server berjalan.</div>';
+    setTimeout(connect, 3000);
+    return;
+  }
 
-  // Build socket URL — connect to same host, socketPort
-  var socketUrl = 'http://' + window.location.hostname + ':' + socketPort;
+  try {
+    socket = io(socketUrl, {
+      path: '/',
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionDelay: 2000,
+    });
+  } catch(e) {
+    showError('Tidak bisa connect: ' + e.message);
+    setTimeout(connect, 3000);
+    return;
+  }
 
-  function connect() {
-    try {
-      socket = io(socketUrl, {
-        path: '/',
-        transports: ['websocket', 'polling'],
-        reconnection: true,
-        reconnectionDelay: 2000,
-      });
-    } catch(e) {
-      showError('Tidak bisa connect: ' + e.message);
-      setTimeout(connect, 3000);
-      return;
+  socket.on('connect', function() {
+    setStatus('authenticating');
+    var identifyData = { role: 'mc', channel: channel };
+    if (password) {
+      // Hash password with pure JS SHA-256 (works on HTTP!)
+      identifyData.sessionPasswordHash = sha256(password);
+      socket.emit('identify', identifyData);
+    } else {
+      socket.emit('identify', identifyData);
     }
+  });
 
-    socket.on('connect', function() {
-      setStatus('authenticating');
-      // Send identify
-      var identifyData = { role: 'mc', channel: channel };
-      if (password) {
-        // Hash password with SHA-256
-        crypto.subtle.digest('SHA-256', new TextEncoder().encode(password)).then(function(buf) {
-          identifyData.sessionPasswordHash = Array.from(new Uint8Array(buf)).map(function(b){ return b.toString(16).padStart(2,'0'); }).join('');
-          socket.emit('identify', identifyData);
-        });
-      } else {
-        socket.emit('identify', identifyData);
-      }
-    });
+  socket.on('auth-success', function(data) {
+    authenticated = true;
+    setStatus('connected');
+    socket.emit('lan-message', { event: 'REQUEST_STATE', data: { role: 'mc', channel: channel } });
+  });
 
-    socket.on('auth-success', function(data) {
-      authenticated = true;
-      setStatus('connected');
-      // Request initial state
-      socket.emit('lan-message', { event: 'REQUEST_STATE', data: { role: 'mc', channel: channel } });
-    });
+  socket.on('auth-failed', function(data) {
+    showPasswordPrompt();
+  });
 
-    socket.on('auth-failed', function(data) {
-      // Show password input instead of just error
+  socket.on('auth-requirement', function(data) {
+    if (data.passwordRequired && !password) {
       showPasswordPrompt();
-    });
-
-    socket.on('auth-requirement', function(data) {
-      if (data.passwordRequired && !password) {
-        showPasswordPrompt();
-      }
-    });
-
-    socket.on('lan-message', function(msg) {
-      if (msg && msg.event) {
-        handleLanMessage(msg.event, msg.data);
-      }
-    });
-
-    socket.on('sync-db', function(data) {
-      project = data.project || data;
-      render();
-    });
-
-    socket.on('disconnect', function() {
-      authenticated = false;
-      setStatus('disconnected');
-    });
-
-    socket.on('connect_error', function(err) {
-      setStatus('disconnected');
-    });
-  }
-
-  function handleLanMessage(event, data) {
-    if (event === 'SYNC_DB') {
-      project = data.project || data;
-      render();
-    } else if (event === 'MC_CALL') {
-      if (project && data && data.student) {
-        var sid = data.student.id;
-        if (project.database) {
-          project.database = project.database.map(function(s){
-            if (s.id === sid) return Object.assign({}, s, { status: 'active_' + (data.channel || channel) });
-            return s;
-          });
-        }
-        render();
-      }
-    } else if (event === 'STUDENT_DONE') {
-      if (project && data && data.studentId) {
-        if (project.database) {
-          project.database = project.database.map(function(s){
-            if (s.id === data.studentId) return Object.assign({}, s, { status: 'done' });
-            return s;
-          });
-        }
-        render();
-      }
-    } else if (event === 'PHOTOS_SAVED') {
-      if (project && data && data.student) {
-        var sid = data.student.id;
-        if (project.database) {
-          project.database = project.database.map(function(s){
-            if (s.id === sid) return Object.assign({}, s, { status: 'done' });
-            return s;
-          });
-        }
-        render();
-      }
-    } else if (event === 'STUDENT_RESET') {
-      if (project && data && data.studentId) {
-        if (project.database) {
-          project.database = project.database.map(function(s){
-            if (s.id === data.studentId) return Object.assign({}, s, { status: 'pending' });
-            return s;
-          });
-        }
-        render();
-      }
     }
-  }
+  });
 
-  function callStudent(student) {
-    socket.emit('lan-message', { event: 'MC_CALL', data: { student: student, channel: channel } });
-    // Optimistic update
-    if (project && project.database) {
+  socket.on('lan-message', function(msg) {
+    if (msg && msg.event) {
+      handleLanMessage(msg.event, msg.data);
+    }
+  });
+
+  socket.on('disconnect', function() {
+    authenticated = false;
+    setStatus('disconnected');
+  });
+
+  socket.on('connect_error', function(err) {
+    setStatus('disconnected');
+  });
+}
+
+function handleLanMessage(event, data) {
+  if (event === 'SYNC_DB') {
+    project = data.project || data;
+    render();
+  } else if (event === 'MC_CALL') {
+    if (project && data && data.student) {
+      var sid = data.student.id;
       project.database = project.database.map(function(s){
-        if (s.id === student.id) return Object.assign({}, s, { status: 'active_' + channel });
+        if (s.id === sid) return Object.assign({}, s, { status: 'active_' + (data.channel || channel) });
+        return s;
+      });
+      render();
+    }
+  } else if (event === 'STUDENT_DONE') {
+    if (project && data && data.studentId) {
+      project.database = project.database.map(function(s){
+        if (s.id === data.studentId) return Object.assign({}, s, { status: 'done' });
+        return s;
+      });
+      render();
+    }
+  } else if (event === 'PHOTOS_SAVED') {
+    if (project && data && data.student) {
+      var sid = data.student.id;
+      project.database = project.database.map(function(s){
+        if (s.id === sid) return Object.assign({}, s, { status: 'done' });
+        return s;
+      });
+      render();
+    }
+  } else if (event === 'STUDENT_RESET') {
+    if (project && data && data.studentId) {
+      project.database = project.database.map(function(s){
+        if (s.id === data.studentId) return Object.assign({}, s, { status: 'pending' });
         return s;
       });
       render();
     }
   }
+}
 
-  function resetStudent(studentId) {
-    socket.emit('lan-message', { event: 'STUDENT_RESET', data: { studentId: studentId, channel: channel } });
-    if (project && project.database) {
-      project.database = project.database.map(function(s){
-        if (s.id === studentId) return Object.assign({}, s, { status: 'pending' });
-        return s;
-      });
-      render();
-    }
-  }
-
-  function isActive(status) { return status && status.indexOf('active') === 0; }
-
-  function getChannelStudents() {
-    if (!project || !project.database) return [];
-    var db = project.database;
-    var mode = project.config ? project.config.mode : 'single';
-    var isPhotoshoot = mode.indexOf('photoshoot') >= 0;
-    if (isPhotoshoot) return db;
-    return db.filter(function(s){ return s.assignedChannel === channel; });
-  }
-
-  function render() {
-    if (!project) {
-      document.getElementById('app').innerHTML = '<div class="loading">Menunggu data dari server…</div>';
-      return;
-    }
-    var students = getChannelStudents();
-    var pending = students.filter(function(s){ return s.status === 'pending'; });
-    var active = students.filter(function(s){ return isActive(s.status); });
-    var done = students.filter(function(s){ return s.status === 'done'; });
-    var hasActive = active.length > 0;
-    var nextPending = pending.length > 0 ? pending[0] : null;
-
-    var displayName, displayNim, nameClass, prefix;
-    if (hasActive) {
-      displayName = active[0].nama || active[0].nim || '';
-      displayNim = active[0].nim || '';
-      nameClass = 'gold';
-      prefix = '\u25C6 ';
-    } else if (nextPending) {
-      displayName = nextPending.nama || nextPending.nim || '';
-      displayNim = nextPending.nim || '';
-      nameClass = 'white';
-      prefix = '\u25B6 ';
-    } else {
-      displayName = 'Antrean Habis';
-      displayNim = '';
-      nameClass = 'muted';
-      prefix = '';
-    }
-
-    var btnClass = 'disabled';
-    var btnText = 'HABIS';
-    if (hasActive) { btnClass = 'waiting'; btnText = 'TUNGGU OPERATOR\u2026'; }
-    else if (nextPending) { btnClass = 'ready'; btnText = 'PANGGIL'; }
-
-    // NO sorting — keep original queue order so MC knows "peserta no berapa"
-    var queue = students.slice();
-
-    var html = '';
-    html += '<div class="name-card ' + (hasActive ? 'active' : '') + '">';
-    html += '<div class="label">' + (hasActive ? 'Sedang Dipanggil' : 'Berikutnya') + '</div>';
-    html += '<div class="name ' + nameClass + '">' + prefix + escapeHtml(displayName) + '</div>';
-    if (displayNim) html += '<div class="nim">' + escapeHtml(displayNim) + '</div>';
-    html += '</div>';
-
-    if (nextPending && !hasActive) {
-      window.__nextPending = nextPending;
-      html += '<button class="panggil-btn ' + btnClass + '" onclick="window.__call()">' + btnText + '</button>';
-    } else {
-      html += '<button class="panggil-btn ' + btnClass + '" disabled>' + btnText + '</button>';
-    }
-
-    if (hasActive) {
-      window.__activeId = active[0].id;
-      html += '<button class="reset-btn" onclick="window.__reset()">Reset (Ulang)</button>';
-    }
-
-    html += '<div class="stats">';
-    html += 'Menunggu: <span>' + pending.length + '</span>';
-    html += ' Selesai: <span>' + done.length + '</span>';
-    html += ' Total: <span>' + students.length + '</span>';
-    html += '</div>';
-
-    html += '<div class="queue-title">Antrean Ch.' + channel + ' (' + pending.length + ' menunggu)</div>';
-    queue.forEach(function(s, i) {
-      var a = isActive(s.status);
-      var d = s.status === 'done';
-      html += '<div class="queue-item ' + (a ? 'active' : '') + (d ? ' done' : '') + '">';
-      html += '<span class="num">' + (i + 1) + '</span>';
-      html += '<span class="dot ' + (a ? 'active' : '') + (d ? 'done' : '') + '"></span>';
-      html += '<span class="n">' + escapeHtml(s.nama || s.nim || '(tanpa nama)') + '</span>';
-      if (a) html += '<span class="badge">\u25C6</span>';
-      if (d) html += '<span class="badge" style="color:#4ade80">\u2713</span>';
-      html += '</div>';
+function callStudent(student) {
+  socket.emit('lan-message', { event: 'MC_CALL', data: { student: student, channel: channel } });
+  if (project && project.database) {
+    project.database = project.database.map(function(s){
+      if (s.id === student.id) return Object.assign({}, s, { status: 'active_' + channel });
+      return s;
     });
+    render();
+  }
+}
 
-    document.getElementById('app').innerHTML = html;
+function resetStudent(studentId) {
+  socket.emit('lan-message', { event: 'STUDENT_RESET', data: { studentId: studentId, channel: channel } });
+  if (project && project.database) {
+    project.database = project.database.map(function(s){
+      if (s.id === studentId) return Object.assign({}, s, { status: 'pending' });
+      return s;
+    });
+    render();
+  }
+}
+
+function isActive(status) { return status && status.indexOf('active') === 0; }
+
+function getChannelStudents() {
+  if (!project || !project.database) return [];
+  var db = project.database;
+  var mode = project.config ? project.config.mode : 'single';
+  var isPhotoshoot = mode.indexOf('photoshoot') >= 0;
+  if (isPhotoshoot) return db;
+  return db.filter(function(s){ return s.assignedChannel === channel; });
+}
+
+function render() {
+  if (!project) {
+    document.getElementById('app').innerHTML = '<div class="loading">Menunggu data dari server…</div>';
+    return;
+  }
+  var students = getChannelStudents();
+  var pending = students.filter(function(s){ return s.status === 'pending'; });
+  var active = students.filter(function(s){ return isActive(s.status); });
+  var done = students.filter(function(s){ return s.status === 'done'; });
+  var hasActive = active.length > 0;
+  var nextPending = pending.length > 0 ? pending[0] : null;
+
+  var displayName, displayNim, nameClass, prefix;
+  if (hasActive) {
+    displayName = active[0].nama || active[0].nim || '';
+    displayNim = active[0].nim || '';
+    nameClass = 'gold';
+    prefix = '\u25C6 ';
+  } else if (nextPending) {
+    displayName = nextPending.nama || nextPending.nim || '';
+    displayNim = nextPending.nim || '';
+    nameClass = 'white';
+    prefix = '\u25B6 ';
+  } else {
+    displayName = 'Antrean Habis';
+    displayNim = '';
+    nameClass = 'muted';
+    prefix = '';
   }
 
-  function escapeHtml(s) {
-    if (!s) return '';
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  var btnClass = 'disabled';
+  var btnText = 'HABIS';
+  if (hasActive) { btnClass = 'waiting'; btnText = 'TUNGGU OPERATOR\u2026'; }
+  else if (nextPending) { btnClass = 'ready'; btnText = 'PANGGIL'; }
+
+  var queue = students.slice();
+
+  var html = '';
+  html += '<div class="name-card ' + (hasActive ? 'active' : '') + '">';
+  html += '<div class="label">' + (hasActive ? 'Sedang Dipanggil' : 'Berikutnya') + '</div>';
+  html += '<div class="name ' + nameClass + '">' + prefix + escapeHtml(displayName) + '</div>';
+  if (displayNim) html += '<div class="nim">' + escapeHtml(displayNim) + '</div>';
+  html += '</div>';
+
+  if (nextPending && !hasActive) {
+    window.__nextPending = nextPending;
+    html += '<button class="panggil-btn ' + btnClass + '" onclick="window.__call()">' + btnText + '</button>';
+  } else {
+    html += '<button class="panggil-btn ' + btnClass + '" disabled>' + btnText + '</button>';
   }
 
-  function setStatus(state) {
-    document.getElementById('status-dot').className = 'dot ' + state;
-    if (state === 'connected' && !project) {
-      document.getElementById('app').innerHTML = '<div class="loading">Terhubung. Meminta data dari server\u2026</div>';
-    }
+  if (hasActive) {
+    window.__activeId = active[0].id;
+    html += '<button class="reset-btn" onclick="window.__reset()">Reset (Ulang)</button>';
   }
 
-  function showError(msg) {
-    var app = document.getElementById('app');
-    app.innerHTML = '<div class="error-box">' + escapeHtml(msg) + '</div><div class="loading">Mencoba menghubungkan ulang\u2026</div>';
+  html += '<div class="stats">';
+  html += 'Menunggu: <span>' + pending.length + '</span>';
+  html += ' Selesai: <span>' + done.length + '</span>';
+  html += ' Total: <span>' + students.length + '</span>';
+  html += '</div>';
+
+  html += '<div class="queue-title">Antrean Ch.' + channel + ' (' + pending.length + ' menunggu)</div>';
+  queue.forEach(function(s, i) {
+    var a = isActive(s.status);
+    var d = s.status === 'done';
+    html += '<div class="queue-item ' + (a ? 'active' : '') + (d ? ' done' : '') + '">';
+    html += '<span class="num">' + (i + 1) + '</span>';
+    html += '<span class="dot ' + (a ? 'active' : '') + (d ? 'done' : '') + '"></span>';
+    html += '<span class="n">' + escapeHtml(s.nama || s.nim || '') + '</span>';
+    if (a) html += '<span class="badge">\u25C6</span>';
+    if (d) html += '<span class="badge" style="color:#4ade80">\u2713</span>';
+    html += '</div>';
+  });
+
+  document.getElementById('app').innerHTML = html;
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function setStatus(state) {
+  document.getElementById('status-dot').className = 'dot ' + state;
+  if (state === 'connected' && !project) {
+    document.getElementById('app').innerHTML = '<div class="loading">Terhubung. Meminta data dari server\u2026</div>';
   }
+}
 
-  function showPasswordPrompt() {
-    var app = document.getElementById('app');
-    app.innerHTML =
-      '<div style="text-align:center;padding:40px 20px;">' +
-      '<div style="font-size:48px;margin-bottom:16px;">🔑</div>' +
-      '<h2 style="color:#fff;font-size:18px;margin-bottom:8px;">Password Sesi Diperlukan</h2>' +
-      '<p style="color:#c4b5fd;font-size:13px;margin-bottom:16px;">Masukkan password sesi dari admin</p>' +
-      '<input type="password" id="pwd-input" placeholder="Password" style="width:100%;max-width:300px;padding:12px;border-radius:8px;border:1px solid #533485;background:#2a164a;color:#fff;font-size:16px;text-align:center;margin-bottom:12px;" />' +
-      '<button onclick="window.__submitPwd()" style="width:100%;max-width:300px;height:44px;border:none;border-radius:8px;background:#d4af37;color:#1a0b2e;font-size:14px;font-weight:900;cursor:pointer;">CONNECT</button>' +
-      '</div>';
-    var input = document.getElementById('pwd-input');
-    if (input) {
-      input.focus();
-      input.addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') window.__submitPwd();
-      });
-    }
+function showError(msg) {
+  document.getElementById('app').innerHTML = '<div class="error-box">' + escapeHtml(msg) + '</div><div class="loading">Mencoba menghubungkan ulang\u2026</div>';
+}
+
+function showPasswordPrompt() {
+  document.getElementById('app').innerHTML =
+    '<div class="pwd-box">' +
+    '<div class="icon">\uD83D\uDD11</div>' +
+    '<h2>Password Sesi Diperlukan</h2>' +
+    '<p>Masukkan password sesi dari admin</p>' +
+    '<input type="password" id="pwd-input" class="pwd-input" placeholder="Password" />' +
+    '<button class="pwd-btn" onclick="window.__submitPwd()">CONNECT</button>' +
+    '</div>';
+  var input = document.getElementById('pwd-input');
+  if (input) {
+    input.focus();
+    input.addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') window.__submitPwd();
+    });
   }
+}
 
-  window.__submitPwd = function() {
-    var input = document.getElementById('pwd-input');
-    if (!input || !input.value) return;
-    password = input.value;
-    // Reconnect with password
-    if (socket) { try { socket.disconnect(); } catch(e) {} }
-    connect();
-  };
-
-  window.__call = function() {
-    var student = window.__nextPending;
-    if (student) callStudent(student);
-  };
-  window.__reset = function() {
-    var studentId = window.__activeId;
-    if (studentId) resetStudent(studentId);
-  };
-
+window.__submitPwd = function() {
+  var input = document.getElementById('pwd-input');
+  if (!input || !input.value) return;
+  password = input.value;
+  document.getElementById('app').innerHTML = '<div class="loading">Menghubungkan dengan password\u2026</div>';
+  if (socket) { try { socket.disconnect(); socket.removeAllListeners(); } catch(e) {} }
   connect();
+};
+
+window.__call = function() {
+  var student = window.__nextPending;
+  if (student) callStudent(student);
+};
+window.__reset = function() {
+  var studentId = window.__activeId;
+  if (studentId) resetStudent(studentId);
+};
+
+connect();
 })();
 </script>
 </body>
