@@ -673,6 +673,8 @@ export default function AdminDashboard() {
     async (role: string, channel: number) => {
       const api = window.saatirilAPI
       const isElectron = api?.isElectron
+      // Build path: /mc for MC role, /operator for operator role
+      const path = role === 'mc' ? '/mc' : '/operator'
 
       let url: string
       if (isElectron) {
@@ -680,13 +682,12 @@ export default function AdminDashboard() {
           const info = lanInfo || (await api.getLanInfo())
           const ips = info.ips
           const lanIP = ips.length > 0 ? ips[0].address : 'localhost'
-          // Always use HTTP — Operator needs Chrome Flag for camera
-          url = `http://${lanIP}:${info.httpPort}/?role=${role}&channel=${channel}&socketPort=${info.socketPort}`
+          url = `http://${lanIP}:${info.httpPort}${path}?channel=${channel}&socketPort=${info.socketPort}`
         } catch {
           const hostname = window.location.hostname
           const params = new URLSearchParams(window.location.search)
           const socketPort = params.get('socketPort') || '3003'
-          url = `http://${hostname}:3000/?role=${role}&channel=${channel}&socketPort=${socketPort}`
+          url = `http://${hostname}:3000${path}?channel=${channel}&socketPort=${socketPort}`
         }
       } else {
         // Web/sandbox mode: include socketPort so LAN clients can connect to the Socket.io server
@@ -729,7 +730,7 @@ export default function AdminDashboard() {
           }
         }
 
-        url = `${origin}/?role=${role}&channel=${channel}&socketPort=${socketPort}`
+        url = `${origin}${path}?channel=${channel}&socketPort=${socketPort}`
       }
       try {
         if (navigator.clipboard) {
