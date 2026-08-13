@@ -35,6 +35,18 @@ body { background:#1a0b2e; color:#fff; font-family:-apple-system,BlinkMacSystemF
     </p>
     <button class="connect-btn" onclick="connectMC()">CONNECT MC VIA BLUETOOTH</button>
     <div class="status-text" id="status-text">Menunggu koneksi...</div>
+    <div id="troubleshoot-box" class="info-box" style="display:none; border-color:#fbbf24; margin-top:16px; text-align:left;">
+      <div style="color:#fbbf24; font-weight:bold; margin-bottom:8px;">⚠️ Tidak menemukan MC? Coba ini:</div>
+      <div style="color:#c4b5fd; font-size:11px; line-height:1.6;">
+        1. <b>MC HP:</b> Pastikan di mode "BLE SERVER" (bukan BLE REMOTE)<br>
+        2. <b>MC HP:</b> Bluetooth aktif + lokasi (GPS) aktif<br>
+        3. <b>MC HP:</b> Layar HP menyala (jangan sleep) saat scan<br>
+        4. <b>Laptop:</b> Bluetooth aktif + pairing dengan MC HP di settings (opsional tapi membantu)<br>
+        5. <b>Coba lagi:</b> Tutup dialog ini, klik CONNECT lagi — kadang perlu 2-3 kali<br>
+        6. <b>Jarak:</b> Dekatkan MC HP ke laptop (dalam 2 meter)<br>
+        7. <b>Alternatif:</b> Gunakan mode WIFI / LAN di MC (paling reliabel)
+      </div>
+    </div>
   </div>
 </div>
 <script>
@@ -57,7 +69,7 @@ function setStatus(state, text) {
 
 async function connectMC() {
   try {
-    setStatus('connecting', 'Mencari MC...');
+    setStatus('connecting', 'Mencari MC... (pastikan MC HP mode BLE SERVER)');
     device = await navigator.bluetooth.requestDevice({
       filters: [{ services: [SERVICE_UUID] }],
       optionalServices: [SERVICE_UUID]
@@ -84,8 +96,25 @@ async function connectMC() {
       'Admin akan otomatis memanggil mahasiswa saat MC trigger.</div>' +
       '<div class="info-box" id="trigger-log"><b>Log Trigger:</b><br></div>';
   } catch(e) {
-    setStatus('', 'Gagal: ' + e.message);
+    var msg = e.message || '';
+    // If user cancelled the picker, don't show an error
+    if (msg.indexOf('cancelled') >= 0 || msg.indexOf('User cancelled') >= 0 || msg.indexOf('chooser') >= 0 || msg.indexOf('picker') >= 0) {
+      setStatus('', 'Pencarian dibatalkan. Klik CONNECT untuk coba lagi.');
+      return;
+    }
+    // If "No devices found" — show helpful troubleshooting
+    if (msg.indexOf('No devices') >= 0 || msg.indexOf('no device') >= 0 || msg.indexOf('NotFound') >= 0) {
+      setStatus('', 'Tidak menemukan MC. Lihat tips di bawah.');
+      showTroubleshooting();
+      return;
+    }
+    setStatus('', 'Gagal: ' + msg);
   }
+}
+
+function showTroubleshooting() {
+  var tb = document.getElementById('troubleshoot-box');
+  if (tb) tb.style.display = 'block';
 }
 
 function onStatusChanged(event) {
