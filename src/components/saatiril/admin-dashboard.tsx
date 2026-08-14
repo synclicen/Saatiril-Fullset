@@ -412,15 +412,20 @@ export default function AdminDashboard() {
     const CHAR_STATUS = 'e7810a71-73ae-499d-8c15-fa8f6072e91c'
     const CHAR_TRIGGER = 'e7810a71-73ae-499d-8c15-fa8f6072e91b'
 
-    // CRITICAL: Electron does NOT support Web Bluetooth API (navigator.bluetooth
-    // is undefined in Electron BrowserWindow). Web Bluetooth requires Chrome
-    // browser's device picker UI which Electron doesn't provide.
-    // Solution: if running in Electron (saatirilAPI.isElectron), open /admin-ble
-    // in the user's default browser (Chrome/Edge) which DOES support Web Bluetooth.
-    const isElectron = typeof window !== 'undefined' && (window as any).saatirilAPI?.isElectron
+    // CRITICAL: Electron does NOT support Web Bluetooth API.
+    // Even if navigator.bluetooth exists in newer Electron/Chromium versions,
+    // it is NON-FUNCTIONAL — there's no device picker UI in Electron.
+    // Web Bluetooth requires Chrome browser's native device picker dialog.
+    // Solution: if running in Electron, ALWAYS open /admin-ble in the user's
+    // default browser (Chrome/Edge) which DOES work.
+    // Detection: check saatirilAPI.isElectron (preload) OR userAgent contains 'Electron'
+    const isElectron = (typeof window !== 'undefined' && (window as any).saatirilAPI?.isElectron) ||
+                       (typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('electron'))
     const hasWebBluetooth = typeof navigator !== 'undefined' && !!navigator.bluetooth
 
-    if (isElectron && !hasWebBluetooth) {
+    // In Electron, ALWAYS open browser — even if navigator.bluetooth exists,
+    // it doesn't work (no device picker UI in Electron BrowserWindow).
+    if (isElectron) {
       // Electron without Web Bluetooth → open /admin-ble in default browser
       setBleState('scanning')
       setBleError('Membuka browser untuk koneksi Bluetooth...')
@@ -2024,11 +2029,13 @@ export default function AdminDashboard() {
 
   // ── Render: Bluetooth MC Remote Panel ──────────────────────────────
   const renderBluetoothPanel = () => {
-    const isElectron = typeof window !== 'undefined' && (window as any).saatirilAPI?.isElectron
+    // Detect Electron: preload API OR userAgent contains 'Electron'
+    const isElectron = (typeof window !== 'undefined' && (window as any).saatirilAPI?.isElectron) ||
+                       (typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('electron'))
     const hasWebBluetooth = typeof navigator !== 'undefined' && !!navigator.bluetooth
-    // In Electron, navigator.bluetooth is undefined — but we CAN open browser.
-    // So "supported" = hasWebBluetooth OR (isElectron with openInBrowser API)
-    const bleSupported = hasWebBluetooth || (isElectron && (window as any).saatirilAPI?.openInBrowser)
+    // In browser (non-Electron): need navigator.bluetooth
+    // In Electron: always supported (we open external browser)
+    const bleSupported = isElectron || hasWebBluetooth
     const statusColor = bleState === 'connected' ? '#4ade80' : bleState === 'scanning' ? '#fbbf24' : bleState === 'error' ? '#ef4444' : '#c4b5fd'
     const statusText = bleState === 'connected' ? 'MC Terhubung' : bleState === 'scanning' ? 'Membuka browser...' : bleState === 'error' ? 'Gagal' : 'Belum terhubung'
 
@@ -2116,14 +2123,14 @@ export default function AdminDashboard() {
               ) : (
                 <>
                   <Bluetooth className="size-4" />
-                  {isElectron && !hasWebBluetooth ? 'BUKA BROWSER UNTUK BLUETOOTH' : 'CONNECT MC VIA BLUETOOTH'}
+                  {isElectron ? 'BUKA BROWSER UNTUK BLUETOOTH' : 'CONNECT MC VIA BLUETOOTH'}
                 </>
               )}
             </Button>
           ) : null}
 
           {/* Electron info note */}
-          {isElectron && !hasWebBluetooth && bleState === 'disconnected' && (
+          {isElectron && bleState === 'disconnected' && (
             <div className="space-y-2">
               <div className="rounded-md border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-[10px]" style={{ color: '#c4b5fd' }}>
                 <div className="font-semibold mb-1" style={{ color: '#06b6d4' }}>ℹ️ Info:</div>
