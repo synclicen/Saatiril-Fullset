@@ -1236,9 +1236,18 @@ function createWindow() {
     }
   })
 
-  // Open external links in system browser
+  // Open external links + /admin-ble in system browser (Chrome/Edge).
+  // CRITICAL: Electron doesn't support Web Bluetooth. When the renderer
+  // calls window.open('/admin-ble'), we redirect to shell.openExternal
+  // so it opens in Chrome/Edge which DOES support Web Bluetooth.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    console.log(`[SAATIRIL] setWindowOpenHandler: ${url}`)
+    // Always open in external browser — this handles /admin-ble and any other URL
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      shell.openExternal(url).catch((err: any) => {
+        console.error(`[SAATIRIL] Failed to open external URL ${url}: ${err.message}`)
+      })
+    }
     return { action: 'deny' }
   })
 

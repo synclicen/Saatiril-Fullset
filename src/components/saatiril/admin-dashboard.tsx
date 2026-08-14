@@ -426,18 +426,49 @@ export default function AdminDashboard() {
       setBleError('Membuka browser untuk koneksi Bluetooth...')
       const url = `${window.location.origin}/admin-ble`
       const api = (window as any).saatirilAPI
+
+      // Try multiple methods to open the browser:
+      // 1. IPC via preload (shell.openExternal) — best, opens default browser
+      // 2. window.open() — in Electron, setWindowOpenHandler redirects to shell.openExternal
+      //    (window.open returns null but browser DOES open)
+      // 3. Copy URL to clipboard + show manual instructions
+      let opened = false
+
+      // Method 1: IPC via preload
       if (api?.openInBrowser) {
-        const success = await api.openInBrowser(url)
-        if (success) {
-          setBleState('disconnected')
-          setBleError('Browser terbuka. Klik CONNECT di halaman admin-ble. Setelah terhubung, kembali ke app ini.')
-        } else {
-          setBleState('error')
-          setBleError('Gagal membuka browser. Buka manual: ' + url)
+        try {
+          opened = await api.openInBrowser(url)
+        } catch (e) {
+          console.error('[BLE] openInBrowser failed:', e)
         }
+      }
+
+      // Method 2: window.open() — Electron's setWindowOpenHandler redirects to shell.openExternal
+      // window.open returns null (action: 'deny') but the system browser opens.
+      // We can't detect success/failure from the return value, so we assume success.
+      if (!opened) {
+        try {
+          window.open(url, '_blank')
+          // Give it a moment, then assume success (Electron opens async)
+          opened = true
+        } catch (e) {
+          console.error('[BLE] window.open failed:', e)
+        }
+      }
+
+      if (opened) {
+        setBleState('disconnected')
+        setBleError(`Browser terbuka. Klik CONNECT di halaman admin-ble, lalu pilih MC HP. URL: ${url}`)
       } else {
-        setBleState('error')
-        setBleError('Tidak bisa membuka browser. Buka manual di Chrome/Edge: ' + url)
+        // Method 3: copy to clipboard + show manual URL
+        try {
+          await navigator.clipboard.writeText(url)
+          setBleState('disconnected')
+          setBleError(`Tidak bisa buka browser otomatis. URL di-copy ke clipboard — paste di Chrome/Edge: ${url}`)
+        } catch {
+          setBleState('error')
+          setBleError(`Buka manual di Chrome/Edge: ${url}`)
+        }
       }
       return
     }
@@ -2093,9 +2124,20 @@ export default function AdminDashboard() {
 
           {/* Electron info note */}
           {isElectron && !hasWebBluetooth && bleState === 'disconnected' && (
-            <div className="rounded-md border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-[10px]" style={{ color: '#c4b5fd' }}>
-              <div className="font-semibold mb-1" style={{ color: '#06b6d4' }}>ℹ️ Info:</div>
-              App Electron tidak mendukung Web Bluetooth langsung. Klik tombol di atas untuk membuka halaman koneksi Bluetooth di browser default (Chrome/Edge). Browser akan terbuka otomatis.
+            <div className="space-y-2">
+              <div className="rounded-md border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-[10px]" style={{ color: '#c4b5fd' }}>
+                <div className="font-semibold mb-1" style={{ color: '#06b6d4' }}>ℹ️ Info:</div>
+                App Electron tidak support Web Bluetooth langsung. Klik tombol di atas untuk buka halaman koneksi di Chrome/Edge.
+              </div>
+              <div className="rounded-md border border-[#533485]/40 bg-[#1a0b2e]/60 px-3 py-2 text-[10px]">
+                <div className="font-semibold mb-1" style={{ color: GOLD }}>Jika browser tidak terbuka otomatis:</div>
+                <div className="break-all font-mono" style={{ color: '#c4b5fd' }}>
+                  {typeof window !== 'undefined' ? `${window.location.origin}/admin-ble` : 'http://localhost:3000/admin-ble'}
+                </div>
+                <div className="mt-1" style={{ color: '#c4b5fd99' }}>
+                  Copy URL di atas → paste di Chrome/Edge → klik CONNECT MC VIA BLUETOOTH
+                </div>
+              </div>
             </div>
           )}
 
