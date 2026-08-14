@@ -991,6 +991,20 @@ function registerIpcHandlers() {
     }
   })
 
+  // Open URL in default browser (Chrome/Edge) — used for Web Bluetooth
+  // Electron doesn't support navigator.bluetooth, so /admin-ble must open
+  // in the user's default browser which DOES support Web Bluetooth.
+  ipcMain.handle('open-in-browser', async (_event: any, url: string) => {
+    try {
+      await shell.openExternal(url)
+      console.log(`[SAATIRIL] Opened in default browser: ${url}`)
+      return true
+    } catch (err: any) {
+      console.error(`[SAATIRIL] Failed to open URL in browser: ${err.message}`)
+      return false
+    }
+  })
+
   // Get LAN info
   ipcMain.handle('get-lan-info', async () => {
     return {

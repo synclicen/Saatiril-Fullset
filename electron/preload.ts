@@ -106,4 +106,11 @@ contextBridge.exposeInMainWorld('saatirilAPI', {
   getBackupStats: (): Promise<{ connected: boolean; totalFiles: number }> => {
     return ipcRenderer.invoke('get-backup-stats')
   },
+
+  // ── Open URL in default browser (Chrome/Edge) ────────────────────────
+  // Used for Web Bluetooth — Electron doesn't support navigator.bluetooth,
+  // so we open /admin-ble in the user's default browser which DOES support it.
+  openInBrowser: (url: string): Promise<boolean> => {
+    return ipcRenderer.invoke('open-in-browser', url)
+  },
 })

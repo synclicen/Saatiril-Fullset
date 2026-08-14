@@ -412,7 +412,37 @@ export default function AdminDashboard() {
     const CHAR_STATUS = 'e7810a71-73ae-499d-8c15-fa8f6072e91c'
     const CHAR_TRIGGER = 'e7810a71-73ae-499d-8c15-fa8f6072e91b'
 
-    if (typeof navigator === 'undefined' || !navigator.bluetooth) {
+    // CRITICAL: Electron does NOT support Web Bluetooth API (navigator.bluetooth
+    // is undefined in Electron BrowserWindow). Web Bluetooth requires Chrome
+    // browser's device picker UI which Electron doesn't provide.
+    // Solution: if running in Electron (saatirilAPI.isElectron), open /admin-ble
+    // in the user's default browser (Chrome/Edge) which DOES support Web Bluetooth.
+    const isElectron = typeof window !== 'undefined' && (window as any).saatirilAPI?.isElectron
+    const hasWebBluetooth = typeof navigator !== 'undefined' && !!navigator.bluetooth
+
+    if (isElectron && !hasWebBluetooth) {
+      // Electron without Web Bluetooth → open /admin-ble in default browser
+      setBleState('scanning')
+      setBleError('Membuka browser untuk koneksi Bluetooth...')
+      const url = `${window.location.origin}/admin-ble`
+      const api = (window as any).saatirilAPI
+      if (api?.openInBrowser) {
+        const success = await api.openInBrowser(url)
+        if (success) {
+          setBleState('disconnected')
+          setBleError('Browser terbuka. Klik CONNECT di halaman admin-ble. Setelah terhubung, kembali ke app ini.')
+        } else {
+          setBleState('error')
+          setBleError('Gagal membuka browser. Buka manual: ' + url)
+        }
+      } else {
+        setBleState('error')
+        setBleError('Tidak bisa membuka browser. Buka manual di Chrome/Edge: ' + url)
+      }
+      return
+    }
+
+    if (!hasWebBluetooth) {
       setBleState('error')
       setBleError('Browser tidak mendukung Web Bluetooth. Gunakan Chrome atau Edge.')
       return
@@ -1963,9 +1993,13 @@ export default function AdminDashboard() {
 
   // ── Render: Bluetooth MC Remote Panel ──────────────────────────────
   const renderBluetoothPanel = () => {
-    const bleSupported = typeof navigator !== 'undefined' && !!navigator.bluetooth
+    const isElectron = typeof window !== 'undefined' && (window as any).saatirilAPI?.isElectron
+    const hasWebBluetooth = typeof navigator !== 'undefined' && !!navigator.bluetooth
+    // In Electron, navigator.bluetooth is undefined — but we CAN open browser.
+    // So "supported" = hasWebBluetooth OR (isElectron with openInBrowser API)
+    const bleSupported = hasWebBluetooth || (isElectron && (window as any).saatirilAPI?.openInBrowser)
     const statusColor = bleState === 'connected' ? '#4ade80' : bleState === 'scanning' ? '#fbbf24' : bleState === 'error' ? '#ef4444' : '#c4b5fd'
-    const statusText = bleState === 'connected' ? 'MC Terhubung' : bleState === 'scanning' ? 'Mencari MC...' : bleState === 'error' ? 'Gagal' : 'Belum terhubung'
+    const statusText = bleState === 'connected' ? 'MC Terhubung' : bleState === 'scanning' ? 'Membuka browser...' : bleState === 'error' ? 'Gagal' : 'Belum terhubung'
 
     return (
       <Card className="border-[#533485]/40 bg-[#2a164a]/60">
@@ -2046,16 +2080,24 @@ export default function AdminDashboard() {
               {bleState === 'scanning' ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
-                  Mencari MC...
+                  Membuka browser...
                 </>
               ) : (
                 <>
                   <Bluetooth className="size-4" />
-                  CONNECT MC VIA BLUETOOTH
+                  {isElectron && !hasWebBluetooth ? 'BUKA BROWSER UNTUK BLUETOOTH' : 'CONNECT MC VIA BLUETOOTH'}
                 </>
               )}
             </Button>
           ) : null}
+
+          {/* Electron info note */}
+          {isElectron && !hasWebBluetooth && bleState === 'disconnected' && (
+            <div className="rounded-md border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-[10px]" style={{ color: '#c4b5fd' }}>
+              <div className="font-semibold mb-1" style={{ color: '#06b6d4' }}>ℹ️ Info:</div>
+              App Electron tidak mendukung Web Bluetooth langsung. Klik tombol di atas untuk membuka halaman koneksi Bluetooth di browser default (Chrome/Edge). Browser akan terbuka otomatis.
+            </div>
+          )}
 
           {/* Trigger log when connected */}
           {bleState === 'connected' && (
