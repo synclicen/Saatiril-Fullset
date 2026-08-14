@@ -405,6 +405,9 @@ export default function AdminDashboard() {
   const bleServerRef = useRef<any>(null)
   const bleStatusCharRef = useRef<any>(null)
   const bleTriggerCharRef = useRef<any>(null)
+  const bleProjectInfoCharRef = useRef<any>(null)
+  const bleQueueDataCharRef = useRef<any>(null)
+  const bleNextStudentCharRef = useRef<any>(null)
 
   // Web Bluetooth MC connection — connects to MC HP in BLE SERVER mode
   const connectMCBluetooth = useCallback(async () => {
@@ -505,6 +508,9 @@ export default function AdminDashboard() {
 
       bleStatusCharRef.current = await service.getCharacteristic(CHAR_STATUS)
       bleTriggerCharRef.current = await service.getCharacteristic(CHAR_TRIGGER)
+      try { bleProjectInfoCharRef.current = await service.getCharacteristic('e7810a71-73ae-499d-8c15-fa8f6072e91e') } catch (_e) {}
+      try { bleQueueDataCharRef.current = await service.getCharacteristic('e7810a71-73ae-499d-8c15-fa8f6072e91d') } catch (_e) {}
+      try { bleNextStudentCharRef.current = await service.getCharacteristic('e7810a71-73ae-499d-8c15-fa8f6072e91a') } catch (_e) {}
 
       // Subscribe to status notifications — MC sends PANGGIL/NEXT/RESET via this
       await bleStatusCharRef.current.startNotifications()
@@ -525,6 +531,59 @@ export default function AdminDashboard() {
       })
 
       setBleState('connected')
+
+      // CRITICAL: Push project data to MC so it can display project name + queue + next student.
+      // Without this, MC shows "Tidak ada mahasiswa" even though it's connected.
+      // The Android AdminViewModel does this via pushBLEQueueData() + pushBLENextStudent() +
+      // updateProjectInfo() — we replicate that here for the Electron admin.
+      try {
+        const encoder = new TextEncoder()
+        const proj = useSaatirilStore.getState().currentProject
+        if (proj) {
+          // 1. Project info
+          if (bleProjectInfoCharRef.current) {
+            const projectInfo = JSON.stringify({
+              projectName: proj.name || 'Saatiril',
+              mode: proj.config?.mode || 'single',
+              ratio: proj.config?.ratio || '3:4'
+            })
+            await bleProjectInfoCharRef.current.writeValue(encoder.encode(projectInfo))
+            console.log('[BLE] Pushed project info to MC:', projectInfo)
+          }
+          // 2. Queue data
+          if (bleQueueDataCharRef.current) {
+            const db = proj.database || []
+            const pending = db.filter((s: any) => s.status === 'pending').length
+            const done = db.filter((s: any) => s.status === 'done').length
+            const active = db.find((s: any) => s.status && s.status.startsWith('active'))
+            const queueData = JSON.stringify({
+              total: db.length,
+              pending,
+              done,
+              active: active ? active.nama : null,
+              students: db.slice(0, 10).map((s: any) => ({ nim: s.nim, nama: s.nama, status: s.status }))
+            })
+            await bleQueueDataCharRef.current.writeValue(encoder.encode(queueData))
+            console.log('[BLE] Pushed queue data to MC:', queueData)
+          }
+          // 3. Next student
+          if (bleNextStudentCharRef.current) {
+            const nextPending = (proj.database || []).find((s: any) => s.status === 'pending')
+            const nextStudent = nextPending ? JSON.stringify({
+              id: nextPending.id,
+              nim: nextPending.nim,
+              nama: nextPending.nama,
+              status: nextPending.status
+            }) : JSON.stringify({})
+            await bleNextStudentCharRef.current.writeValue(encoder.encode(nextStudent))
+            console.log('[BLE] Pushed next student to MC:', nextStudent)
+          }
+        } else {
+          console.warn('[BLE] No current project — cannot push data to MC')
+        }
+      } catch (pushErr: any) {
+        console.error('[BLE] Failed to push project data to MC:', pushErr?.message)
+      }
     } catch (e: any) {
       const msg = e?.message || ''
       if (msg.toLowerCase().includes('cancel') || msg.toLowerCase().includes('chooser') || msg.toLowerCase().includes('picker')) {
@@ -548,8 +607,61 @@ export default function AdminDashboard() {
     bleServerRef.current = null
     bleStatusCharRef.current = null
     bleTriggerCharRef.current = null
+    bleProjectInfoCharRef.current = null
+    bleQueueDataCharRef.current = null
+    bleNextStudentCharRef.current = null
     setBleState('disconnected')
   }, [])
+
+  // Push project data to MC via BLE whenever the project changes (if connected).
+  // This keeps the MC's display in sync: when admin calls a student or marks
+  // one as done, the MC sees the updated queue + next student.
+  const pushProjectDataToMC = useCallback(async () => {
+    if (bleState !== 'connected') return
+    const proj = useSaatirilStore.getState().currentProject
+    if (!proj) return
+    try {
+      const encoder = new TextEncoder()
+      // Queue data
+      if (bleQueueDataCharRef.current) {
+        const db = proj.database || []
+        const pending = db.filter((s: any) => s.status === 'pending').length
+        const done = db.filter((s: any) => s.status === 'done').length
+        const active = db.find((s: any) => s.status && s.status.startsWith('active'))
+        const queueData = JSON.stringify({
+          total: db.length,
+          pending,
+          done,
+          active: active ? active.nama : null,
+          students: db.slice(0, 10).map((s: any) => ({ nim: s.nim, nama: s.nama, status: s.status }))
+        })
+        await bleQueueDataCharRef.current.writeValue(encoder.encode(queueData))
+      }
+      // Next student
+      if (bleNextStudentCharRef.current) {
+        const nextPending = (proj.database || []).find((s: any) => s.status === 'pending')
+        const active = (proj.database || []).find((s: any) => s.status && s.status.startsWith('active'))
+        const target = active || nextPending
+        const nextStudent = target ? JSON.stringify({
+          id: target.id,
+          nim: target.nim,
+          nama: target.nama,
+          status: target.status
+        }) : JSON.stringify({})
+        await bleNextStudentCharRef.current.writeValue(encoder.encode(nextStudent))
+      }
+      console.log('[BLE] Pushed updated project data to MC')
+    } catch (err: any) {
+      console.error('[BLE] Failed to push updated data to MC:', err?.message)
+    }
+  }, [bleState])
+
+  // Auto-push whenever project changes + BLE connected
+  useEffect(() => {
+    if (bleState === 'connected' && currentProject) {
+      pushProjectDataToMC()
+    }
+  }, [bleState, currentProject, pushProjectDataToMC])
 
   // ── Google Drive / Cloud backup state ──────────────────────────────
   const [backupFolder, setBackupFolder] = useState<string | null>(null)
