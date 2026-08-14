@@ -35,6 +35,21 @@ body { background:#1a0b2e; color:#fff; font-family:-apple-system,BlinkMacSystemF
     </p>
     <button class="connect-btn" onclick="connectMC()">CONNECT MC VIA BLUETOOTH</button>
     <div class="status-text" id="status-text">Menunggu koneksi...</div>
+
+    <!-- Separator -->
+    <div style="margin: 16px 0 8px; text-align:center; color:#533485; font-size:11px;">
+      ─── atau ───
+    </div>
+
+    <!-- Fallback: show ALL BLE devices (no service UUID filter) -->
+    <button class="connect-btn" style="background:#533485; color:#d4af37; border:1px solid #533485;" onclick="connectMCAllDevices()">
+      📱 TAMPILKAN SEMUA PERANGKAT BLUETOOTH
+    </button>
+    <p style="color:#c4b5fd99; font-size:10px; margin-top:6px; text-align:center;">
+      Jika CONNECT di atas tidak menemukan MC, gunakan tombol ini.<br>
+      Akan tampilkan SEMUA perangkat Bluetooth nearby — pilih MC HP manual.
+    </p>
+
     <div id="troubleshoot-box" class="info-box" style="display:none; border-color:#fbbf24; margin-top:16px; text-align:left;">
       <div style="color:#fbbf24; font-weight:bold; margin-bottom:8px;">⚠️ Tidak menemukan MC? Coba ini:</div>
       <div style="color:#c4b5fd; font-size:11px; line-height:1.6;">
@@ -70,10 +85,40 @@ function setStatus(state, text) {
 async function connectMC() {
   try {
     setStatus('connecting', 'Mencari MC... (pastikan MC HP mode BLE SERVER)');
-    device = await navigator.bluetooth.requestDevice({
-      filters: [{ services: [SERVICE_UUID] }],
-      optionalServices: [SERVICE_UUID]
-    });
+
+    // STRATEGY: Try service UUID filter first (finds MC HP quickly if advertising correctly).
+    // If user cancels or no devices found, offer "acceptAllDevices" fallback which
+    // shows ALL nearby BLE devices (user picks MC HP manually by name).
+    let device = null;
+    let usedFallback = false;
+
+    try {
+      device = await navigator.bluetooth.requestDevice({
+        filters: [{ services: [SERVICE_UUID] }],
+        optionalServices: [SERVICE_UUID]
+      });
+    } catch (e1) {
+      var msg1 = (e1.message || '').toLowerCase();
+      // If user cancelled, don't retry — just return
+      if (msg1.indexOf('cancel') >= 0 || msg1.indexOf('chooser') >= 0 || msg1.indexOf('picker') >= 0) {
+        setStatus('', 'Pencarian dibatalkan. Klik CONNECT untuk coba lagi.');
+        return;
+      }
+      // If no devices found with filter, try acceptAllDevices (shows ALL BLE devices)
+      setStatus('connecting', 'Tidak ketemu dengan filter. Mencoba mode "semua perangkat"...');
+      device = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [SERVICE_UUID]
+      });
+      usedFallback = true;
+    }
+
+    if (!device) {
+      setStatus('', 'Tidak ada perangkat dipilih.');
+      return;
+    }
+
+    setStatus('connecting', 'Menghubungkan ke ' + (device.name || device.id) + '...');
 
     device.addEventListener('gattserverdisconnected', onDisconnected);
     server = await device.gatt.connect();
@@ -90,8 +135,13 @@ async function connectMC() {
     isConnected = true;
     setStatus('connected', 'MC terhubung! Menunggu trigger...');
 
+    var fallbackNote = usedFallback
+      ? '<div class="info-box" style="border-color:#fbbf24;color:#fbbf24;">⚠️ Terhubung via mode "semua perangkat". Jika trigger tidak berfungsi, pastikan ini MC HP yang benar.</div>'
+      : '';
+
     document.getElementById('app').innerHTML =
-      '<div class="info-box">✅ MC HP terhubung via Bluetooth</div>' +
+      fallbackNote +
+      '<div class="info-box">✅ MC HP terhubung via Bluetooth (' + (device.name || 'unknown') + ')</div>' +
       '<div class="info-box">MC akan mengirim PANGGIL/NEXT/RESET via Bluetooth.<br>' +
       'Admin akan otomatis memanggil mahasiswa saat MC trigger.</div>' +
       '<div class="info-box" id="trigger-log"><b>Log Trigger:</b><br></div>';
@@ -109,6 +159,48 @@ async function connectMC() {
       return;
     }
     setStatus('', 'Gagal: ' + msg);
+  }
+}
+
+// Connect to MC using acceptAllDevices (no service UUID filter).
+// This shows ALL nearby BLE devices — user picks MC HP manually by name.
+// Used as fallback when the service UUID filter finds nothing.
+async function connectMCAllDevices() {
+  try {
+    setStatus('connecting', 'Mencari semua perangkat Bluetooth nearby...');
+    device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [SERVICE_UUID]
+    });
+
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+    setStatus('connecting', 'Menghubungkan ke ' + (device.name || device.id) + '...');
+    server = await device.gatt.connect();
+    var service = await server.getPrimaryService(SERVICE_UUID);
+
+    statusChar = await service.getCharacteristic(CHAR_STATUS);
+    triggerChar = await service.getCharacteristic(CHAR_TRIGGER);
+
+    await statusChar.startNotifications();
+    statusChar.addEventListener('characteristicvaluechanged', onStatusChanged);
+
+    isConnected = true;
+    setStatus('connected', 'MC terhubung! Menunggu trigger...');
+
+    document.getElementById('app').innerHTML =
+      '<div class="info-box" style="border-color:#fbbf24;color:#fbbf24;">⚠️ Terhubung via mode "semua perangkat". Jika trigger tidak berfungsi, pastikan ini MC HP yang benar.</div>' +
+      '<div class="info-box">✅ MC HP terhubung via Bluetooth (' + (device.name || 'unknown') + ')</div>' +
+      '<div class="info-box">MC akan mengirim PANGGIL/NEXT/RESET via Bluetooth.<br>' +
+      'Admin akan otomatis memanggil mahasiswa saat MC trigger.</div>' +
+      '<div class="info-box" id="trigger-log"><b>Log Trigger:</b><br></div>';
+  } catch(e) {
+    var msg = e.message || '';
+    if (msg.indexOf('cancelled') >= 0 || msg.indexOf('chooser') >= 0 || msg.indexOf('picker') >= 0) {
+      setStatus('', 'Pencarian dibatalkan. Klik tombol untuk coba lagi.');
+      return;
+    }
+    setStatus('', 'Gagal: ' + msg);
+    showTroubleshooting();
   }
 }
 
