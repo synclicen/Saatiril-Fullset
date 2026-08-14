@@ -70,12 +70,17 @@ var CHAR_NEXT_STUDENT = 'e7810a71-73ae-499d-8c15-fa8f6072e91a';
 var CHAR_TRIGGER = 'e7810a71-73ae-499d-8c15-fa8f6072e91b';
 var CHAR_STATUS = 'e7810a71-73ae-499d-8c15-fa8f6072e91c';
 var CHAR_QUEUE_DATA = 'e7810a71-73ae-499d-8c15-fa8f6072e91d';
+var CHAR_PROJECT_INFO = 'e7810a71-73ae-499d-8c15-fa8f6072e91e';
 
 var device = null;
 var server = null;
 var statusChar = null;
 var triggerChar = null;
+var projectInfoChar = null;
+var queueDataChar = null;
+var nextStudentChar = null;
 var isConnected = false;
+var dataSyncInterval = null;
 
 function setStatus(state, text) {
   document.getElementById('status-dot').className = 'dot ' + state;
@@ -127,13 +132,16 @@ async function connectMC() {
     // Get characteristics
     statusChar = await service.getCharacteristic(CHAR_STATUS);
     triggerChar = await service.getCharacteristic(CHAR_TRIGGER);
+    try { projectInfoChar = await service.getCharacteristic(CHAR_PROJECT_INFO); } catch(e) { console.warn('No project_info char:', e.message); }
+    try { queueDataChar = await service.getCharacteristic(CHAR_QUEUE_DATA); } catch(e) { console.warn('No queue_data char:', e.message); }
+    try { nextStudentChar = await service.getCharacteristic(CHAR_NEXT_STUDENT); } catch(e) { console.warn('No next_student char:', e.message); }
 
     // Subscribe to status notifications (MC sends PANGGIL/NEXT/RESET via status)
     await statusChar.startNotifications();
     statusChar.addEventListener('characteristicvaluechanged', onStatusChanged);
 
     isConnected = true;
-    setStatus('connected', 'MC terhubung! Menunggu trigger...');
+    setStatus('connected', 'MC terhubung! Mengirim data project...');
 
     var fallbackNote = usedFallback
       ? '<div class="info-box" style="border-color:#fbbf24;color:#fbbf24;">⚠️ Terhubung via mode "semua perangkat". Jika trigger tidak berfungsi, pastikan ini MC HP yang benar.</div>'
@@ -145,6 +153,14 @@ async function connectMC() {
       '<div class="info-box">MC akan mengirim PANGGIL/NEXT/RESET via Bluetooth.<br>' +
       'Admin akan otomatis memanggil mahasiswa saat MC trigger.</div>' +
       '<div class="info-box" id="trigger-log"><b>Log Trigger:</b><br></div>';
+
+    // CRITICAL: Push project data to MC so it can display project name + queue + next student.
+    // Without this, MC shows "Tidak ada mahasiswa" even though it's connected.
+    await pushProjectDataToMC();
+
+    // Auto-push every 5 seconds to keep MC in sync (in case project changes)
+    if (dataSyncInterval) clearInterval(dataSyncInterval);
+    dataSyncInterval = setInterval(pushProjectDataToMC, 5000);
   } catch(e) {
     var msg = e.message || '';
     // If user cancelled the picker, don't show an error
@@ -180,12 +196,15 @@ async function connectMCAllDevices() {
 
     statusChar = await service.getCharacteristic(CHAR_STATUS);
     triggerChar = await service.getCharacteristic(CHAR_TRIGGER);
+    try { projectInfoChar = await service.getCharacteristic(CHAR_PROJECT_INFO); } catch(e) {}
+    try { queueDataChar = await service.getCharacteristic(CHAR_QUEUE_DATA); } catch(e) {}
+    try { nextStudentChar = await service.getCharacteristic(CHAR_NEXT_STUDENT); } catch(e) {}
 
     await statusChar.startNotifications();
     statusChar.addEventListener('characteristicvaluechanged', onStatusChanged);
 
     isConnected = true;
-    setStatus('connected', 'MC terhubung! Menunggu trigger...');
+    setStatus('connected', 'MC terhubung! Mengirim data project...');
 
     document.getElementById('app').innerHTML =
       '<div class="info-box" style="border-color:#fbbf24;color:#fbbf24;">⚠️ Terhubung via mode "semua perangkat". Jika trigger tidak berfungsi, pastikan ini MC HP yang benar.</div>' +
@@ -193,6 +212,11 @@ async function connectMCAllDevices() {
       '<div class="info-box">MC akan mengirim PANGGIL/NEXT/RESET via Bluetooth.<br>' +
       'Admin akan otomatis memanggil mahasiswa saat MC trigger.</div>' +
       '<div class="info-box" id="trigger-log"><b>Log Trigger:</b><br></div>';
+
+    // Push project data to MC
+    await pushProjectDataToMC();
+    if (dataSyncInterval) clearInterval(dataSyncInterval);
+    dataSyncInterval = setInterval(pushProjectDataToMC, 5000);
   } catch(e) {
     var msg = e.message || '';
     if (msg.indexOf('cancelled') >= 0 || msg.indexOf('chooser') >= 0 || msg.indexOf('picker') >= 0) {
@@ -201,6 +225,68 @@ async function connectMCAllDevices() {
     }
     setStatus('', 'Gagal: ' + msg);
     showTroubleshooting();
+  }
+}
+
+// Fetch project data from admin (Electron app via HTTP API)
+async function fetchProjectDataFromAdmin() {
+  try {
+    var resp = await fetch('/api/ble-project-data');
+    if (resp.ok) return await resp.json();
+  } catch(e) { console.warn('fetchProjectData failed:', e.message); }
+  return null;
+}
+
+// Push project data to MC via BLE characteristics.
+// This is called after connect + every 5 seconds to keep MC in sync.
+async function pushProjectDataToMC() {
+  if (!isConnected) return;
+  var data = await fetchProjectDataFromAdmin();
+  if (!data) {
+    console.warn('[BLE] No project data from admin — MC will show empty');
+    return;
+  }
+  var encoder = new TextEncoder();
+  try {
+    // 1. Project info
+    if (projectInfoChar) {
+      var projectInfo = JSON.stringify({
+        projectName: data.projectName || 'Saatiril',
+        mode: data.mode || 'single',
+        ratio: data.ratio || '3:4'
+      });
+      await projectInfoChar.writeValue(encoder.encode(projectInfo));
+      console.log('[BLE] Pushed project info:', projectInfo);
+    }
+    // 2. Queue data
+    if (queueDataChar) {
+      var db = data.database || [];
+      var pending = db.filter(function(s){ return s.status === 'pending'; }).length;
+      var done = db.filter(function(s){ return s.status === 'done'; }).length;
+      var active = db.find(function(s){ return s.status && s.status.indexOf('active') === 0; });
+      var queueData = JSON.stringify({
+        total: db.length,
+        pending: pending,
+        done: done,
+        active: active ? active.nama : null,
+        students: db.slice(0, 10).map(function(s){ return { nim: s.nim, nama: s.nama, status: s.status }; })
+      });
+      await queueDataChar.writeValue(encoder.encode(queueData));
+      console.log('[BLE] Pushed queue data: total=' + db.length + ' pending=' + pending + ' done=' + done);
+    }
+    // 3. Next student
+    if (nextStudentChar) {
+      var nextPending = (data.database || []).find(function(s){ return s.status === 'pending'; });
+      var activeStd = (data.database || []).find(function(s){ return s.status && s.status.indexOf('active') === 0; });
+      var target = activeStd || nextPending;
+      var nextStudent = target ? JSON.stringify({
+        id: target.id, nim: target.nim, nama: target.nama, status: target.status
+      }) : JSON.stringify({});
+      await nextStudentChar.writeValue(encoder.encode(nextStudent));
+      console.log('[BLE] Pushed next student:', target ? target.nama : '(none)');
+    }
+  } catch(e) {
+    console.error('[BLE] pushProjectDataToMC error:', e.message);
   }
 }
 
@@ -237,6 +323,7 @@ function onStatusChanged(event) {
 
 function onDisconnected() {
   isConnected = false;
+  if (dataSyncInterval) { clearInterval(dataSyncInterval); dataSyncInterval = null; }
   setStatus('', 'MC terputus. Mencoba reconnect...');
   setTimeout(connectMC, 3000);
 }
