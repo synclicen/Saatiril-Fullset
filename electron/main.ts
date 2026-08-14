@@ -491,23 +491,37 @@ function startStaticServer(outDir: string): Promise<void> {
       }
 
       // ── API: BLE project data (for /admin-ble page) ────────────────
-      // Returns current project data so admin-ble.html can push it to MC
-      // via BLE characteristics. This bridges the Electron admin's project
-      // state to the browser-based BLE connection.
-      if (urlPath === '/api/ble-project-data' && req.method === 'GET') {
+      // GET: returns current project data so admin-ble.html can push it to MC
+      // POST: admin-dashboard.tsx pushes project data here (more reliable than
+      //       relying on SYNC_DB capture, which only fires for socket relay)
+      if (urlPath === '/api/ble-project-data' && (req.method === 'GET' || req.method === 'POST')) {
+        // POST: receive project data from admin dashboard
+        if (req.method === 'POST') {
+          let body = ''
+          req.on('data', (chunk: Buffer) => { body += chunk.toString() })
+          req.on('end', () => {
+            try {
+              const data = JSON.parse(body)
+              ;(global as any).__saatirilCurrentProject = data
+              console.log(`[SAATIRIL BLE] Project data received via POST: ${data?.name || 'unknown'} (${(data?.database || []).length} students)`)
+              res.writeHead(200, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ ok: true }))
+            } catch (err: any) {
+              res.writeHead(400, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: err.message }))
+            }
+          })
+          return
+        }
+        // GET: return current project data to admin-ble.html
         try {
-          // Emit a request to get the current project from the admin dashboard
-          // We use a synchronous request via socket.io to get the project state
-          // For simplicity, we return the project from the embedded server state
-          // The admin dashboard listens for REQUEST_PROJECT_DATA and responds
-          // via a socket event. But for now, we use a simple shared variable.
           const projectData = (global as any).__saatirilCurrentProject || null
           if (projectData) {
             res.writeHead(200, { 'Content-Type': 'application/json' })
             res.end(JSON.stringify({
               projectName: projectData.name || 'Saatiril',
-              mode: projectData.config?.mode || 'single',
-              ratio: projectData.config?.ratio || '3:4',
+              mode: projectData.config?.mode || projectData.mode || 'single',
+              ratio: projectData.config?.ratio || projectData.ratio || '3:4',
               database: projectData.database || []
             }))
           } else {
