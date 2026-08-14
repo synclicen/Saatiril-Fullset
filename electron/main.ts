@@ -490,6 +490,42 @@ function startStaticServer(outDir: string): Promise<void> {
         return
       }
 
+      // ── API: BLE project data (for /admin-ble page) ────────────────
+      // Returns current project data so admin-ble.html can push it to MC
+      // via BLE characteristics. This bridges the Electron admin's project
+      // state to the browser-based BLE connection.
+      if (urlPath === '/api/ble-project-data' && req.method === 'GET') {
+        try {
+          // Emit a request to get the current project from the admin dashboard
+          // We use a synchronous request via socket.io to get the project state
+          // For simplicity, we return the project from the embedded server state
+          // The admin dashboard listens for REQUEST_PROJECT_DATA and responds
+          // via a socket event. But for now, we use a simple shared variable.
+          const projectData = (global as any).__saatirilCurrentProject || null
+          if (projectData) {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({
+              projectName: projectData.name || 'Saatiril',
+              mode: projectData.config?.mode || 'single',
+              ratio: projectData.config?.ratio || '3:4',
+              database: projectData.database || []
+            }))
+          } else {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({
+              projectName: 'Saatiril',
+              mode: 'single',
+              ratio: '3:4',
+              database: []
+            }))
+          }
+        } catch (err: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: err.message }))
+        }
+        return
+      }
+
       // ── API route: /api/apk-download ──────────────────────────────
       // Proxies APK/Portable downloads from GitHub Releases so LAN
       // operators can download even without direct internet access.
