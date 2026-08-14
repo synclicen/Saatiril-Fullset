@@ -616,11 +616,28 @@ export default function AdminDashboard() {
   // Push project data to MC via BLE whenever the project changes (if connected).
   // This keeps the MC's display in sync: when admin calls a student or marks
   // one as done, the MC sees the updated queue + next student.
+  // CRITICAL: We ALWAYS push to the HTTP API (even if BLE not connected) so
+  // admin-ble.html can fetch it when it connects later.
   const pushProjectDataToMC = useCallback(async () => {
-    if (bleState !== 'connected') return
     const proj = useSaatirilStore.getState().currentProject
     if (!proj) return
     try {
+      // Always push project data to the HTTP API endpoint so that
+      // admin-ble.html (running in a separate browser tab) can fetch it.
+      try {
+        await fetch('/api/ble-project-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(proj)
+        })
+        console.log('[BLE] Pushed project data to API:', proj.name, '-', (proj.database || []).length, 'students')
+      } catch (apiErr) {
+        console.warn('[BLE] Failed to push to API:', apiErr?.message)
+      }
+
+      // Only push via BLE if connected
+      if (bleState !== 'connected') return
+
       const encoder = new TextEncoder()
       // Queue data
       if (bleQueueDataCharRef.current) {
@@ -656,12 +673,12 @@ export default function AdminDashboard() {
     }
   }, [bleState])
 
-  // Auto-push whenever project changes + BLE connected
+  // Auto-push whenever project changes — always push to API, + BLE if connected
   useEffect(() => {
-    if (bleState === 'connected' && currentProject) {
+    if (currentProject) {
       pushProjectDataToMC()
     }
-  }, [bleState, currentProject, pushProjectDataToMC])
+  }, [currentProject, pushProjectDataToMC])
 
   // ── Google Drive / Cloud backup state ──────────────────────────────
   const [backupFolder, setBackupFolder] = useState<string | null>(null)
