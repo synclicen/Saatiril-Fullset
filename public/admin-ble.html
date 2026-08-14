@@ -160,7 +160,7 @@ async function connectMC() {
 
     // Auto-push every 5 seconds to keep MC in sync (in case project changes)
     if (dataSyncInterval) clearInterval(dataSyncInterval);
-    dataSyncInterval = setInterval(pushProjectDataToMC, 5000);
+    dataSyncInterval = setInterval(pushProjectDataToMC, 2000);
   } catch(e) {
     var msg = e.message || '';
     // If user cancelled the picker, don't show an error
@@ -216,7 +216,7 @@ async function connectMCAllDevices() {
     // Push project data to MC
     await pushProjectDataToMC();
     if (dataSyncInterval) clearInterval(dataSyncInterval);
-    dataSyncInterval = setInterval(pushProjectDataToMC, 5000);
+    dataSyncInterval = setInterval(pushProjectDataToMC, 2000);
   } catch(e) {
     var msg = e.message || '';
     if (msg.indexOf('cancelled') >= 0 || msg.indexOf('chooser') >= 0 || msg.indexOf('picker') >= 0) {
@@ -242,10 +242,13 @@ async function fetchProjectDataFromAdmin() {
 async function pushProjectDataToMC() {
   if (!isConnected) return;
   var data = await fetchProjectDataFromAdmin();
-  if (!data) {
-    console.warn('[BLE] No project data from admin — MC will show empty');
+  if (!data || !data.database || data.database.length === 0) {
+    console.warn('[BLE] No project data from admin API — MC will show empty. Make sure admin has a project open with students loaded.');
+    // Retry after 2 seconds — admin dashboard might not have pushed yet
+    setTimeout(pushProjectDataToMC, 2000);
     return;
   }
+  console.log('[BLE] Got project data:', data.projectName, '-', data.database.length, 'students');
   var encoder = new TextEncoder();
   try {
     // 1. Project info
