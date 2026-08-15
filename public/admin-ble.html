@@ -152,13 +152,14 @@ async function connectMC() {
       '<div class="info-box">✅ MC HP terhubung via Bluetooth (' + (device.name || 'unknown') + ')</div>' +
       '<div class="info-box">MC akan mengirim PANGGIL/NEXT/RESET via Bluetooth.<br>' +
       'Admin akan otomatis memanggil mahasiswa saat MC trigger.</div>' +
+      '<div class="info-box"><b>BLE Data Push Log:</b><br><div id="ble-log" style="max-height:200px;overflow-y:auto;margin-top:4px;"></div></div>' +
       '<div class="info-box" id="trigger-log"><b>Log Trigger:</b><br></div>';
 
     // CRITICAL: Push project data to MC so it can display project name + queue + next student.
-    // Without this, MC shows "Tidak ada mahasiswa" even though it's connected.
+    bleLog('Connected. Starting data push...', 'success');
     await pushProjectDataToMC();
 
-    // Auto-push every 5 seconds to keep MC in sync (in case project changes)
+    // Auto-push every 2 seconds to keep MC in sync
     if (dataSyncInterval) clearInterval(dataSyncInterval);
     dataSyncInterval = setInterval(pushProjectDataToMC, 2000);
   } catch(e) {
@@ -211,9 +212,11 @@ async function connectMCAllDevices() {
       '<div class="info-box">✅ MC HP terhubung via Bluetooth (' + (device.name || 'unknown') + ')</div>' +
       '<div class="info-box">MC akan mengirim PANGGIL/NEXT/RESET via Bluetooth.<br>' +
       'Admin akan otomatis memanggil mahasiswa saat MC trigger.</div>' +
+      '<div class="info-box"><b>BLE Data Push Log:</b><br><div id="ble-log" style="max-height:200px;overflow-y:auto;margin-top:4px;"></div></div>' +
       '<div class="info-box" id="trigger-log"><b>Log Trigger:</b><br></div>';
 
     // Push project data to MC
+    bleLog('Connected (all devices mode). Starting data push...', 'success');
     await pushProjectDataToMC();
     if (dataSyncInterval) clearInterval(dataSyncInterval);
     dataSyncInterval = setInterval(pushProjectDataToMC, 2000);
@@ -237,31 +240,74 @@ async function fetchProjectDataFromAdmin() {
   return null;
 }
 
+// Log to both console + visual status box on the page
+function bleLog(msg, type) {
+  var color = type === 'error' ? '#ef4444' : type === 'warn' ? '#fbbf24' : type === 'success' ? '#4ade80' : '#c4b5fd';
+  console.log('[BLE] ' + msg);
+  var log = document.getElementById('ble-log');
+  if (log) {
+    var time = new Date().toLocaleTimeString();
+    log.innerHTML = '<div style="color:' + color + ';font-size:10px;font-family:monospace;">[' + time + '] ' + msg + '</div>' + log.innerHTML;
+  }
+}
+
+// Write data to a BLE characteristic, handling the 20-byte MTU limit.
+// Web Bluetooth writeValueWithoutResponse has a 512-byte limit, but some
+// Android devices reject writes > 20 bytes on older characteristics.
+// We try writeValue (with response) first, fall back to writeValueWithoutResponse.
+async function writeCharSafe(char, data) {
+  if (!char) { bleLog('writeCharSafe: char is null', 'error'); return false; }
+  var encoder = new TextEncoder();
+  var bytes = encoder.encode(data);
+  bleLog('Writing ' + bytes.length + ' bytes to ' + char.uuid.slice(-4));
+  try {
+    // Try writeValue (with response) — most reliable
+    await char.writeValue(bytes);
+    bleLog('writeValue OK (' + bytes.length + ' bytes)', 'success');
+    return true;
+  } catch(e1) {
+    bleLog('writeValue failed: ' + e1.message + ' — trying writeValueWithoutResponse', 'warn');
+    try {
+      await char.writeValueWithoutResponse(bytes);
+      bleLog('writeValueWithoutResponse OK', 'success');
+      return true;
+    } catch(e2) {
+      bleLog('Both write methods failed: ' + e2.message, 'error');
+      return false;
+    }
+  }
+}
+
 // Push project data to MC via BLE characteristics.
-// This is called after connect + every 5 seconds to keep MC in sync.
 async function pushProjectDataToMC() {
   if (!isConnected) return;
+  bleLog('Fetching project data from admin API...');
   var data = await fetchProjectDataFromAdmin();
-  if (!data || !data.database || data.database.length === 0) {
-    console.warn('[BLE] No project data from admin API — MC will show empty. Make sure admin has a project open with students loaded.');
-    // Retry after 2 seconds — admin dashboard might not have pushed yet
+  if (!data) {
+    bleLog('API returned no data', 'error');
     setTimeout(pushProjectDataToMC, 2000);
     return;
   }
-  console.log('[BLE] Got project data:', data.projectName, '-', data.database.length, 'students');
-  var encoder = new TextEncoder();
+  if (!data.database || data.database.length === 0) {
+    bleLog('API returned empty database (0 students). Admin belum load Excel?', 'warn');
+    setTimeout(pushProjectDataToMC, 2000);
+    return;
+  }
+  bleLog('Got project: ' + data.projectName + ' — ' + data.database.length + ' students', 'success');
+
   try {
-    // 1. Project info
+    // 1. Project info (small, ~60 bytes)
     if (projectInfoChar) {
       var projectInfo = JSON.stringify({
         projectName: data.projectName || 'Saatiril',
         mode: data.mode || 'single',
         ratio: data.ratio || '3:4'
       });
-      await projectInfoChar.writeValue(encoder.encode(projectInfo));
-      console.log('[BLE] Pushed project info:', projectInfo);
+      await writeCharSafe(projectInfoChar, projectInfo);
+    } else {
+      bleLog('projectInfoChar is null — cannot push project info', 'error');
     }
-    // 2. Queue data
+    // 2. Queue data (can be large — up to 500+ bytes with 10 students)
     if (queueDataChar) {
       var db = data.database || [];
       var pending = db.filter(function(s){ return s.status === 'pending'; }).length;
@@ -274,10 +320,11 @@ async function pushProjectDataToMC() {
         active: active ? active.nama : null,
         students: db.slice(0, 10).map(function(s){ return { nim: s.nim, nama: s.nama, status: s.status }; })
       });
-      await queueDataChar.writeValue(encoder.encode(queueData));
-      console.log('[BLE] Pushed queue data: total=' + db.length + ' pending=' + pending + ' done=' + done);
+      await writeCharSafe(queueDataChar, queueData);
+    } else {
+      bleLog('queueDataChar is null — cannot push queue data', 'error');
     }
-    // 3. Next student
+    // 3. Next student (small, ~80 bytes)
     if (nextStudentChar) {
       var nextPending = (data.database || []).find(function(s){ return s.status === 'pending'; });
       var activeStd = (data.database || []).find(function(s){ return s.status && s.status.indexOf('active') === 0; });
@@ -285,11 +332,13 @@ async function pushProjectDataToMC() {
       var nextStudent = target ? JSON.stringify({
         id: target.id, nim: target.nim, nama: target.nama, status: target.status
       }) : JSON.stringify({});
-      await nextStudentChar.writeValue(encoder.encode(nextStudent));
-      console.log('[BLE] Pushed next student:', target ? target.nama : '(none)');
+      await writeCharSafe(nextStudentChar, nextStudent);
+    } else {
+      bleLog('nextStudentChar is null — cannot push next student', 'error');
     }
+    bleLog('Push complete. MC should now show project data.', 'success');
   } catch(e) {
-    console.error('[BLE] pushProjectDataToMC error:', e.message);
+    bleLog('pushProjectDataToMC error: ' + e.message, 'error');
   }
 }
 
