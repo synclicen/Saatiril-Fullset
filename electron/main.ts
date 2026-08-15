@@ -452,93 +452,17 @@ function startStaticServer(outDir: string): Promise<void> {
 
       // ── Admin BLE Client web page — Electron connects to MC-Only APK ──
       // Admin opens this → scans for MC HP (BLE Server) → connects
-      if (urlPath === '/admin-ble') {
-        const adminBleHtmlPath = getResourcePath('public/admin-ble.html')
-        if (fs.existsSync(adminBleHtmlPath)) {
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-          fs.createReadStream(adminBleHtmlPath).pipe(res)
-          return
-        }
-      }
 
       // ── API: BLE trigger from MC (via /admin-ble page) ──────────────
       // The admin-ble.html page forwards MC's PANGGIL/NEXT/RESET triggers
       // to this endpoint. We emit a 'BLE_TRIGGER' lan-message that the
       // admin dashboard handles by looking up the next student and
       // emitting a proper MC_CALL with the correct {student, channel} format.
-      if (urlPath === '/api/ble-trigger' && req.method === 'POST') {
-        let body = ''
-        req.on('data', (chunk: Buffer) => { body += chunk.toString() })
-        req.on('end', () => {
-          try {
-            const data = JSON.parse(body)
-            console.log(`[SAATIRIL BLE] Trigger from MC: ${data.action} ${data.studentId || ''}`)
-            // Emit BLE_TRIGGER event — admin dashboard handles this
-            if (socketServer) {
-              socketServer.emit('lan-message', {
-                event: 'BLE_TRIGGER',
-                data: { action: data.action, studentId: data.studentId }
-              })
-            }
-            res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ ok: true }))
-          } catch (err: any) {
-            res.writeHead(400, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ error: err.message }))
-          }
-        })
-        return
-      }
 
       // ── API: BLE project data (for /admin-ble page) ────────────────
       // GET: returns current project data so admin-ble.html can push it to MC
       // POST: admin-dashboard.tsx pushes project data here (more reliable than
       //       relying on SYNC_DB capture, which only fires for socket relay)
-      if (urlPath === '/api/ble-project-data' && (req.method === 'GET' || req.method === 'POST')) {
-        // POST: receive project data from admin dashboard
-        if (req.method === 'POST') {
-          let body = ''
-          req.on('data', (chunk: Buffer) => { body += chunk.toString() })
-          req.on('end', () => {
-            try {
-              const data = JSON.parse(body)
-              ;(global as any).__saatirilCurrentProject = data
-              console.log(`[SAATIRIL BLE] Project data received via POST: ${data?.name || 'unknown'} (${(data?.database || []).length} students)`)
-              res.writeHead(200, { 'Content-Type': 'application/json' })
-              res.end(JSON.stringify({ ok: true }))
-            } catch (err: any) {
-              res.writeHead(400, { 'Content-Type': 'application/json' })
-              res.end(JSON.stringify({ error: err.message }))
-            }
-          })
-          return
-        }
-        // GET: return current project data to admin-ble.html
-        try {
-          const projectData = (global as any).__saatirilCurrentProject || null
-          if (projectData) {
-            res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({
-              projectName: projectData.name || 'Saatiril',
-              mode: projectData.config?.mode || projectData.mode || 'single',
-              ratio: projectData.config?.ratio || projectData.ratio || '3:4',
-              database: projectData.database || []
-            }))
-          } else {
-            res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({
-              projectName: 'Saatiril',
-              mode: 'single',
-              ratio: '3:4',
-              database: []
-            }))
-          }
-        } catch (err: any) {
-          res.writeHead(500, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ error: err.message }))
-        }
-        return
-      }
 
       // ── API route: /api/apk-download ──────────────────────────────
       // Proxies APK/Portable downloads from GitHub Releases so LAN
