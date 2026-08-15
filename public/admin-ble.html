@@ -162,6 +162,9 @@ async function connectMC() {
     // Auto-push every 2 seconds to keep MC in sync
     if (dataSyncInterval) clearInterval(dataSyncInterval);
     dataSyncInterval = setInterval(pushProjectDataToMC, 2000);
+
+    // Start polling status characteristic for triggers (fallback for notifications)
+    startPolling();
   } catch(e) {
     var msg = e.message || '';
     // If user cancelled the picker, don't show an error
@@ -220,6 +223,9 @@ async function connectMCAllDevices() {
     await pushProjectDataToMC();
     if (dataSyncInterval) clearInterval(dataSyncInterval);
     dataSyncInterval = setInterval(pushProjectDataToMC, 2000);
+
+    // Start polling status characteristic for triggers
+    startPolling();
   } catch(e) {
     var msg = e.message || '';
     if (msg.indexOf('cancelled') >= 0 || msg.indexOf('chooser') >= 0 || msg.indexOf('picker') >= 0) {
@@ -347,35 +353,82 @@ function showTroubleshooting() {
   if (tb) tb.style.display = 'block';
 }
 
-function onStatusChanged(event) {
-  var value = new TextDecoder().decode(event.target.value);
+var lastTriggerValue = '';
+
+function handleTriggerData(value) {
   try {
     var data = JSON.parse(value);
     var action = data.action || '';
     var studentId = data.studentId || '';
+
+    // Skip if no action (this is a status update, not a trigger)
+    if (!action) return;
+
+    // Dedup: skip if we already processed this exact value
+    if (value === lastTriggerValue) return;
+    lastTriggerValue = value;
+
+    bleLog('Trigger received: ' + action + (studentId ? ' (' + studentId + ')' : ''), 'success');
+
     var log = document.getElementById('trigger-log');
     if (log) {
       var time = new Date().toLocaleTimeString();
       log.innerHTML += '<br>[' + time + '] ' + action + (studentId ? ' (' + studentId + ')' : '');
     }
 
-    // Forward trigger to admin via HTTP (Electron app handles it)
-    // The Electron app listens for this and calls callStudent()
+    // Forward trigger to Electron admin via HTTP
     if (action === 'PANGGIL' || action === 'NEXT' || action === 'RESET') {
+      bleLog('Forwarding trigger to Electron via /api/ble-trigger...', 'warn');
       fetch('/api/ble-trigger', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: action, studentId: studentId })
+      }).then(function(resp) {
+        bleLog('Trigger forwarded OK (HTTP ' + resp.status + ')', 'success');
       }).catch(function(e) {
-        console.log('Trigger forward failed:', e);
+        bleLog('Trigger forward FAILED: ' + e.message, 'error');
       });
     }
-  } catch(e) {}
+  } catch(e) {
+    // Not JSON or parse error — ignore
+  }
+}
+
+function onStatusChanged(event) {
+  var value = new TextDecoder().decode(event.target.value);
+  handleTriggerData(value);
+}
+
+// CRITICAL FALLBACK: Poll the status characteristic every 1 second.
+// BLE notifications are unreliable on many Android devices — the
+// characteristicvaluechanged event may not fire even though MC sent
+// the notification. Polling guarantees we pick up the trigger.
+var pollInterval = null;
+async function pollStatusCharacteristic() {
+  if (!isConnected || !statusChar) return;
+  try {
+    var value = await statusChar.readValue();
+    var text = new TextDecoder().decode(value);
+    handleTriggerData(text);
+  } catch(e) {
+    // readValue can fail if another operation is in progress — ignore
+  }
+}
+
+function startPolling() {
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(pollStatusCharacteristic, 1000);
+  bleLog('Started polling status characteristic every 1s (fallback for notifications)', 'warn');
+}
+
+function stopPolling() {
+  if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
 }
 
 function onDisconnected() {
   isConnected = false;
   if (dataSyncInterval) { clearInterval(dataSyncInterval); dataSyncInterval = null; }
+  stopPolling();
   setStatus('', 'MC terputus. Mencoba reconnect...');
   setTimeout(connectMC, 3000);
 }
