@@ -64,6 +64,7 @@ body { background:#1a0b2e; color:#fff; font-family:-apple-system,BlinkMacSystemF
     </div>
   </div>
 </div>
+<script src="/js/socket.io.min.js"></script>
 <script>
 var SERVICE_UUID = 'e7810a71-73ae-499d-8c15-fa8f6072e919';
 var CHAR_NEXT_STUDENT = 'e7810a71-73ae-499d-8c15-fa8f6072e91a';
@@ -81,6 +82,38 @@ var queueDataChar = null;
 var nextStudentChar = null;
 var isConnected = false;
 var dataSyncInterval = null;
+var saSocket = null;
+var saSocketConnected = false;
+
+function initSocket() {
+  try {
+    var socketPort = new URLSearchParams(window.location.search).get('socketPort') || '3003';
+    var socketUrl = 'http://' + window.location.hostname + ':' + socketPort;
+    saSocket = io(socketUrl, {
+      path: '/',
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      timeout: 5000
+    });
+    saSocket.on('connect', function() {
+      saSocketConnected = true;
+      saSocket.emit('identify', { role: 'admin-ble', channel: 0 });
+      bleLog('Socket.io connected to Electron server', 'success');
+    });
+    saSocket.on('disconnect', function() {
+      saSocketConnected = false;
+      bleLog('Socket.io disconnected', 'warn');
+    });
+    saSocket.on('connect_error', function(e) {
+      bleLog('Socket.io connect error: ' + e.message, 'error');
+    });
+  } catch(e) {
+    bleLog('Socket.io init failed: ' + e.message, 'error');
+  }
+}
+initSocket();
 
 function setStatus(state, text) {
   document.getElementById('status-dot').className = 'dot ' + state;
@@ -376,17 +409,24 @@ function handleTriggerData(value) {
       log.innerHTML += '<br>[' + time + '] ' + action + (studentId ? ' (' + studentId + ')' : '');
     }
 
-    // Forward trigger to Electron admin via HTTP
+    // Forward trigger via BOTH socket.io + HTTP for maximum reliability
     if (action === 'PANGGIL' || action === 'NEXT' || action === 'RESET') {
-      bleLog('Forwarding trigger to Electron via /api/ble-trigger...', 'warn');
+      if (saSocketConnected && saSocket) {
+        saSocket.emit('lan-message', {
+          event: 'BLE_TRIGGER',
+          data: { action: action, studentId: studentId }
+        });
+        bleLog('Trigger forwarded via Socket.io: ' + action, 'success');
+      }
+      bleLog('Also forwarding via HTTP...', 'warn');
       fetch('/api/ble-trigger', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: action, studentId: studentId })
       }).then(function(resp) {
-        bleLog('Trigger forwarded OK (HTTP ' + resp.status + ')', 'success');
+        bleLog('HTTP trigger OK (' + resp.status + ')', 'success');
       }).catch(function(e) {
-        bleLog('Trigger forward FAILED: ' + e.message, 'error');
+        bleLog('HTTP trigger failed: ' + e.message, 'error');
       });
     }
   } catch(e) {
