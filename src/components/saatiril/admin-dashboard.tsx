@@ -21,8 +21,6 @@ import {
   CloudUpload,
   Folder,
   Link2Off,
-  Bluetooth,
-  Loader2,
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import * as XLSX from 'xlsx'
@@ -396,289 +394,14 @@ export default function AdminDashboard() {
   const [mcApkInfo, setMcApkInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string } | null>(null)
   const [portableInfo, setPortableInfo] = useState<{ available: boolean; sizeMB?: string; assetName?: string; lastModified?: string; downloadUrl?: string; error?: string } | null>(null)
 
-  // ── Bluetooth MC Remote state ─────────────────────────────────────
-  // Web Bluetooth connection to MC HP (MC = BLE Server, Admin = BLE Client)
-  const [bleState, setBleState] = useState<'disconnected' | 'scanning' | 'connected' | 'error'>('disconnected')
-  const [bleError, setBleError] = useState<string>('')
-  const [bleTriggerLog, setBleTriggerLog] = useState<string[]>([])
-  const bleDeviceRef = useRef<any>(null)
-  const bleServerRef = useRef<any>(null)
-  const bleStatusCharRef = useRef<any>(null)
-  const bleTriggerCharRef = useRef<any>(null)
   const bleProjectInfoCharRef = useRef<any>(null)
   const bleQueueDataCharRef = useRef<any>(null)
   const bleNextStudentCharRef = useRef<any>(null)
 
-  // Web Bluetooth MC connection — connects to MC HP in BLE SERVER mode
-  const connectMCBluetooth = useCallback(async () => {
-    const SERVICE_UUID = 'e7810a71-73ae-499d-8c15-fa8f6072e919'
-    const CHAR_STATUS = 'e7810a71-73ae-499d-8c15-fa8f6072e91c'
-    const CHAR_TRIGGER = 'e7810a71-73ae-499d-8c15-fa8f6072e91b'
-
-    // CRITICAL: Electron does NOT support Web Bluetooth API.
-    // Even if navigator.bluetooth exists in newer Electron/Chromium versions,
-    // it is NON-FUNCTIONAL — there's no device picker UI in Electron.
-    // Web Bluetooth requires Chrome browser's native device picker dialog.
-    // Solution: if running in Electron, ALWAYS open /admin-ble in the user's
-    // default browser (Chrome/Edge) which DOES work.
-    // Detection: check saatirilAPI.isElectron (preload) OR userAgent contains 'Electron'
-    const isElectron = (typeof window !== 'undefined' && (window as any).saatirilAPI?.isElectron) ||
-                       (typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('electron'))
-    const hasWebBluetooth = typeof navigator !== 'undefined' && !!navigator.bluetooth
-
-    // In Electron, ALWAYS open browser — even if navigator.bluetooth exists,
-    // it doesn't work (no device picker UI in Electron BrowserWindow).
-    if (isElectron) {
-      // Electron without Web Bluetooth → open /admin-ble in default browser
-      setBleState('scanning')
-      setBleError('Membuka browser untuk koneksi Bluetooth...')
-      const url = `${window.location.origin}/admin-ble`
-      const api = (window as any).saatirilAPI
-
-      // Try multiple methods to open the browser:
-      // 1. IPC via preload (shell.openExternal) — best, opens default browser
-      // 2. window.open() — in Electron, setWindowOpenHandler redirects to shell.openExternal
-      //    (window.open returns null but browser DOES open)
-      // 3. Copy URL to clipboard + show manual instructions
-      let opened = false
-
-      // Method 1: IPC via preload
-      if (api?.openInBrowser) {
-        try {
-          opened = await api.openInBrowser(url)
-        } catch (e) {
-          console.error('[BLE] openInBrowser failed:', e)
-        }
-      }
-
-      // Method 2: window.open() — Electron's setWindowOpenHandler redirects to shell.openExternal
-      // window.open returns null (action: 'deny') but the system browser opens.
-      // We can't detect success/failure from the return value, so we assume success.
-      if (!opened) {
-        try {
-          window.open(url, '_blank')
-          // Give it a moment, then assume success (Electron opens async)
-          opened = true
-        } catch (e) {
-          console.error('[BLE] window.open failed:', e)
-        }
-      }
-
-      if (opened) {
-        setBleState('disconnected')
-        setBleError(`Browser terbuka. Klik CONNECT di halaman admin-ble, lalu pilih MC HP. URL: ${url}`)
-      } else {
-        // Method 3: copy to clipboard + show manual URL
-        try {
-          await navigator.clipboard.writeText(url)
-          setBleState('disconnected')
-          setBleError(`Tidak bisa buka browser otomatis. URL di-copy ke clipboard — paste di Chrome/Edge: ${url}`)
-        } catch {
-          setBleState('error')
-          setBleError(`Buka manual di Chrome/Edge: ${url}`)
-        }
-      }
-      return
-    }
-
-    if (!hasWebBluetooth) {
-      setBleState('error')
-      setBleError('Browser tidak mendukung Web Bluetooth. Gunakan Chrome atau Edge.')
-      return
-    }
-
-    try {
-      setBleState('scanning')
-      setBleError('')
-
-      const device = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [SERVICE_UUID] }],
-        optionalServices: [SERVICE_UUID],
-      })
-
-      bleDeviceRef.current = device
-      device.addEventListener('gattserverdisconnected', () => {
-        setBleState('disconnected')
-        setBleError('MC terputus. Klik Connect untuk mencoba lagi.')
-      })
-
-      const server = await device.gatt.connect()
-      bleServerRef.current = server
-      const service = await server.getPrimaryService(SERVICE_UUID)
-
-      bleStatusCharRef.current = await service.getCharacteristic(CHAR_STATUS)
-      bleTriggerCharRef.current = await service.getCharacteristic(CHAR_TRIGGER)
-      try { bleProjectInfoCharRef.current = await service.getCharacteristic('e7810a71-73ae-499d-8c15-fa8f6072e91e') } catch (_e) {}
-      try { bleQueueDataCharRef.current = await service.getCharacteristic('e7810a71-73ae-499d-8c15-fa8f6072e91d') } catch (_e) {}
-      try { bleNextStudentCharRef.current = await service.getCharacteristic('e7810a71-73ae-499d-8c15-fa8f6072e91a') } catch (_e) {}
-
-      // Subscribe to status notifications — MC sends PANGGIL/NEXT/RESET via this
-      await bleStatusCharRef.current.startNotifications()
-      bleStatusCharRef.current.addEventListener('characteristicvaluechanged', (event: any) => {
-        const value = new TextDecoder().decode(event.target.value)
-        try {
-          const data = JSON.parse(value)
-          const action = data.action || ''
-          const studentId = data.studentId || ''
-          const time = new Date().toLocaleTimeString()
-          setBleTriggerLog((prev) => [`[${time}] ${action}${studentId ? ' (' + studentId + ')' : ''}`, ...prev].slice(0, 20))
-
-          // Emit BLE_TRIGGER directly — admin dashboard handles this (no HTTP round-trip)
-          if (action === 'PANGGIL' || action === 'NEXT' || action === 'RESET') {
-            emitLocal('BLE_TRIGGER', { action, studentId })
-          }
-        } catch (_e) { /* ignore parse errors */ }
-      })
-
-      setBleState('connected')
-
-      // CRITICAL: Push project data to MC so it can display project name + queue + next student.
-      // Without this, MC shows "Tidak ada mahasiswa" even though it's connected.
-      // The Android AdminViewModel does this via pushBLEQueueData() + pushBLENextStudent() +
-      // updateProjectInfo() — we replicate that here for the Electron admin.
-      try {
-        const encoder = new TextEncoder()
-        const proj = useSaatirilStore.getState().currentProject
-        if (proj) {
-          // 1. Project info
-          if (bleProjectInfoCharRef.current) {
-            const projectInfo = JSON.stringify({
-              projectName: proj.name || 'Saatiril',
-              mode: proj.config?.mode || 'single',
-              ratio: proj.config?.ratio || '3:4'
-            })
-            await bleProjectInfoCharRef.current.writeValue(encoder.encode(projectInfo))
-            console.log('[BLE] Pushed project info to MC:', projectInfo)
-          }
-          // 2. Queue data
-          if (bleQueueDataCharRef.current) {
-            const db = proj.database || []
-            const pending = db.filter((s: any) => s.status === 'pending').length
-            const done = db.filter((s: any) => s.status === 'done').length
-            const active = db.find((s: any) => s.status && s.status.startsWith('active'))
-            const queueData = JSON.stringify({
-              total: db.length,
-              pending,
-              done,
-              active: active ? active.nama : null,
-              students: db.slice(0, 10).map((s: any) => ({ nim: s.nim, nama: s.nama, status: s.status }))
-            })
-            await bleQueueDataCharRef.current.writeValue(encoder.encode(queueData))
-            console.log('[BLE] Pushed queue data to MC:', queueData)
-          }
-          // 3. Next student
-          if (bleNextStudentCharRef.current) {
-            const nextPending = (proj.database || []).find((s: any) => s.status === 'pending')
-            const nextStudent = nextPending ? JSON.stringify({
-              id: nextPending.id,
-              nim: nextPending.nim,
-              nama: nextPending.nama,
-              status: nextPending.status
-            }) : JSON.stringify({})
-            await bleNextStudentCharRef.current.writeValue(encoder.encode(nextStudent))
-            console.log('[BLE] Pushed next student to MC:', nextStudent)
-          }
-        } else {
-          console.warn('[BLE] No current project — cannot push data to MC')
-        }
-      } catch (pushErr: any) {
-        console.error('[BLE] Failed to push project data to MC:', pushErr?.message)
-      }
-    } catch (e: any) {
-      const msg = e?.message || ''
-      if (msg.toLowerCase().includes('cancel') || msg.toLowerCase().includes('chooser') || msg.toLowerCase().includes('picker')) {
-        setBleState('disconnected')
-        setBleError('Pencarian dibatalkan.')
-      } else if (msg.toLowerCase().includes('no device') || msg.toLowerCase().includes('notfound')) {
-        setBleState('error')
-        setBleError('Tidak menemukan MC. Pastikan MC HP di mode BLE SERVER + Bluetooth aktif + GPS aktif.')
-      } else {
-        setBleState('error')
-        setBleError('Gagal: ' + msg)
-      }
-    }
-  }, [])
-
-  const disconnectMCBluetooth = useCallback(() => {
-    try {
-      bleServerRef.current?.disconnect?.()
-    } catch (_e) { /* ignore */ }
-    bleDeviceRef.current = null
-    bleServerRef.current = null
-    bleStatusCharRef.current = null
-    bleTriggerCharRef.current = null
-    bleProjectInfoCharRef.current = null
-    bleQueueDataCharRef.current = null
-    bleNextStudentCharRef.current = null
-    setBleState('disconnected')
-  }, [])
-
   // Push project data to MC via BLE whenever the project changes (if connected).
   // This keeps the MC's display in sync: when admin calls a student or marks
   // one as done, the MC sees the updated queue + next student.
-  // CRITICAL: We ALWAYS push to the HTTP API (even if BLE not connected) so
-  // admin-ble.html can fetch it when it connects later.
-  const pushProjectDataToMC = useCallback(async () => {
-    const proj = useSaatirilStore.getState().currentProject
-    if (!proj) return
-    try {
-      // Always push project data to the HTTP API endpoint so that
-      // admin-ble.html (running in a separate browser tab) can fetch it.
-      try {
-        await fetch('/api/ble-project-data', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(proj)
-        })
-        console.log('[BLE] Pushed project data to API:', proj.name, '-', (proj.database || []).length, 'students')
-      } catch (apiErr) {
-        console.warn('[BLE] Failed to push to API:', apiErr?.message)
-      }
 
-      // Only push via BLE if connected
-      if (bleState !== 'connected') return
-
-      const encoder = new TextEncoder()
-      // Queue data
-      if (bleQueueDataCharRef.current) {
-        const db = proj.database || []
-        const pending = db.filter((s: any) => s.status === 'pending').length
-        const done = db.filter((s: any) => s.status === 'done').length
-        const active = db.find((s: any) => s.status && s.status.startsWith('active'))
-        const queueData = JSON.stringify({
-          total: db.length,
-          pending,
-          done,
-          active: active ? active.nama : null,
-          students: db.slice(0, 10).map((s: any) => ({ nim: s.nim, nama: s.nama, status: s.status }))
-        })
-        await bleQueueDataCharRef.current.writeValue(encoder.encode(queueData))
-      }
-      // Next student
-      if (bleNextStudentCharRef.current) {
-        const nextPending = (proj.database || []).find((s: any) => s.status === 'pending')
-        const active = (proj.database || []).find((s: any) => s.status && s.status.startsWith('active'))
-        const target = active || nextPending
-        const nextStudent = target ? JSON.stringify({
-          id: target.id,
-          nim: target.nim,
-          nama: target.nama,
-          status: target.status
-        }) : JSON.stringify({})
-        await bleNextStudentCharRef.current.writeValue(encoder.encode(nextStudent))
-      }
-      console.log('[BLE] Pushed updated project data to MC')
-    } catch (err: any) {
-      console.error('[BLE] Failed to push updated data to MC:', err?.message)
-    }
-  }, [bleState])
-
-  // Auto-push whenever project changes — always push to API, + BLE if connected
-  useEffect(() => {
-    if (currentProject) {
-      pushProjectDataToMC()
-    }
-  }, [currentProject, pushProjectDataToMC])
 
   // ── Google Drive / Cloud backup state ──────────────────────────────
   const [backupFolder, setBackupFolder] = useState<string | null>(null)
@@ -1361,7 +1084,7 @@ export default function AdminDashboard() {
             <ul className="space-y-0.5 pl-2">
               <li className="text-xs text-[#c4b5fd]">• Admin HP: buat proyek → BLE server otomatis aktif</li>
               <li className="text-xs text-[#c4b5fd]">• MC HP: install saatiril-mc.apk → pilih 'BLE REMOTE' → scan → connect</li>
-              <li className="text-xs text-[#c4b5fd]">• MC tekan PANGGIL → Bluetooth trigger → Admin foto</li>
+              <li className="text-xs text-[#c4b5fd]">• MC tekan PANGGIL → WiFi trigger → Admin foto</li>
               <li className="text-xs text-[#c4b5fd]">• 100% immune WiFi — cocok untuk 3000+ orang</li>
             </ul>
           </div>
@@ -1691,7 +1414,7 @@ export default function AdminDashboard() {
             {/* MC-Only APK download */}
             <Separator className="bg-[#533485]/40" />
             <div className="mb-1 text-xs font-semibold uppercase tracking-wider" style={{ color: '#8b5cf6' }}>
-              <Bluetooth className="size-3 inline mr-1" />APK Saatiril MC (BLE Remote)
+              APK Saatiril MC (BLE Remote)
             </div>
             {mcApkInfo?.available ? (
               <>
@@ -2156,165 +1879,6 @@ export default function AdminDashboard() {
   )
   }
 
-  // ── Render: Bluetooth MC Remote Panel ──────────────────────────────
-  const renderBluetoothPanel = () => {
-    // Detect Electron: preload API OR userAgent contains 'Electron'
-    const isElectron = (typeof window !== 'undefined' && (window as any).saatirilAPI?.isElectron) ||
-                       (typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('electron'))
-    const hasWebBluetooth = typeof navigator !== 'undefined' && !!navigator.bluetooth
-    // In browser (non-Electron): need navigator.bluetooth
-    // In Electron: always supported (we open external browser)
-    const bleSupported = isElectron || hasWebBluetooth
-    const statusColor = bleState === 'connected' ? '#4ade80' : bleState === 'scanning' ? '#fbbf24' : bleState === 'error' ? '#ef4444' : '#c4b5fd'
-    const statusText = bleState === 'connected' ? 'MC Terhubung' : bleState === 'scanning' ? 'Membuka browser...' : bleState === 'error' ? 'Gagal' : 'Belum terhubung'
-
-    return (
-      <Card className="border-[#533485]/40 bg-[#2a164a]/60">
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-sm" style={{ color: '#d4af37' }}>
-            <Bluetooth className="size-4" style={{ color: '#8b5cf6' }} />
-            Koneksi MC via Bluetooth
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {/* Status indicator */}
-          <div className="flex items-center gap-2 rounded-md border border-[#533485]/40 bg-[#1a0b2e]/60 px-3 py-2">
-            <div className="size-2.5 rounded-full" style={{ backgroundColor: statusColor }} />
-            <span className="text-xs font-semibold" style={{ color: statusColor }}>{statusText}</span>
-            {bleState === 'connected' && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="ml-auto h-6 border-red-400/30 text-red-300 text-[10px]"
-                onClick={disconnectMCBluetooth}
-              >
-                Disconnect
-              </Button>
-            )}
-          </div>
-
-          {/* Error message */}
-          {bleState === 'error' && bleError && (
-            <div className="rounded-md border border-red-400/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">
-              {bleError}
-            </div>
-          )}
-
-          {/* Step-by-step instructions */}
-          {bleState === 'disconnected' && (
-            <div className="space-y-1.5 text-[11px]" style={{ color: '#c4b5fd' }}>
-              <div className="font-semibold text-[10px] uppercase tracking-wider" style={{ color: '#d4af37' }}>
-                Langkah-langkah:
-              </div>
-              <div className="flex gap-1.5">
-                <span className="shrink-0 font-bold" style={{ color: '#8b5cf6' }}>1.</span>
-                <span>Di MC HP: buka app Saatiril MC → pilih mode <b>BLE SERVER</b></span>
-              </div>
-              <div className="flex gap-1.5">
-                <span className="shrink-0 font-bold" style={{ color: '#8b5cf6' }}>2.</span>
-                <span>MC HP: aktifkan <b>Bluetooth</b> + <b>GPS/Lokasi</b></span>
-              </div>
-              <div className="flex gap-1.5">
-                <span className="shrink-0 font-bold" style={{ color: '#8b5cf6' }}>3.</span>
-                <span>MC HP: layar menyala (jangan sleep)</span>
-              </div>
-              <div className="flex gap-1.5">
-                <span className="shrink-0 font-bold" style={{ color: '#8b5cf6' }}>4.</span>
-                <span>Laptop: aktifkan Bluetooth</span>
-              </div>
-              <div className="flex gap-1.5">
-                <span className="shrink-0 font-bold" style={{ color: '#8b5cf6' }}>5.</span>
-                <span>Klik <b>CONNECT MC VIA BLUETOOTH</b> di bawah</span>
-              </div>
-              <div className="flex gap-1.5">
-                <span className="shrink-0 font-bold" style={{ color: '#8b5cf6' }}>6.</span>
-                <span>Pilih MC HP dari daftar di dialog browser</span>
-              </div>
-            </div>
-          )}
-
-          {/* Connect button */}
-          {!bleSupported ? (
-            <div className="rounded-md border border-red-400/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">
-              Browser tidak mendukung Web Bluetooth. Gunakan Chrome atau Edge.
-            </div>
-          ) : bleState !== 'connected' ? (
-            <Button
-              className="w-full gap-2 bg-[#8b5cf6] text-white hover:bg-[#7c3aed]"
-              disabled={bleState === 'scanning'}
-              onClick={connectMCBluetooth}
-            >
-              {bleState === 'scanning' ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  Membuka browser...
-                </>
-              ) : (
-                <>
-                  <Bluetooth className="size-4" />
-                  {isElectron ? 'BUKA BROWSER UNTUK BLUETOOTH' : 'CONNECT MC VIA BLUETOOTH'}
-                </>
-              )}
-            </Button>
-          ) : null}
-
-          {/* Electron info note */}
-          {isElectron && bleState === 'disconnected' && (
-            <div className="space-y-2">
-              <div className="rounded-md border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-[10px]" style={{ color: '#c4b5fd' }}>
-                <div className="font-semibold mb-1" style={{ color: '#06b6d4' }}>ℹ️ Info:</div>
-                App Electron tidak support Web Bluetooth langsung. Klik tombol di atas untuk buka halaman koneksi di Chrome/Edge.
-              </div>
-              <div className="rounded-md border border-[#533485]/40 bg-[#1a0b2e]/60 px-3 py-2 text-[10px]">
-                <div className="font-semibold mb-1" style={{ color: GOLD }}>Jika browser tidak terbuka otomatis:</div>
-                <div className="break-all font-mono" style={{ color: '#c4b5fd' }}>
-                  {typeof window !== 'undefined' ? `${window.location.origin}/admin-ble` : 'http://localhost:3000/admin-ble'}
-                </div>
-                <div className="mt-1" style={{ color: '#c4b5fd99' }}>
-                  Copy URL di atas → paste di Chrome/Edge → klik CONNECT MC VIA BLUETOOTH
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Trigger log when connected */}
-          {bleState === 'connected' && (
-            <div className="space-y-1">
-              <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: '#c4b5fd' }}>
-                Log Trigger MC:
-              </div>
-              <ScrollArea className="max-h-32 rounded-md border border-[#533485]/40 bg-[#1a0b2e]/60 p-2">
-                {bleTriggerLog.length === 0 ? (
-                  <p className="text-[11px] italic" style={{ color: '#c4b5fd99' }}>
-                    Menunggu trigger dari MC...
-                  </p>
-                ) : (
-                  <div className="space-y-0.5">
-                    {bleTriggerLog.map((log, i) => (
-                      <div key={i} className="text-[10px] font-mono" style={{ color: '#4ade80' }}>
-                        {log}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </ScrollArea>
-            </div>
-          )}
-
-          {/* Troubleshooting tips */}
-          {bleState === 'error' && (
-            <div className="rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[10px]" style={{ color: '#c4b5fd' }}>
-              <div className="font-semibold mb-1" style={{ color: '#fbbf24' }}>Tips:</div>
-              • Pastikan MC HP install APK v2.4.5+ (fix BLE advertising)<br />
-              • Coba klik Connect 2-3 kali — kadang perlu retry<br />
-              • Dekatkan MC HP ke laptop (dalam 2 meter)<br />
-              • Alternatif: gunakan mode <b>WIFI / LAN</b> di MC (paling stabil)
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    )
-  }
 
   // ── Render: Network Tips ──────────────────────────────────────────
   const renderNetworkTips = () => {
@@ -2586,7 +2150,6 @@ export default function AdminDashboard() {
           {renderDaftarPeserta()}
           {renderGoogleDriveBackup()}
           {renderLanAccess()}
-          {renderBluetoothPanel()}
           {renderNetworkTips()}
         </div>
 
