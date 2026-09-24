@@ -593,3 +593,52 @@ Stage Summary:
   - Server-initiated disconnect now auto-reconnects after 2s
   - Larger event queue (100 vs 50) and more retries (5 vs 3) for reliability
   - RECONNECTING state available for UI feedback
+
+---
+Task ID: 1
+Agent: Explore
+Task: Explore admin project structure for Google Drive backup toggle
+
+Work Log:
+- Read /home/z/my-project/worklog.md (595 lines, prior tasks 1-15 + 3 socket-resilience entries) — no prior gdrive work logged; the discarded gdrive commit pre-dates the worklog.
+- Located the admin project dashboard: src/components/saatiril/admin-dashboard.tsx (1842 lines). It is mounted by src/components/saatiril/main-app.tsx line 915 when myRole === 'admin'. Route = / (root) via src/app/page.tsx → MainApp → AdminDashboard. NOTE: src/app/admin/page.tsx is a SEPARATE license-code generator page (not the project dashboard).
+- Traced photo capture flow end-to-end:
+  • Capture trigger: src/components/saatiril/operator-panel.tsx (operator side) — camera capture, builds filename via buildFilename / buildPhotoshootFilename, emits socket event PHOTOS_SAVED with base64 photos + filename + version.
+  • Admin receives via socket listener handlePhotosSaved in admin-dashboard.tsx (lines 153-208). Calls window.saatirilAPI.savePhoto({base64Data, filename, targetFolder}) where targetFolder = proj.config.targetFolder (chosen by admin at project creation in project-setup.tsx, default 'C:\\SAATIRIL_System_Out\\<projectName>').
+  • IPC channel: 'save-photo' in electron/main.ts:780 — fs.mkdirSync(targetFolder, {recursive:true}) + fs.writeFileSync(filePath, buffer). Returns absolute file path.
+  • Browser fallback (no Electron): src/lib/browser-photo-save.ts uses File System Access API + IndexedDB-persisted directory handle.
+- Enumerated ALL existing ipcMain.handle registrations in electron/main.ts:757-862 (registerIpcHandlers function):
+  • select-folder (main.ts:760)
+  • create-folder (main.ts:770)
+  • save-photo (main.ts:780)
+  • get-lan-info (main.ts:803)
+  • get-license-status (main.ts:814)
+  • activate-license (main.ts:819)
+  • get-machine-id (main.ts:824)
+  • generate-license-code (main.ts:833)
+  • get-release-info (main.ts:841)
+  Naming convention: kebab-case channel names; preload.ts exposes them as camelCase methods on window.saatirilAPI. New gdrive:auth / gdrive:upload / gdrive:status channels fit this convention.
+- Located the previously-discarded Google Drive commit:
+  • Commit hash 312947344b1d2e4af2da118452e1167b91b1a8be — "feat: Google Drive backup for Electron — auto-copy photos to cloud folder"
+  • Reachable from branch backup/pre-reset-20260924-055711 (verified: git merge-base --is-ancestor 3129473 backup/... → YES; same check against main → NO).
+  • Strategy of discarded commit: leverage "Google Drive for Desktop" Windows app's virtual drive (e.g. G:\My Drive\Saatiril\) — admin picks the folder via native dialog, photos are copied via fs.writeFileSync after local save, Google Drive for Desktop handles cloud sync + offline queueing. NO googleapis library, NO OAuth2, NO API quota.
+  • Files changed: electron/main.ts (+86), electron/preload.ts (+19), src/components/saatiril/admin-dashboard.tsx (+111), src/types/saatiril.d.ts (+5). 221 insertions, 0 deletions — purely additive.
+  • New IPC handlers introduced by 3129473: select-backup-folder, get-backup-folder, clear-backup-folder, get-backup-stats. save-photo was extended with a non-fatal backup copy block.
+  • Config persistence in discarded commit: backup-config.json written to app.getPath('userData') (same folder as license.dat / first-run.dat from electron/license.ts).
+  • Verified current main has NO gdrive code: grep renderGoogleDriveBackup|backupFolder|getBackupFolder|select-backup-folder|CloudUpload in current admin-dashboard.tsx = 0 hits.
+- Settings storage mechanism confirmed:
+  • Electron main process: app.getPath('userData') directory (Windows: %APPDATA%\SAATIRIL\). Existing files: license.dat, first-run.dat (electron/license.ts:181,185). Pattern = JSON or binary file written via fs. THIS is the canonical place to persist the gdrive toggle + (if OAuth route is taken) encrypted tokens.
+  • Renderer process: Zustand store src/store/use-saatiril-store.ts uses localStorage (key 'saatil_projects' for projects; 'saatiril_app_version' for version). Per-project prefs like frame / password also use localStorage. For an Electron-only feature like gdrive backup, userData JSON is preferred (survives renderer reloads, not visible to other tabs).
+- Package.json inspection:
+  • googleapis NOT installed — 0 hits in package.json, package-lock.json, bun.lock.
+  • Electron version: ^42.3.3 (devDependencies).
+  • Existing relevant deps: socket.io 4.8.3, electron-builder ^26.15.0, zustand ^5.0.14, sharp ^0.34.3.
+
+Stage Summary:
+- Admin project page = src/components/saatiril/admin-dashboard.tsx (mounted via main-app.tsx:915 when myRole==='admin', route = / via src/app/page.tsx). src/app/admin/page.tsx is unrelated (license generator).
+- Photo flow: operator-panel.tsx captures → socket PHOTOS_SAVED → admin-dashboard.tsx:153 handlePhotosSaved → window.saatirilAPI.savePhoto() → IPC 'save-photo' (electron/main.ts:780) → fs.writeFileSync to proj.config.targetFolder (default C:\SAATIRIL_System_Out\<projectName>). Browser fallback via src/lib/browser-photo-save.ts.
+- Existing IPC handlers: 9 channels (select-folder, create-folder, save-photo, get-lan-info, get-license-status, activate-license, get-machine-id, generate-license-code, get-release-info) all in electron/main.ts:757-862. Convention = kebab-case channel + camelCase preload method on window.saatirilAPI.
+- Existing gdrive code: NONE in current main. Discarded commit 3129473 is fully recoverable (reachable from backup branch, purely additive, 221 lines). Its strategy = use Google Drive for Desktop's local sync folder (NO googleapis, NO OAuth).
+- Settings storage: Electron userData dir (license.dat / first-run.dat pattern); renderer uses localStorage. userData JSON file is the right place for the gdrive toggle + tokens.
+- googleapis installed: NO. Electron: ^42.3.3.
+- Recommendation: Two viable paths — (A) REVIVE commit 3129473 (sync-folder strategy, 0 deps, 90% done, satisfies "offline-keep-local / online-sync" natively via Google Drive for Desktop's queueing); (B) WRITE FRESH with googleapis + OAuth2 (matches the user's mention of gdrive:auth/upload/status channels + tokens, but adds deps + OAuth complexity + manual offline queue). Path A is strongly recommended for speed and reliability; Path B only if the user explicitly does NOT want to require Google Drive for Desktop to be installed. Even on Path B, the discarded commit's UX skeleton (card placement, state shape, backup-stats polling) is worth copying.

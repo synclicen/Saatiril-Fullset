@@ -87,4 +87,25 @@ contextBridge.exposeInMainWorld('saatirilAPI', {
   }> => {
     return ipcRenderer.invoke('get-release-info')
   },
+
+  // ── Google Drive / Cloud Backup ───────────────────────────────────────
+  // Admin picks a folder (Google Drive for Desktop, OneDrive, Dropbox, etc.)
+  // Photos are copied there after saving locally. The cloud desktop app
+  // handles actual upload + offline queue + retry — Electron never needs
+  // to know about internet state, so offline operation is never disturbed.
+  selectBackupFolder: (): Promise<string | null> => {
+    return ipcRenderer.invoke('select-backup-folder')
+  },
+
+  getBackupFolder: (): Promise<string | null> => {
+    return ipcRenderer.invoke('get-backup-folder')
+  },
+
+  clearBackupFolder: (): Promise<boolean> => {
+    return ipcRenderer.invoke('clear-backup-folder')
+  },
+
+  getBackupStats: (): Promise<{ connected: boolean; totalFiles: number }> => {
+    return ipcRenderer.invoke('get-backup-stats')
+  },
 })

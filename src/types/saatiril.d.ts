@@ -54,6 +54,11 @@ interface SaatirilAPI {
   activateLicense: (activationCode: string) => Promise<LicenseActivationResult>
   getMachineId: () => Promise<MachineIdResult>
   generateLicenseCode: (machineId: string, adminKey: string) => Promise<GenerateLicenseCodeResult>
+  // Google Drive / Cloud Backup API — non-fatal, never disturbs local save
+  selectBackupFolder: () => Promise<string | null>
+  getBackupFolder: () => Promise<string | null>
+  clearBackupFolder: () => Promise<boolean>
+  getBackupStats: () => Promise<{ connected: boolean; totalFiles: number }>
 }
 
 declare global {
